@@ -25,6 +25,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 
 ## Next
 
-1. RsxSync's policy module runs but takes no entry of its job list, so the MLAA tasks get no frame
-   and the RSX waits on their semaphore; no frame is flipped yet.
-2. Each HLE taskset its own workload id (an SPU-side signal kicks the taskset's wid).
+The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). In short:
+
+0. Tooling: a pipeline probe (`GOWA_PIPE`), a per-workload policy trace, `GCM_FIFO_CIRCLE_PASSES=0`,
+   a relift with the merged lifter.
+1. RsxSync's policy module takes no entry of its four-list job list; no frame is flipped yet.
+2. The MLAA batch round trip, then the first flips.
