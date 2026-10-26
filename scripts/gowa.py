@@ -297,6 +297,9 @@ WWS_PM_FNV = 0xC8D774963A96DCF2
 WWS_PM_BASE = 0xA00          # policy modules load and enter at LS 0xA00
 WWS_PM_IMAGE_ID = 0x57575350
 WWS_PM_DIR = os.path.join(ROOT, "spu", "wwspm")
+# Entries the function finder doesn't reach: indirect branch targets that
+# missed the lifted set in the first boots. 0xA2C is the interrupt vector.
+WWS_PM_EXTRA_FUNCS = [0xA2C, 0x2D98, 0x3368]
 
 
 def fnv1a64(data):
@@ -321,7 +324,8 @@ def lift_wws_pm(elf):
     shutil.rmtree(WWS_PM_DIR, ignore_errors=True)
     os.makedirs(WWS_PM_DIR)
     if run([sys.executable, os.path.join(TOOLS, "spu_lifter.py"), wrapped,
-            "--auto-functions", wrapped, "--symbol-prefix", "wwspm_", "-o", WWS_PM_DIR]):
+            "--auto-functions", wrapped, "--symbol-prefix", "wwspm_", "-o", WWS_PM_DIR,
+            "--extra-funcs", ",".join("0x%X" % a for a in WWS_PM_EXTRA_FUNCS)]):
         die("spu_lifter failed on the Wws_Job policy module")
     sys.path.insert(0, TOOLS)
     from build_spu_workloads import debase_includes
@@ -406,6 +410,37 @@ def wws_job_modules(elf):
     return jobs
 
 
+# The WWS job modules linked into the game ELF (header magic 0xC0DEC0DE, link
+# base 0x4000). The Wws_Job policy module streams each from its address into
+# local store; lifted and registered as verified regions, they run as native
+# code instead of in the SPU interpreter.
+JOBMODS_DIR = os.path.join(ROOT, "spu", "jobmods")
+# Job entries the function finder doesn't reach, per module: indirect branch
+# targets that missed the lifted set in the first boots, most of them the
+# return points of indirect calls. Modules overlap in local store, so each list
+# goes to its own module only.
+JOBMOD_EXTRA_FUNCS = {
+    "jobmod_3105a33a1cbe_e16A80": [
+        0x166A0, 0x169D8, 0x16A6C, 0x16A80, 0x16A94, 0x16AAC, 0x16AC4, 0x16ADC,
+        0x16F98, 0x17A40, 0x17AA4, 0x17AB4, 0x17BA8, 0x17C40, 0x17CD8, 0x17D68,
+        0x17E08, 0x17EA0, 0x17F38, 0x17FD8, 0x18070, 0x18110, 0x1E060, 0x1E4E0],
+    "jobmod_d3eebe50d457_e0A00": [0x4190, 0x41E8, 0x4790, 0x7260],
+}
+
+
+def lift_jobmods(elf):
+    shutil.rmtree(JOBMODS_DIR, ignore_errors=True)
+    extra = []
+    for name, addrs in sorted(JOBMOD_EXTRA_FUNCS.items()):
+        extra += ["--extra-funcs", name + "=" + ",".join("0x%X" % a for a in addrs)]
+    if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
+            "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c")]
+           + extra):
+        die("lift_jobmods failed")
+    n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
+    say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
+
+
 def cmd_lift(args):
     elf = need_elf()
     funcs = os.path.join(ANALYSIS, "GOWA.functions.json")
@@ -427,6 +462,7 @@ def cmd_lift(args):
     size = sum(os.path.getsize(os.path.join(RECOMPILED, f)) for f in files) / 2**20
     say("lifted: %d source files, %.0f MB in recompiled/" % (len(files), size))
     lift_wws_pm(elf)
+    lift_jobmods(elf)
     say("re-run `build` so CMake picks up the new file list")
     return 0
 

@@ -187,6 +187,19 @@ if(WWS_PM_SOURCES)
     list(APPEND SPU_SOURCES ${WWS_PM_SOURCES})
 endif()
 
+# The WWS job modules the title links into its own ELF, which the policy module
+# streams into local store from fixed addresses. `scripts/gowa.py lift` lifts
+# them (tools/lift_jobmods.py --engine-elf) into spu/jobmods/, and each
+# registers as a verified region at its address, so a job runs lifted rather
+# than in the SPU interpreter.
+file(GLOB JOBMOD_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/spu/jobmods/*/spu_recomp.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/spu/jobmods/jobmods_register.c")
+if(JOBMOD_SOURCES)
+    message(STATUS "WWS job modules: lifted")
+    list(APPEND SPU_SOURCES ${JOBMOD_SOURCES})
+endif()
+
 # ---------------------------------------------------------------------------
 # Lifted libsre (optional)
 # ---------------------------------------------------------------------------
