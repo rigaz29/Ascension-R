@@ -178,6 +178,36 @@ elseif(PORT_ENABLE_SPU)
     endif()
 endif()
 
+# The Wws_Job policy module (the title's SPURS job workloads), a raw SPU image
+# in the game ELF that `scripts/gowa.py lift` lifts into spu/wwspm/. It builds
+# with the other lifted SPU sources.
+file(GLOB WWS_PM_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/spu/wwspm/*.c")
+if(WWS_PM_SOURCES)
+    message(STATUS "Wws_Job PM:      lifted")
+    list(APPEND SPU_SOURCES ${WWS_PM_SOURCES})
+endif()
+
+# ---------------------------------------------------------------------------
+# Lifted libsre (optional)
+# ---------------------------------------------------------------------------
+# `scripts/gowa.py lle` relocates the firmware's libsre and lifts it into
+# firmware/libsre/lifted/. stubs.cpp then loads it so the SPURS lock-free queue
+# functions run as the firmware code; the rest of cellSpurs stays HLE. Without
+# that directory the port builds as before.
+set(LIBSRE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware/libsre/lifted" CACHE PATH
+    "Directory holding the lifted libsre (libsre_recomp_*.cpp, gowa_libsre_exports.c)")
+file(GLOB LIBSRE_SOURCES CONFIGURE_DEPENDS "${LIBSRE_DIR}/*.cpp" "${LIBSRE_DIR}/*.c")
+if(LIBSRE_SOURCES)
+    message(STATUS "Lifted libsre:   ${LIBSRE_DIR}")
+    set_source_files_properties(stubs.cpp ${LIBSRE_SOURCES}
+        "${PS3RECOMP_DIR}/runtime/prx/prx_loader.c" PROPERTIES
+        INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/prx"
+        COMPILE_DEFINITIONS GOWA_LIBSRE_LLE)
+    list(APPEND LIBSRE_SOURCES "${PS3RECOMP_DIR}/runtime/prx/prx_loader.c")
+else()
+    message(STATUS "Lifted libsre:   none (SPURS queues stay HLE)")
+endif()
+
 add_executable(${PROJECT_NAME}
     main.cpp
     launcher.cpp
@@ -186,6 +216,7 @@ add_executable(${PROJECT_NAME}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}
     ${SPU_SOURCES}
+    ${LIBSRE_SOURCES}
 )
 
 # The lifted SPU sources use bare #include "spu_context.h". Scope that include
@@ -326,7 +357,7 @@ else()
         list(APPEND recomp_opts -mfma)
     endif()
 endif()
-set_source_files_properties(${RECOMP_SOURCES} PROPERTIES
+set_source_files_properties(${RECOMP_SOURCES} ${LIBSRE_SOURCES} PROPERTIES
     COMPILE_OPTIONS "${recomp_opts}")
 
 # PPC float arithmetic without the NaN checks (PORT_PPU_FAST_FP): the lifted game

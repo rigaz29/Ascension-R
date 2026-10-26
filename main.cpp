@@ -540,6 +540,7 @@ static void title_environment(void)
     /* This machine's paths, written into [paths] by `gowa.py build`. */
     env_default("PS3_VFS_ROOT", ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL));
     env_default("PS3_HDD0_ROOT", ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL));
+    env_default("GOWA_LIBSRE_IMAGE", ps3_settings_str("paths", "libsre", "GOWA_LIBSRE_IMAGE", NULL));
     /* FFmpeg's DLLs are loaded when the first movie plays, from PATH. */
     const char* ff = ps3_settings_str("paths", "ffmpeg", NULL, NULL);
     if (ff && *ff) {
