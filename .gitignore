@@ -1,0 +1,40 @@
+# Everything made from the game stays on your machine. See PLAN.md,
+# "Repository rules". Never force-add any of these.
+vfs/
+gamedata/
+analysis/
+recompiled/
+spu/
+build*/
+logs/
+scratch/
+firmware/
+local.json
+
+# Game file types, wherever they end up
+*.elf
+*.ELF
+*.self
+*.SELF
+*.sprx
+*.prx
+*.pkg
+*.rap
+*.edat
+*.sdat
+*.psarc
+*.PSARC
+*.SPRX
+*.PRX
+*.RAP
+*.EDAT
+*.SDAT
+*.PKG
+*.iso
+EBOOT.BIN
+PARAM.SFO
+
+# Local tooling
+.venv/
+__pycache__/
+*.pyc

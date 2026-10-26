@@ -1,0 +1,4 @@
+[submodule "ps3recomp"]
+	path = ps3recomp
+	url = https://github.com/rigaz29/ps3recomp.git
+	branch = gowa
