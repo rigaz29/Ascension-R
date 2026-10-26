@@ -523,6 +523,10 @@ static void title_environment(void)
      * full segment publishes `put`, so the drain starts on a frame while the
      * title is still writing it. */
     env_default("GCM_FIFO_SEGMENT", "0x8000");
+    /* The command ring waits (SEMAPHORE_ACQUIRE) on a label the SPU post-process
+     * tasks write when a frame's batch is done. Without the wait the RSX runs
+     * ahead of them; both other ports of this title turn it on. */
+    env_default("GCM_SEMA_ACQUIRE", "1");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

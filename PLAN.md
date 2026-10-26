@@ -105,6 +105,10 @@ each stop is one session.
    lifted C. Lifter bugs are fixed in the lifter, then relift.
 4. **Check the God of War HD port's notes** for the same symptom: the runtime is the same, and many
    walls (SPURS queues, the FIFO, saves) were met there first.
+5. **Check the other ports of this title**: [God-of-War-Ascension-Recompiled](https://github.com/MaChInEgUn3/God-of-War-Ascension-Recompiled)
+   and [gow-ascension-pc](https://github.com/arnaldolima1/gow-ascension-pc) target disc releases on
+   ps3recomp and are further along; their notes describe the same engine's walls. Read, and credit
+   what is taken from them (both MIT).
 
 ## 8. Git workflow
 

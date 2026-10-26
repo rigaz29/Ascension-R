@@ -47,6 +47,13 @@ python -m venv ..\.venv
 - `tools/hle_coverage.py`: which of the title's imports the runtime answers.
 - `ps3recomp/`: the toolkit and runtime (submodule).
 
+## Related work
+
+Two other ports of God of War: Ascension on ps3recomp, of the disc releases, are further along and
+were a great help reading this title's frame pipeline:
+[MaChInEgUn3/God-of-War-Ascension-Recompiled](https://github.com/MaChInEgUn3/God-of-War-Ascension-Recompiled)
+and [arnaldolima1/gow-ascension-pc](https://github.com/arnaldolima1/gow-ascension-pc).
+
 ## License
 
 MIT, see [LICENSE](LICENSE). Third-party code: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

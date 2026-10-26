@@ -21,9 +21,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-26 | `EBOOT.BIN` and `GOWA.SELF` decrypted (RPCS3). `EBOOT.BIN` is a launcher that starts `GOWA.SELF`, which is what the port lifts. `GOWA.elf`: 7,643 functions, about 8.4 MB of PPU code, 350 imports from 25 libraries (259 registered in the runtime), 4 embedded SPU ELFs. The port's files are carried over from the God of War HD port (script, build, runner, settings window). |
 | 2026-10-26 | First build (22,320 PPU functions, 188 MB of C++) and four boots ([notes](docs/notes/2026-10-26-first-boot.md)). Runtime: the SPURS2 entry points, `cellGamePatchCheck`, and reachable SPU function detection for programs that keep data in their code segment. Port: the Edge Zlib queue through the lifted `libsre`, and the `Wws_Job` policy module lift, both from the God of War HD port. No import on the boot path is unregistered. |
 | 2026-10-27 | Runtime branch merged with upstream (380 commits). The `Wws_Job` job modules linked into `GOWA.elf` are lifted (upstream `lift_jobmods --engine-elf`, with per-module extra entries), so jobs run lifted instead of interpreted. The GCM offset tables the title reads directly now follow every map and unmap: the intro loader's `put` was -1. ([notes](docs/notes/2026-10-27-jobs-and-intro-loader.md)) |
+| 2026-10-27 | SPURS2 with 32 workloads (EDGE2 and RsxSync were refused), the MLAA tasks no longer signalled at creation, Taskset2 event flags, the RSX waiting on its post-process semaphore. Two other ports of this title studied for the frame pipeline ([notes](docs/notes/2026-10-27-frame-pipeline.md)). |
 
 ## Next
 
-1. The self-JUMP park at IO `0x2FFC40` that no SPU job releases; no frame is flipped yet.
-2. The Taskset2 workers' PUT to EA 0.
-3. The 25 other `0xC0DEC0DE` headers in `GOWA.elf`.
+1. RsxSync's policy module runs but takes no entry of its job list, so the MLAA tasks get no frame
+   and the RSX waits on their semaphore; no frame is flipped yet.
+2. Each HLE taskset its own workload id (an SPU-side signal kicks the taskset's wid).
