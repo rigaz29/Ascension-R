@@ -98,9 +98,21 @@ weight for a single-player boot:
 | `0x6CB580` | 41,796 |
 | `0x6D5900` | 38,100 |
 
-A title of this size runs far more SPU code than that. The rest is likely raw images (no ELF
-header) in the executable's data, like the God of War HD audio mixer's policy module, or job
-binaries loaded from the archives. To be found at boot from what cellSpurs is handed.
+None of them has section headers, and their read-only data (strings) sits in the executable
+segment; the toolkit's SPU pipeline lifts them with reachable function detection (see
+[notes/2026-10-26-first-boot.md](notes/2026-10-26-first-boot.md)). What the first boots showed:
+
+| Program | Size | Role |
+|---|---|---|
+| `00E729804474449A` (`0x6D5900`) | 38,100 | Edge Zlib, an SPU task fed through an ANY2ANY lock-free queue |
+| `F4C2A58BDE92CE5E` (`0x6C1B00`) | 39,508 | five worker tasks of a Taskset2 (entry `0x6D1B00`) |
+| `574361C36D1A4C05`, `4DA69B4166D997AD` | | not seen running yet |
+
+The `Wws_Job` policy module is a raw image at `0x7A7B00` (12,288 bytes, FNV-1a
+`0xC8D774963A96DCF2`), handed to `cellSpursAddWorkloadWithAttribute` for 13 workloads (CollisL,
+RenJobSet x4, RenderJobs, MeshProcJobs, ModelServer, Network, General6, HighestPrio6, SysMisc,
+BrBDblBufWrkld). It streams job code into LS `0x1A000` to `0x1D000` at run time; where that code
+comes from is not known yet.
 
 ## Data
 

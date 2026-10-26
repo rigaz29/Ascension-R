@@ -4,8 +4,8 @@ A static recompilation of **God of War: Ascension** (PS3, NPUA80918, version 1.1
 Windows, built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) (fork
 [rigaz29/ps3recomp](https://github.com/rigaz29/ps3recomp), branch `gowa`).
 
-It is at the very start: the executable has been analysed and the port's files are in place; it
-does not build or boot yet. See [PROGRESS.md](PROGRESS.md).
+It is at the very start: it builds, and the title boots as far as reading its archives and
+starting its intro loader. Nothing is drawn yet. See [PROGRESS.md](PROGRESS.md).
 
 **No game files are in this repository, and none will be.** You need your own copy of the game,
 installed in RPCS3 with its license, and you decrypt it yourself.
@@ -31,13 +31,17 @@ python -m venv ..\.venv
 ..\.venv\Scripts\python scripts\gowa.py doctor
 ..\.venv\Scripts\python scripts\gowa.py analyze
 ..\.venv\Scripts\python scripts\gowa.py lift
+# 3. The SPURS lock-free queues run the firmware's own libsre: copy
+#    dev_flash\sys\external\libsre.sprx from RPCS3 to firmware\, decrypt it there to
+#    libsre.prx (Utilities > Decrypt PS3 Binaries), then:
+..\.venv\Scripts\python scripts\gowa.py lle
 ..\.venv\Scripts\python scripts\gowa.py build
 ..\.venv\Scripts\python scripts\gowa.py run
 ```
 
 ## Layout
 
-- `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, build, run, symbolize).
+- `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, lle, build, run, symbolize).
 - `main.cpp`, `launcher.cpp`, `stubs.cpp`, `CMakeLists.txt`: the port itself, carried over from the
   God of War HD port ([rigaz29/gow1hd-recomp](https://github.com/rigaz29/gow1hd-recomp)).
 - `tools/hle_coverage.py`: which of the title's imports the runtime answers.

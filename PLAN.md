@@ -42,12 +42,12 @@ C:\Users\rigaz\recomp\
 ├── .venv\                     Python + ps3recomp requirements
 └── gowa-recomp\               this repo
     ├── ps3recomp\             submodule -> rigaz29/ps3recomp, branch gowa
-    ├── scripts\gowa.py        doctor / setup / analyze / lift / build / run / symbolize
+    ├── scripts\gowa.py        doctor / setup / analyze / lift / lle / build / run / symbolize
     ├── tools\hle_coverage.py  firmware imports the runtime doesn't implement
     ├── CMakeLists.txt         the port's build, defaults to the submodule
     ├── main.cpp               entry point, frame clock, the title's environment
     ├── launcher.cpp           the settings window shown before the game
-    ├── stubs.cpp              game-specific hooks and overrides
+    ├── stubs.cpp  gowa_lle.h  game-specific hooks; the lifted libsre's queue functions
     ├── docs\                  ANALYSIS.md, notes\
     ├── PLAN.md  PROGRESS.md
     │
@@ -56,6 +56,8 @@ C:\Users\rigaz\recomp\
     ├── gamedata\dev_hdd0\     the port's /dev_hdd0: saves, trophies, caches
     ├── analysis\              loader output, SPU images, coverage report
     ├── recompiled\            lifted PPU code
+    ├── spu\wwspm\             the lifted Wws_Job policy module
+    ├── firmware\              libsre.prx (yours, decrypted) and its lift
     ├── build\                 CMake/Ninja output, gowa.ini
     └── logs\                  one log per run
 ```
@@ -79,8 +81,8 @@ C:\Users\rigaz\recomp\
 | 12 Kit and release | Users build the port from their own copy | |
 | 13 Upstream | General fixes go to ps3recomp as PRs | ongoing |
 
-Phases 0 and 1 are done. Phase 3 is where the work starts: the boot will stop on the first
-missing piece, and each stop is one session.
+Phases 0 to 2 are done and phase 3 is under way: the boot stops on the first missing piece, and
+each stop is one session.
 
 ## 6. Session workflow
 
