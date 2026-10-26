@@ -9,9 +9,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 0 Setup | done: repo, submodule (`rigaz29/ps3recomp`, branch `gowa`), `scripts/gowa.py`, decrypted executables |
 | 1 Analysis | done: see [docs/ANALYSIS.md](docs/ANALYSIS.md) |
 | 2 First build | done: `GowARecomp.exe` links, with the 4 SPU programs, the `Wws_Job` policy module and the lifted `libsre` |
-| 3 First boot | in progress: the title reads its archives and starts its intro loader, which then waits; no picture yet |
+| 3 First boot | in progress: the intro loader gets through its boot screens and the title loads its language archives; no frame flipped yet |
 | 4 Missing HLE | boot path done: SPURS2, Taskset2/Task2, workload flag, `cellGamePatchCheck` |
-| 5-13 | not started |
+| 5 SPU | started: the 4 embedded SPU programs, the `Wws_Job` policy module and its 6 engine-embedded job modules run lifted |
+| 6-13 | not started |
 
 ## Milestones
 
@@ -19,10 +20,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 |---|---|
 | 2026-10-26 | `EBOOT.BIN` and `GOWA.SELF` decrypted (RPCS3). `EBOOT.BIN` is a launcher that starts `GOWA.SELF`, which is what the port lifts. `GOWA.elf`: 7,643 functions, about 8.4 MB of PPU code, 350 imports from 25 libraries (259 registered in the runtime), 4 embedded SPU ELFs. The port's files are carried over from the God of War HD port (script, build, runner, settings window). |
 | 2026-10-26 | First build (22,320 PPU functions, 188 MB of C++) and four boots ([notes](docs/notes/2026-10-26-first-boot.md)). Runtime: the SPURS2 entry points, `cellGamePatchCheck`, and reachable SPU function detection for programs that keep data in their code segment. Port: the Edge Zlib queue through the lifted `libsre`, and the `Wws_Job` policy module lift, both from the God of War HD port. No import on the boot path is unregistered. |
+| 2026-10-27 | Runtime branch merged with upstream (380 commits). The `Wws_Job` job modules linked into `GOWA.elf` are lifted (upstream `lift_jobmods --engine-elf`, with per-module extra entries), so jobs run lifted instead of interpreted. The GCM offset tables the title reads directly now follow every map and unmap: the intro loader's `put` was -1. ([notes](docs/notes/2026-10-27-jobs-and-intro-loader.md)) |
 
 ## Next
 
-1. The `Wws_Job` job code: where it comes from, and lifting it (it runs in the SPU interpreter now).
-2. What `IntroLoaderThread` polls in `0x2C2DA8`; the main thread waits for it.
-3. The Taskset2 workers' PUT to EA 0.
-4. Bring the `gowa` runtime branch up to date with upstream (380 commits, some for this title).
+1. The self-JUMP park at IO `0x2FFC40` that no SPU job releases; no frame is flipped yet.
+2. The Taskset2 workers' PUT to EA 0.
+3. The 25 other `0xC0DEC0DE` headers in `GOWA.elf`.

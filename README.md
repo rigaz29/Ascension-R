@@ -5,7 +5,7 @@ Windows, built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) (fork
 [rigaz29/ps3recomp](https://github.com/rigaz29/ps3recomp), branch `gowa`).
 
 It is at the very start: it builds, and the title boots as far as reading its archives and
-starting its intro loader. Nothing is drawn yet. See [PROGRESS.md](PROGRESS.md).
+getting its intro loader through its boot screens. Nothing is drawn yet. See [PROGRESS.md](PROGRESS.md).
 
 **No game files are in this repository, and none will be.** You need your own copy of the game,
 installed in RPCS3 with its license, and you decrypt it yourself.

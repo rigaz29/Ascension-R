@@ -111,8 +111,11 @@ segment; the toolkit's SPU pipeline lifts them with reachable function detection
 The `Wws_Job` policy module is a raw image at `0x7A7B00` (12,288 bytes, FNV-1a
 `0xC8D774963A96DCF2`), handed to `cellSpursAddWorkloadWithAttribute` for 13 workloads (CollisL,
 RenJobSet x4, RenderJobs, MeshProcJobs, ModelServer, Network, General6, HighestPrio6, SysMisc,
-BrBDblBufWrkld). It streams job code into LS `0x1A000` to `0x1D000` at run time; where that code
-comes from is not known yet.
+BrBDblBufWrkld). Its job code is linked into `GOWA.elf` itself: 31 headers with the `0xC0DEC0DE`
+magic, six of them job modules linked at LS `0x4000` (80 to 134 KB, at `0x7AAE00`, `0x7BFC80`,
+`0x7E1C00`, `0x7FF280`, `0x818600`, `0x84BE40`). The policy module streams one from its address
+into LS `0x4000` and runs it; `gowa.py lift` lifts them with `lift_jobmods.py --engine-elf`. The
+other 25 headers name link base 0 and are not known yet.
 
 ## Data
 
