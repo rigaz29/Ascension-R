@@ -13,10 +13,12 @@ the same engine and SPU programs on ps3recomp, from disc releases, and are past 
 - No frame is flipped. The main thread waits per frame slot (`0x41CBDC`) for the batch counters at
   `0xA0B740`; the RSX waits (`SEMAPHORE_ACQUIRE`, IO `0x2FEE54`) for the MLAA tasks' label; the MLAA
   control block (`0xA1FDB0`) is empty because RsxSync (wid 17) takes no entry of its job list.
-- **Update, end of 2026-10-27:** steps 0-3 done, step 5's text part done. The first-use screens
-  are drawn, read correctly (gold text, sRGB) and take pad input, at about 2.4 frames/s
-  ([first screen](notes/2026-10-27-first-screen.md), [text](notes/2026-10-27-text.md)). Next: step 4
-  (past the first-use screens), then 6 and 7.
+- **Update, end of 2026-10-27:** steps 0-4 and 6 done, step 5's text part done. Driven with
+  `PAD_FILE`, the title goes from boot through both cinematics, the main menu, profile creation and
+  difficulty to its first level and pause menu
+  ([first screen](notes/2026-10-27-first-screen.md), [text](notes/2026-10-27-text.md),
+  [to the first level](notes/2026-10-27-to-the-first-level.md)). The level's 3D scene is almost
+  black and runs at ~0.35 frames/s. Next: step 7 (speed), then 3D drawing.
 
 ## 2. How a frame is made (both refs, confirmed here where marked)
 
@@ -54,7 +56,7 @@ vblank handler ─► patches the frame's park; flip
 | stability | MFC engines released, SetFlipCommand wrap only for SDK contexts, `bisl rt==ra` | done (upstream) |
 | menus | X16 font atlas, framebuffer sRGB, texture gamma, `DDX`/`DDY` | done in D3D12 (the vtable path; X16 also needed the SRV format) |
 | menus | texture units 4-15 in the D3D12 vtable path (it binds t0-t3) | open; nothing visible missing yet |
-| cinematic | `cellVdec` with FFmpeg | present (God of War HD); formats unchecked (**step 6**) |
+| cinematic | `cellVdec` with FFmpeg | done: both cinematics play |
 | speed | the other 25 `0xC0DEC0DE` job modules, indirect entries, kernel pass without the 1 ms sleep, MLAA cost (lifted ~100x slow) | **step 7** |
 | frame order | hold a patched park while SPURS tasks run (ref B 0017), readyCount as a level (ref B 0011) | later, if frames misorder |
 
@@ -112,10 +114,11 @@ Batch counters at `0xA0B740` reach 0, the main thread leaves `0x41CBDC`, flips h
 next stops from the refs: the two-stage SPU task batch (SPU-created tasks, step 3 of the matrix),
 EDGE holes in the ring. Done when `gowa_drive.ps1` gets a screenshot.
 
-### Step 4: loading screen and first-use dialog (the current wall)
+### Step 4: loading screen and first-use dialog (done 2026-10-27)
 
-Reached: the brightness calibration and screen-adjust screens, driven with `PAD_FILE`. Next: what
-follows them (save-data prompt, then loading).
+No code needed: the title goes on to the main menu, creates a profile (save data in the port's own
+`gamedata/dev_hdd0`) and loads its first level. See
+[notes/2026-10-27-to-the-first-level.md](notes/2026-10-27-to-the-first-level.md).
 
 The save-data prompt (`cellSaveData`, works in God of War HD), then the loading screen. Ref B reached
 the first-use dialog right after the SPU-created task fix.
@@ -129,18 +132,26 @@ is its design. Left for later: units 4-15, a comparison with RPCS3 on a 3D scene
 D3D12 backend against this title: sRGB framebuffer, texture gamma, `DDX`/`DDY` in fragment programs
 (ref B's live draw needed all three for readable menus), then a frame-by-frame comparison with RPCS3.
 
-### Step 6: the opening cinematic
+### Step 6: the opening cinematic (done 2026-10-27)
+
+Both cinematics play through `cellVdec` and libavcodec, start to end.
 
 `cellVdec` with FFmpeg as in God of War HD; check the cinematic format and the fade card that waits
 for the movie (ref B: the "black screen" was that card).
 
-### Step 7: speed to a usable menu
+### Step 7: speed to a usable menu (the current wall)
+
+Measured: ~2.4 frames/s on 2D screens, ~0.35 in the first level. Every particle task starts on a
+new host thread (ten per frame). Measure an in-level frame first, from the saved profile.
 
 The other 25 `0xC0DEC0DE` modules (ref A lifts 33, ref B 33 plus streamed-code fragments), indirect
 entries from `SPU_INTERP_STATS`, the SPURS kernel's 1 ms sleep between passes (ref A: 2.95 → 6.25
 frames/s), and the MLAA tasks.
 
-### Step 8: the first level
+### Step 8: the first level (reached 2026-10-27)
+
+It loads (`R_MEGAERAN`) and pauses, but its 3D scene is almost black and the pause menu has no
+labels.
 
 Ref B: a lost-task race in the taskset scheduler; ref A: frame segments and EDGE holes (M0.24) and
 the shared MFC engines (fixed upstream).

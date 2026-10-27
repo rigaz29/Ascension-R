@@ -4,8 +4,10 @@ A static recompilation of **God of War: Ascension** (PS3, NPUA80918, version 1.1
 Windows, built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) (fork
 [rigaz29/ps3recomp](https://github.com/rigaz29/ps3recomp), branch `gowa`).
 
-It is early: it builds, boots, and reaches the title's first-use screens (brightness calibration,
-then screen adjust), which read correctly and take pad input. It runs at about 2 frames a second. See [PROGRESS.md](PROGRESS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+It is early: it builds, boots, plays the opening cinematic, and goes through the menus, profile
+creation and difficulty to the first level and its pause menu. Menus read correctly; the level's
+3D scene is still almost black, and it runs at about 2 frames a second on menus and well under one
+in the level. See [PROGRESS.md](PROGRESS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 **No game files are in this repository, and none will be.** You need your own copy of the game,
 installed in RPCS3 with its license, and you decrypt it yourself.

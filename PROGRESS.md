@@ -25,8 +25,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | Roadmap steps 0 and 1: a frame pipeline probe (`GOWA_PIPE`), a per-workload policy trace, a relift with the merged lifter; EDGE2 and RsxSync's policy modules now run (a wid < 16 check), RsxSync takes its job list and the MLAA tasks get their batches ([notes](docs/notes/2026-10-27-rsxsync.md)). |
 | 2026-10-27 | **First screen.** Roadmap steps 2 and 3: a report waits while the post-process tasks run a batch (batch N+1's signal ended batch N's barrier waits), and tasks an SPU creates in a sibling taskset now start (the two-phase particle work). The brightness calibration screen is drawn and Cross moves on ([notes](docs/notes/2026-10-27-first-screen.md)). |
 | 2026-10-27 | Readable text: the D3D12 path binds the X16 font atlas with the right view format, the fragment decompiler does DDX/DDY, and the shader packer's sRGB output and texture gamma are modelled ([notes](docs/notes/2026-10-27-text.md)). |
+| 2026-10-27 | **To the first level**, driven with `PAD_FILE`: both cinematics play, then the main menu, profile creation (save data written), difficulty, and the first level (`R_MEGAERAN`) with its pause menu. Its 3D scene is almost black, at ~0.35 frames/s ([notes](docs/notes/2026-10-27-to-the-first-level.md)). |
 
 ## Next
 
-The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 4: past the first-use screens
-(save-data prompt, loading), then the cinematic (step 6) and speed (step 7).
+The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed: ~0.35 frames/s in the
+first level makes every test there take minutes. Then the level's 3D scene (almost black) and the
+pause menu's labels.
