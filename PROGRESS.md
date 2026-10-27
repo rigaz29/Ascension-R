@@ -22,12 +22,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-26 | First build (22,320 PPU functions, 188 MB of C++) and four boots ([notes](docs/notes/2026-10-26-first-boot.md)). Runtime: the SPURS2 entry points, `cellGamePatchCheck`, and reachable SPU function detection for programs that keep data in their code segment. Port: the Edge Zlib queue through the lifted `libsre`, and the `Wws_Job` policy module lift, both from the God of War HD port. No import on the boot path is unregistered. |
 | 2026-10-27 | Runtime branch merged with upstream (380 commits). The `Wws_Job` job modules linked into `GOWA.elf` are lifted (upstream `lift_jobmods --engine-elf`, with per-module extra entries), so jobs run lifted instead of interpreted. The GCM offset tables the title reads directly now follow every map and unmap: the intro loader's `put` was -1. ([notes](docs/notes/2026-10-27-jobs-and-intro-loader.md)) |
 | 2026-10-27 | SPURS2 with 32 workloads (EDGE2 and RsxSync were refused), the MLAA tasks no longer signalled at creation, Taskset2 event flags, the RSX waiting on its post-process semaphore. Two other ports of this title studied for the frame pipeline ([notes](docs/notes/2026-10-27-frame-pipeline.md)). |
+| 2026-10-27 | Roadmap steps 0 and 1: a frame pipeline probe (`GOWA_PIPE`), a per-workload policy trace, a relift with the merged lifter; EDGE2 and RsxSync's policy modules now run (a wid < 16 check), RsxSync takes its job list and the MLAA tasks get their batches ([notes](docs/notes/2026-10-27-rsxsync.md)). |
 
 ## Next
 
-The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). In short:
-
-0. Tooling: a pipeline probe (`GOWA_PIPE`), a per-workload policy trace, `GCM_FIFO_CIRCLE_PASSES=0`,
-   a relift with the merged lifter.
-1. RsxSync's policy module takes no entry of its four-list job list; no frame is flipped yet.
-2. The MLAA batch round trip, then the first flips.
+The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 2: the MLAA tasks serve batch 1
+one task short and never take batch 2 (a lost signal, as ref A found); the RSX waits on their
+label, so no frame is flipped yet.

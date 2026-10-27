@@ -39,7 +39,7 @@ vblank handler ─► patches the frame's park; flip
 | boot | GCM offset table follows map/unmap | done |
 | frame 2 | 32 workloads, tempArea, flags1 | done |
 | frame 2 | GET_REPORT to main memory, SEMAPHORE_ACQUIRE blocks, park/acquire exempt from stuck-get | done (upstream + port env) |
-| frame 2 | RsxSync consumes its 4-list job list | **missing: step 1** |
+| frame 2 | RsxSync consumes its 4-list job list | done (policy modules of wids 16-31 ran nothing) |
 | frame 2 | MLAA tasks get batches; Task2 without creation signal; Taskset2 event flags | done; batches untested |
 | frame 2 | each HLE taskset its own wid (SPU-side SendSignal kicks the taskset's wid; ref A allocates 31 down) | **missing: step 2** |
 | loading | SPU-created tasks in a sibling taskset start (two-stage batch, ref A M0.23, ref B 0019) | **missing: step 3** |
@@ -56,7 +56,7 @@ vblank handler ─► patches the frame's park; flip
 
 Each step ends with a measurement that says it worked. Addresses are this build's (PSN 1.12).
 
-### Step 0: tooling and hygiene (short)
+### Step 0: tooling and hygiene (done 2026-10-27)
 
 - **A pipeline probe** in the port (`GOWA_PIPE=<s>`): every n seconds, one block with the main
   thread's slot and batch counters, the MLAA control block, the RsxSync and EDGE list rows, the report
@@ -67,7 +67,11 @@ Each step ends with a measurement that says it worked. Addresses are this build'
 - `GCM_FIFO_CIRCLE_PASSES=0` in `main.cpp` (ref A M0.21).
 - Relift the PPU code with the merged lifter (jump-table base fix; build ~25 min, in the background).
 
-### Step 1: RsxSync takes its job list (the current wall)
+### Step 1: RsxSync takes its job list (done 2026-10-27)
+
+Cause: `spu_run_policy_module` refused wids >= 16, so EDGE2 and RsxSync never ran; see
+[notes/2026-10-27-rsxsync.md](notes/2026-10-27-rsxsync.md). What follows is the analysis as it
+stood before.
 
 Fact: every one-list workload (list 3 at `data+0x3C`) consumes its entries; RsxSync, the only
 four-list workload, has tickets `0x000D0000` and per-list words `0x1F` untouched, though its policy
@@ -79,7 +83,10 @@ order: what the module expects at `data+0x10..0x2C` for a four-list workload; th
 the list's lane mask (`0x1F`); readyCount/flag semantics (a readyCount level alone was ruled out).
 Done when the tickets move and the control block at `0xA1FDB0` gets a batch.
 
-### Step 2: the MLAA batch round trip
+### Step 2: the MLAA batch round trip (the current wall)
+
+Measured: batch 1 served but one task short (barrier 4 of 5, counter one short), batch 2 untouched,
+all five tasks in WAIT_SIGNAL. First tool: a per-taskset signal timeline.
 
 With batches posted: the RsxSync job's SPU-side `cellSpursSendSignal` reaches the five tasks
 (taskset `0x70037280`); give HLE tasksets their own wid if the signal path needs it (step 2 of the

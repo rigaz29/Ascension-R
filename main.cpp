@@ -461,6 +461,103 @@ static DWORD WINAPI hang_watchdog(LPVOID arg)
 }
 
 /* ---------------------------------------------------------------------------
+ * Frame pipeline probe
+ * -----------------------------------------------------------------------*/
+/* GOWA_PIPE=<seconds>: every so many seconds, the state of the chain that
+ * produces a frame, in one block (docs/ROADMAP.md, section 2):
+ *   frame    the main thread's frame slot and the per-slot batch counters it
+ *            waits on, (count << 16) | (wid << 8) | flags;
+ *   rsx      put/get/ref, the words around get, the post-process labels;
+ *   mlaa     the post-process tasks' control block and taskset bitsets;
+ *   reports  the RsxSync report slots (+0xC halfword: 0 = released);
+ *   spurs    the workload flag, and per Wws_Job workload its readyCount,
+ *            contention, state, signal, current list and ticket rows.
+ * The addresses are this build's (PSN 1.12): static data, or heap blocks the
+ * title allocates at the same place every boot. GOWA_PIPE_SPURS=<ea>
+ * overrides the SPURS instance. */
+static uint32_t pipe_r32(uint32_t ea) { return vm_read32(ea); }
+static uint32_t pipe_r16(uint32_t ea) { return (vm_read32(ea & ~3u) >> ((ea & 2) ? 0 : 16)) & 0xFFFF; }
+static uint32_t pipe_r8(uint32_t ea)  { return (vm_read32(ea & ~3u) >> (24 - 8 * (ea & 3))) & 0xFF; }
+
+static const char* const s_pipe_wkl[18] = {
+    "CollisL", "HighestPrio6", "General6", "SysMisc", "ModelServer", "Network",
+    "BatchJobList", "BrBDblBufWrkld", "RenJobSet", "RenJobSet", "RenJobSet", "RenJobSet",
+    "RenderJobs", "MeshProcJobs", "EDGE0", "EDGE1", "EDGE2", "RsxSync",
+};
+
+static void pipe_report(unsigned t)
+{
+    const uint32_t frame = pipe_r32(0xA0C13C), slot = (frame + 2) % 3;
+    fprintf(stderr, "[pipe] t=%us frame=%u slot=%u slot-flag=%u counters %08X %08X %08X\n",
+            t, frame, slot, pipe_r8(0xA0C12B + slot),
+            pipe_r32(0xA0B740), pipe_r32(0xA0B744), pipe_r32(0xA0B748));
+
+    /* The command ring: the title maps IO 0 at EA 0x70000000 and keeps that
+     * mapping linear (MapEaIoAddress, then MapMainMemory right after it). */
+    const uint32_t put = pipe_r32(0x20002000), get = pipe_r32(0x20002004);
+    fprintf(stderr, "[pipe] rsx put=%08X get=%08X ref=%08X label510=%08X label520=%08X @get:",
+            put, get, pipe_r32(0x20002008), pipe_r32(0x20000510), pipe_r32(0x20000520));
+    if (get < 0x7200000u)
+        for (int k = -4; k < 6; k++)
+            fprintf(stderr, k ? " %08X" : " [%08X]", pipe_r32(0x70000000u + get + (uint32_t)(k * 4)));
+    fprintf(stderr, "\n");
+
+    const uint32_t ctl = 0xA1FDB0, counter = pipe_r32(ctl + 8);
+    const uint32_t ts = pipe_r32(0xA1FE00 + 0x34);   /* the post-process barrier's taskset */
+    fprintf(stderr, "[pipe] mlaa batch=%u label=%08X counter=%08X(%08X) buffer=%08X taskset=%08X",
+            pipe_r32(ctl), pipe_r32(ctl + 4), counter, counter ? pipe_r32(counter) : 0,
+            pipe_r32(ctl + 12), ts);
+    if (ts) {
+        static const char* const bs[6] = { "run", "ready", "pend", "enabled", "signalled", "waiting" };
+        for (int b = 0; b < 6; b++)   /* tasks 0-7 are the top byte */
+            fprintf(stderr, " %s=%02X", bs[b], pipe_r8(ts + 0x10u * (uint32_t)b));
+    }
+    fprintf(stderr, "\n[pipe] reports");
+    for (uint32_t i = 1; i < 8; i++)
+        fprintf(stderr, " ED%X0:%u", i, pipe_r16(0x7001ED00 + 16 * i + 0xC));
+    fprintf(stderr, "\n");
+
+    uint32_t sp = 0x7001AD00;
+    if (const char* e = getenv("GOWA_PIPE_SPURS")) sp = (uint32_t)strtoul(e, NULL, 16);
+    if (!(pipe_r8(sp + 0x74) & 0x40)) { fprintf(stderr, "[pipe] spurs 0x%08X: not a CellSpurs2\n", sp); return; }
+    const uint32_t enabled = pipe_r32(sp + 0xB0);
+    fprintf(stderr, "[pipe] spurs %08X flag=%08X receiver=%u enabled=%08X signal1=%04X signal2=%04X\n",
+            sp, pipe_r32(sp + 0x6C), pipe_r8(sp + 0x77), enabled, pipe_r16(sp + 0x70), pipe_r16(sp + 0x78));
+    for (uint32_t w = 0; w < 18; w++) {
+        if (!(enabled & (0x80000000u >> w))) continue;
+        const uint32_t hi = w >= 16;
+        const uint32_t ready = pipe_r8(sp + (hi ? 0x10 + (w - 16) : w));
+        const uint32_t cont = (pipe_r8(sp + 0x20 + (w & 15)) >> (hi ? 4 : 0)) & 0xF;
+        const uint32_t state = pipe_r8(sp + (hi ? 0xC0 + (w - 16) : 0x80 + w));
+        const uint32_t sig = (pipe_r16(sp + (hi ? 0x78 : 0x70)) >> (15 - (w & 15))) & 1;
+        const uint32_t info = sp + (hi ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+        const uint32_t data = pipe_r32(info + 0xC);
+        const uint32_t list = pipe_r32(data + 8);
+        fprintf(stderr, "[pipe]   w%-2u %-14s ready=%u cont=%u state=%u sig=%u data=%08X list=%u",
+                w, s_pipe_wkl[w], ready, cont, state, sig, data, list);
+        /* Ticket rows (published << 16 | consumed) and the per-list words of
+         * each list that has one (a four-list workload has them all). */
+        for (uint32_t l = 0; l < 4; l++)
+            if (pipe_r32(data + 0x30 + 4 * l))
+                fprintf(stderr, " L%u{row=%08X a=%X b=%X}", l, pipe_r32(data + 0x40 + 0x10 * l),
+                        pipe_r32(data + 0x10 + 4 * l), pipe_r32(data + 0x20 + 4 * l));
+        fprintf(stderr, "\n");
+    }
+}
+
+static DWORD WINAPI pipe_probe(LPVOID arg)
+{
+    unsigned every = (unsigned)(uintptr_t)arg, t = 0;
+    for (;;) {
+        Sleep(every * 1000u);
+        t += every;
+        pipe_report(t);
+        fflush(stderr);
+    }
+    return 0;
+}
+
+/* ---------------------------------------------------------------------------
  * Settings and the title's environment
  * -----------------------------------------------------------------------*/
 /* gowa.ini next to the executable. */
@@ -527,6 +624,10 @@ static void title_environment(void)
      * tasks write when a frame's batch is done. Without the wait the RSX runs
      * ahead of them; both other ports of this title turn it on. */
     env_default("GCM_SEMA_ACQUIRE", "1");
+    /* The title keeps `put` fixed and drives the ring with self-JUMP parks, so
+     * the walker's "circling" rule (several full passes without reaching put,
+     * then jump to put) throws away the rest of a frame. */
+    env_default("GCM_FIFO_CIRCLE_PASSES", "0");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));
@@ -657,6 +758,8 @@ int main(int argc, char** argv)
     CreateThread(NULL, 4u * 1024 * 1024, frame_clock, NULL, 0, NULL);
     if (const char* wd = getenv("GOWA_WATCHDOG"))
         CreateThread(NULL, 0, hang_watchdog, (LPVOID)wd, 0, NULL);
+    if (const char* pp = getenv("GOWA_PIPE"))
+        if (atoi(pp) > 0) CreateThread(NULL, 0, pipe_probe, (LPVOID)(uintptr_t)atoi(pp), 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */
 
     printf("\n[boot] dispatching entry OPD 0x%08X (stack top 0x%08X)\n\n",
