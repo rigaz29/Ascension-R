@@ -200,6 +200,18 @@ if(JOBMOD_SOURCES)
     list(APPEND SPU_SOURCES ${JOBMOD_SOURCES})
 endif()
 
+# The position-independent code pieces the EDGE jobs stream to wherever they
+# have room (tools/lift_spu_pic.py, from scripts/spu_pic_pieces.json): each
+# registers as a position-independent verified region and runs lifted at
+# whatever address it lands.
+file(GLOB PIC_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_CURRENT_SOURCE_DIR}/spu/picfrags/*/spu_recomp.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/spu/picfrags/pic_register.c")
+if(PIC_SOURCES)
+    message(STATUS "SPU PIC pieces:  lifted")
+    list(APPEND SPU_SOURCES ${PIC_SOURCES})
+endif()
+
 # ---------------------------------------------------------------------------
 # Lifted libsre (optional)
 # ---------------------------------------------------------------------------

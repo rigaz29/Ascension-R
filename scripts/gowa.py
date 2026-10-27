@@ -450,6 +450,24 @@ def lift_jobmods(elf):
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
 
 
+# The position-independent code pieces the EDGE geometry jobs stream out of the
+# executable to wherever they have room (LS 0x11000-0x12400): lifted once each
+# and dispatched wherever they land, instead of interpreted. The list -- EA,
+# size, entry offset -- is in scripts/spu_pic_pieces.json, found by running the
+# title (docs/notes/2026-10-27-l2-analysis.md).
+PIC_DIR = os.path.join(ROOT, "spu", "picfrags")
+PIC_LIST = os.path.join(ROOT, "scripts", "spu_pic_pieces.json")
+
+
+def lift_pic(elf):
+    shutil.rmtree(PIC_DIR, ignore_errors=True)
+    if run([sys.executable, os.path.join(TOOLS, "lift_spu_pic.py"), "--elf", elf,
+            "--list", PIC_LIST, "--out", PIC_DIR]):
+        die("lift_spu_pic failed")
+    n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
+    say("%d position-independent SPU pieces lifted to %s" % (n, os.path.relpath(PIC_DIR, ROOT)))
+
+
 def cmd_jobmods_entries(args):
     """Merge the [interp-entry] lines of runs made with
     SPU_INTERP_ENTRIES=4000-40000 into scripts/jobmods_extra.json: each entry
@@ -487,6 +505,7 @@ def cmd_lift(args):
     elf = need_elf()
     if args.jobmods_only:
         lift_jobmods(elf)
+        lift_pic(elf)
         say("re-run `build` so CMake picks up the new file list")
         return 0
     funcs = os.path.join(ANALYSIS, "GOWA.functions.json")
@@ -509,6 +528,7 @@ def cmd_lift(args):
     say("lifted: %d source files, %.0f MB in recompiled/" % (len(files), size))
     lift_wws_pm(elf)
     lift_jobmods(elf)
+    lift_pic(elf)
     say("re-run `build` so CMake picks up the new file list")
     return 0
 
@@ -858,7 +878,8 @@ def main():
                    help="number of source files to split into (default 96; more "
                         "files = less memory per compile job)")
     p.add_argument("--jobmods-only", action="store_true",
-                   help="lift only the WWS job modules into spu/jobmods/ (minutes, not the PPU)")
+                   help="lift only the WWS job modules and the position-independent pieces "
+                        "(spu/jobmods/, spu/picfrags/; minutes, not the PPU)")
     p = sub.add_parser("jobmods-entries",
                        help="add the job-module interpreter entries of runs (SPU_INTERP_ENTRIES) as extra functions")
     p.add_argument("logs", nargs="+", help="run logs")

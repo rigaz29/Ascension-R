@@ -30,6 +30,7 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | All 31 WWS job modules lifted (25 had a header form the lift skipped; two needed callback entries found from the runs): cinematic 21.7 -> 45 flips/s, menu 0.5 -> 2.0, first level 0.2 -> 1.1-3.2 ([notes](docs/notes/2026-10-27-job-modules.md)). |
 | 2026-10-27 | `usleep` from 200 us on a high-resolution timer (a core back), per-task logs quiet, EDGE lists on three SPUs: cinematic 50, menu 2.0 -> 3.6, level 2.4-4.4 flips/s. The remaining interpreted code is position-independent EDGE fragments ([notes](docs/notes/2026-10-27-host-waste-and-lanes.md)). |
 | 2026-10-27 | **3D scenes on screen.** The D3D12 path binds texture units 4-15, draws inline arrays (the whole post chain), keeps each display buffer as a target of its own, replays the display copies the post chain reads, and handles a pass that samples its own target and memory used as both depth and colour. The main menu and the first level's opening scene render, without the yellow flashes ([notes](docs/notes/2026-10-27-render-units.md)). |
+| 2026-10-27 | **L2: EDGE fragments lifted.** The 26 position-independent code pieces the EDGE jobs stream to changing LS addresses run lifted (`spu_lifter.py --pic`, runtime regions resident wherever they land): menu 3.5 -> 15 flips/s, first level 2-5 -> 5-10. Flips on the title's own command buffers are queued in the FIFO again, so the menu keeps its UI at that speed ([notes](docs/notes/2026-10-27-l2-analysis.md)). |
 
 ## Next
 

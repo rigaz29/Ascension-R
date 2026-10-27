@@ -12,6 +12,7 @@ listed at the end; nothing here is estimated unless it says so.
 | L1 job modules | 2026-10-27 | 45-48 | 2.03 | 3.2 on arrival, 1.1-2.1 after | [notes](notes/2026-10-27-job-modules.md) |
 | L3 usleep timer, L4 task logs | 2026-10-27 | 50-52 | 2.0 | not measured | process CPU 447% -> 352%; [notes](notes/2026-10-27-host-waste-and-lanes.md) |
 | EDGE on three SPUs | 2026-10-27 | 48-50 | 3.6 | 2.4-4.4 | `SPURS_MAXCONT`, port default |
+| L2 EDGE fragments (26, position-independent) | 2026-10-27 | 48-50 | 13.7-15 | 9.2-10.5 on arrival, 4.8-6 later | interpreted steps 40 -> 1.3-4 M/s; EDGE 1.3-1.8 -> 0.20-0.24 ms a run; menu now bound by workload 2 (98%); [notes](notes/2026-10-27-l2-analysis.md) |
 | re-measured with the 3D scenes drawn | 2026-10-27 | 44-50 | 3.4-3.5 | 2.0-5.3 on arrival, 1.2-1.5 later in the opening scene | profile screens 14.7; process CPU 550-640%, `spurs pm` x6 400-450% in menu and level; with `SPURS_MAXCONT=14=1,15=1,16=1`: menu 1.9-2.0, profile screens 9, level 1.1-2.4. Geometry order with EDGE on three SPUs: the same poses render the same as on one SPU, no broken meshes |
 
 ## 1. Baseline
@@ -117,8 +118,9 @@ shows it.
    threads down, flips/s not lower.
 3. **L2** (fragments). They are position-independent: the same fragment runs at changing LS
    addresses, so it needs PIC lifting (ref B 0023/0031), not one lift per placement. Exit:
-   interpreted steps under 1 M/s overall. Analysis, with the 26 fragments that hold >99% of the
-   interpreted steps and what lifting them needs: [notes](notes/2026-10-27-l2-analysis.md).
+   interpreted steps under 1 M/s overall. Done for the 26 EDGE fragments (>99% of the
+   interpreted steps): 1.3-4 M/s left, mostly the `0x718C30` block
+   ([notes](notes/2026-10-27-l2-analysis.md)).
 4. Measure again (section 6) and take L6, L7 or L8 by what bounds the frame then.
 
 Expected after 1-3 (estimate): the level bound moves from the job modules to EDGE, audio and the
