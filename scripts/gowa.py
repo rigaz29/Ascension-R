@@ -826,7 +826,7 @@ def spu_line_report(samples, syms, starts, top):
     def obj(r):
         i = bisect.bisect_right(starts, r) - 1
         return syms[i][2] if i >= 0 else ""
-    spu = [r for r in samples if r and "spu_recomp" in obj(r)]
+    spu = [r for r in samples if r and not r & 0x80000000 and "spu_recomp" in obj(r)]
     if not spu:
         print("no samples in lifted SPU code")
         return
@@ -889,7 +889,10 @@ def symbolize_rvas(args, syms, starts):
             cur = []
         elif line.strip():
             f = line.split()
-            cur.append((int(f[0], 16), int(f[1]) if len(f) > 1 else 0, int(f[2]) if len(f) > 2 else -1))
+            r = int(f[0], 16)
+            if r == 0 and args.callers and len(f) > 3 and int(f[3], 16):
+                r = int(f[3], 16) | 0x80000000          # a wait, named by its caller
+            cur.append((r, int(f[1]) if len(f) > 1 else 0, int(f[2]) if len(f) > 2 else -1))
     if not blocks:
         die("no sample blocks in %s" % args.rvas)
     end = blocks[-1][0]
@@ -901,6 +904,9 @@ def symbolize_rvas(args, syms, starts):
     def name(r):
         if r == 0:
             return "(outside the executable)", ""
+        if r & 0x80000000:
+            n, o = name(r & 0x7FFFFFFF)
+            return "(wait) " + n, o
         i = bisect.bisect_right(starts, r) - 1
         if i < 0:
             return "?", ""
@@ -925,7 +931,8 @@ def symbolize_rvas(args, syms, starts):
         for r in samples:
             n, o = name(r)
             by_fn[(n, o)] = by_fn.get((n, o), 0) + 1
-            kind = ("lifted PPU" if n.startswith("func_") else
+            kind = ("(wait) " + (o or n) if n.startswith("(wait)") else
+                    "lifted PPU" if n.startswith("func_") else
                     "lifted SPU" if "spu_recomp" in o else o or n)
             by_obj[kind] = by_obj.get(kind, 0) + 1
         tot = len(samples)
@@ -1020,6 +1027,9 @@ def main():
     p.add_argument("--thread", help="with --rvas from PS3_SAMPLE_THREAD: only this thread name")
     p.add_argument("--wid", type=int, help="with --rvas from PS3_SAMPLE_THREAD: only samples of "
                                          "SPURS workers running this workload")
+    p.add_argument("--callers", action="store_true",
+                   help="with --rvas: name a sample outside the executable by the caller in it "
+                        "found on the stack (PS3_SAMPLE_THREAD files)")
     p.add_argument("--lines", action="store_true",
                    help="with --rvas: lifted SPU samples by lifted C line and operation "
                         "(needs a build with --spu-lines)")
