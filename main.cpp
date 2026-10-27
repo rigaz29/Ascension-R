@@ -488,9 +488,10 @@ static const char* const s_pipe_wkl[18] = {
 static void pipe_report(unsigned t)
 {
     const uint32_t frame = pipe_r32(0xA0C13C), slot = (frame + 2) % 3;
-    fprintf(stderr, "[pipe] t=%us frame=%u slot=%u slot-flag=%u counters %08X %08X %08X\n",
+    fprintf(stderr, "[pipe] t=%us frame=%u slot=%u slot-flag=%u counters %08X %08X %08X flips=%u presented=%ld\n",
             t, frame, slot, pipe_r8(0xA0C12B + slot),
-            pipe_r32(0xA0B740), pipe_r32(0xA0B744), pipe_r32(0xA0B748));
+            pipe_r32(0xA0B740), pipe_r32(0xA0B744), pipe_r32(0xA0B748),
+            cellGcm_flip_request_count(), (long)g_frames_presented);
 
     /* The command ring: the title maps IO 0 at EA 0x70000000 and keeps that
      * mapping linear (MapEaIoAddress, then MapMainMemory right after it). */
@@ -628,6 +629,11 @@ static void title_environment(void)
      * the walker's "circling" rule (several full passes without reaching put,
      * then jump to put) throws away the rest of a frame. */
     env_default("GCM_FIFO_CIRCLE_PASSES", "0");
+    /* The walker takes no time between two GET_REPORTs, and RsxSync turns each
+     * report into a post-process batch and its task signals: batch N+1 came
+     * while the lifted tasks were still on batch N, and its signal ended their
+     * barrier waits instead. A report waits while those tasks are in a round. */
+    env_default("GCM_REPORT_SPU_HOLD_MS", "3000");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

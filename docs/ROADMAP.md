@@ -13,6 +13,9 @@ the same engine and SPU programs on ps3recomp, from disc releases, and are past 
 - No frame is flipped. The main thread waits per frame slot (`0x41CBDC`) for the batch counters at
   `0xA0B740`; the RSX waits (`SEMAPHORE_ACQUIRE`, IO `0x2FEE54`) for the MLAA tasks' label; the MLAA
   control block (`0xA1FDB0`) is empty because RsxSync (wid 17) takes no entry of its job list.
+- **Update, end of 2026-10-27:** steps 0-3 done. The first-use screens are drawn and take pad
+  input, with unreadable text, at about 2.4 frames/s
+  ([notes/2026-10-27-first-screen.md](notes/2026-10-27-first-screen.md)). Next: step 5.
 
 ## 2. How a frame is made (both refs, confirmed here where marked)
 
@@ -40,12 +43,13 @@ vblank handler ─► patches the frame's park; flip
 | frame 2 | 32 workloads, tempArea, flags1 | done |
 | frame 2 | GET_REPORT to main memory, SEMAPHORE_ACQUIRE blocks, park/acquire exempt from stuck-get | done (upstream + port env) |
 | frame 2 | RsxSync consumes its 4-list job list | done (policy modules of wids 16-31 ran nothing) |
-| frame 2 | MLAA tasks get batches; Task2 without creation signal; Taskset2 event flags | done; batches untested |
-| frame 2 | each HLE taskset its own wid (SPU-side SendSignal kicks the taskset's wid; ref A allocates 31 down) | **missing: step 2** |
-| loading | SPU-created tasks in a sibling taskset start (two-stage batch, ref A M0.23, ref B 0019) | **missing: step 3** |
+| frame 2 | MLAA tasks get batches; Task2 without creation signal; Taskset2 event flags | done |
+| frame 2 | a report waits while signal-driven tasks run a round (lifted MLAA is slow; ref B 0029) | done (`GCM_REPORT_SPU_HOLD_MS`) |
+| frame 2 | each HLE taskset its own wid (SPU-side SendSignal kicks the taskset's wid; ref A allocates 31 down) | not needed so far |
+| loading | SPU-created tasks in a sibling taskset start (two-stage batch, ref A M0.23, ref B 0019) | done |
 | loading | one start per task, taskset bitsets under the lock line | done (upstream) |
-| loading | `GCM_FIFO_CIRCLE_PASSES=0` (the title's `put` stays fixed, ring driven by parks) | **missing: step 0** |
-| loading | PPU lifter fixes: spill/reload, spilled jump-table base | spill done; jump-table base needs a relift (**step 0**) |
+| loading | `GCM_FIFO_CIRCLE_PASSES=0` (the title's `put` stays fixed, ring driven by parks) | done |
+| loading | PPU lifter fixes: spill/reload, spilled jump-table base | done |
 | stability | MFC engines released, SetFlipCommand wrap only for SDK contexts, `bisl rt==ra` | done (upstream) |
 | menus | X16 font atlas, framebuffer sRGB, texture gamma, `DDX`/`DDY` | X16 done; the rest unchecked in D3D12 (**step 5**) |
 | cinematic | `cellVdec` with FFmpeg | present (God of War HD); formats unchecked (**step 6**) |
@@ -83,7 +87,10 @@ order: what the module expects at `data+0x10..0x2C` for a four-list workload; th
 the list's lane mask (`0x1F`); readyCount/flag semantics (a readyCount level alone was ruled out).
 Done when the tickets move and the control block at `0xA1FDB0` gets a batch.
 
-### Step 2: the MLAA batch round trip (the current wall)
+### Step 2: the MLAA batch round trip (done 2026-10-27)
+
+Cause: batch N+1's signal ended batch N's barrier waits; fixed by holding reports while the tasks
+run a round. See [notes/2026-10-27-first-screen.md](notes/2026-10-27-first-screen.md).
 
 Measured: batch 1 served but one task short (barrier 4 of 5, counter one short), batch 2 untouched,
 all five tasks in WAIT_SIGNAL. First tool: a per-taskset signal timeline.
@@ -94,7 +101,10 @@ matrix). Lifted MLAA is slow (ref A: ~1.7 s a batch); if batches are lost, serve
 the way ref A does (no anti-aliasing) and keep the lifted path behind a switch. Done when label
 `0x510` takes the batch number and the RSX passes `0x2FEE54`.
 
-### Step 3: the first flips
+### Step 3: the first flips (done 2026-10-27)
+
+The stop after step 2 was the two-stage SPU task batch, as expected: tasks an SPU created in a
+sibling taskset never started. Screenshot: the brightness calibration screen.
 
 Batch counters at `0xA0B740` reach 0, the main thread leaves `0x41CBDC`, flips happen. Expected
 next stops from the refs: the two-stage SPU task batch (SPU-created tasks, step 3 of the matrix),
@@ -105,7 +115,10 @@ EDGE holes in the ring. Done when `gowa_drive.ps1` gets a screenshot.
 The save-data prompt (`cellSaveData`, works in God of War HD), then the loading screen. Ref B reached
 the first-use dialog right after the SPU-created task fix.
 
-### Step 5: what is drawn
+### Step 5: what is drawn (the current wall)
+
+Measured: the calibration and settings screens draw their text as blocks, and the calibration
+screen's right half is lighter than its left.
 
 D3D12 backend against this title: sRGB framebuffer, texture gamma, `DDX`/`DDY` in fragment programs
 (ref B's live draw needed all three for readable menus), then a frame-by-frame comparison with RPCS3.
