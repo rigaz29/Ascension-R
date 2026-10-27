@@ -259,7 +259,17 @@ add_executable(${PROJECT_NAME}
 #                          audio mixer's SPU time in the God of War HD port.
 #                          PORT_SPU_AVX2=OFF keeps SSE4.1 only, for CPUs without
 #                          AVX2.
+#   -mfma               -- with AVX2 (every AVX2 CPU has FMA3): SPU_FLOAT_RZ's fma is
+#                          one vfmadd. -ffp-contract=off keeps clang from fusing
+#                          anything else, as built without FMA3 it could not.
+#   PORT_SPU_LINES      -- line tables for the lifted SPU code and a PDB, so a
+#                          PS3_SAMPLE_THREAD profile names the lifted C line,
+#                          i.e. the SPU instruction, each sample landed on
+#                          (gowa.py symbolize --lines). Line tables do not
+#                          change the generated code; the link keeps /OPT:REF
+#                          and /OPT:ICF, which /DEBUG would otherwise drop.
 option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
+option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling)" OFF)
 if(SPU_SOURCES)
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
@@ -267,9 +277,15 @@ if(SPU_SOURCES)
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(spu_opts -O2 -msse4.1)
         if(PORT_SPU_AVX2)
-            list(APPEND spu_opts -mavx2)
+            list(APPEND spu_opts -mavx2 -mfma -ffp-contract=off)
+        endif()
+        if(PORT_SPU_LINES)
+            list(APPEND spu_opts -gline-tables-only)
         endif()
         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS "${spu_opts}")
+    endif()
+    if(PORT_SPU_LINES AND MSVC)
+        target_link_options(${PROJECT_NAME} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     endif()
 endif()
 

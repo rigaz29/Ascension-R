@@ -14,6 +14,7 @@ listed at the end; nothing here is estimated unless it says so.
 | EDGE on three SPUs | 2026-10-27 | 48-50 | 3.6 | 2.4-4.4 | `SPURS_MAXCONT`, port default |
 | L2 EDGE fragments (26, position-independent) | 2026-10-27 | 48-50 | 13.7-15 | 9.2-10.5 on arrival, 4.8-6 later | interpreted steps 40 -> 1.3-4 M/s; EDGE 1.3-1.8 -> 0.20-0.24 ms a run; menu now bound by workload 2 (98%); [notes](notes/2026-10-27-l2-analysis.md) |
 | re-measured with the 3D scenes drawn | 2026-10-27 | 44-50 | 3.4-3.5 | 2.0-5.3 on arrival, 1.2-1.5 later in the opening scene | profile screens 14.7; process CPU 550-640%, `spurs pm` x6 400-450% in menu and level; with `SPURS_MAXCONT=14=1,15=1,16=1`: menu 1.9-2.0, profile screens 9, level 1.1-2.4. Geometry order with EDGE on three SPUs: the same poses render the same as on one SPU, no broken meshes |
+| L7a SPU single precision on the host's RZ mode (x86), `shufb` | 2026-10-28 | not measured | 18.0-19.1 (13.0 with `SPU_FLOAT_RZ=0`) | 5.0-6.9 (4.4-5.9 with `=0`) | per-thread profiler: float emulation was ~70% of workload 2, 25-38% of audio and EDGE; bit-identical (unit test, and 8.4 billion ops checked in game); [notes](notes/2026-10-28-l7-analysis.md) |
 
 ## 1. Baseline
 
@@ -122,6 +123,8 @@ shows it.
    interpreted steps): 1.3-4 M/s left, mostly the `0x718C30` block
    ([notes](notes/2026-10-27-l2-analysis.md)).
 4. Measure again (section 6) and take L6, L7 or L8 by what bounds the frame then.
+   Done for L7's first two items (float on the host's round-toward-zero mode, `shufb`): menu +42%
+   ([notes](notes/2026-10-28-l7-analysis.md)); the per-thread profile says what is next.
 
 Expected after 1-3 (estimate): the level bound moves from the job modules to EDGE, audio and the
 main thread; ref A was at 1-1.5 level frames/s at the equivalent point and went to ~10 with the
@@ -148,6 +151,7 @@ shows `[cellVdec] Close`. Times above count from that line.
 | `SPU_INTERP_STATS=<s>` | interpreted SPU steps per second, hottest pages and entries |
 | `PS3_FTRACE=<start>:<secs>:<file>` + `ps3recomp/tools/ftrace_report.py` | per-frame timeline: PPU blocking by call site, SPU busy by workload, RSX drain |
 | `PS3_SAMPLE=<ms>` `PS3_SAMPLE_MAIN=1` `PS3_SAMPLE_RVAS=<file>` + `gowa.py symbolize --rvas <file> --last <s>` | the main thread's time by lifted PPU function and runtime function |
+| `PS3_SAMPLE_THREAD=spurs pm,ppu main,...` with the above, + `symbolize --thread <name> --wid <n> --lines` | the same per named thread; a SPURS worker's samples also by the workload it ran; with a `build --spu-lines` build, the lifted SPU samples by SPU instruction and helper |
 | `PS3_POLLTOP=<s>` | `usleep` call sites by thread |
 
 **Rules.**
@@ -163,8 +167,6 @@ shows `[cellVdec] Close`. Times above count from that line.
 
 - `gowa.py bench --scene cinematic|menu|level`: start, drive the route with `PAD_FILE`, collect
   the windows, write JSON, and compare with a saved baseline (as `gow1hd.py check` does).
-- Thread names in `PS3_SAMPLE_RVAS` records, so the SPU workers can be profiled apart from the
-  main thread.
 
 ## Runs behind these numbers
 

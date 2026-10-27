@@ -663,6 +663,7 @@ def cmd_build(args):
               "-DCMAKE_C_COMPILER=" + compiler, "-DCMAKE_CXX_COMPILER=" + cxx,
               "-DPS3RECOMP_DIR=" + PS3RECOMP, "-DRECOMP_DIR=" + RECOMPILED,
               "-DPORT_SPU_INPUTS=" + spu_inputs,
+              "-DPORT_SPU_LINES=" + ("ON" if args.spu_lines else "OFF"),
               "-DPython3_EXECUTABLE=" + sys.executable] + ff_opts, env=env)
     if rc:
         die("cmake configure failed")
@@ -785,23 +786,117 @@ def cmd_run(args):
     return rc
 
 
+def llvm_tool(name):
+    """An LLVM tool from the same places toolchain_env looks for clang-cl."""
+    exe = name + (".exe" if os.name == "nt" else "")
+    for cand in (load_local().get("llvm_bin"), os.environ.get("GOWA_LLVM_BIN"),
+                 os.path.join(os.path.dirname(ROOT), "llvm", "bin")):
+        if cand and os.path.isfile(os.path.join(cand, exe)):
+            return os.path.join(cand, exe)
+    return shutil.which(name)
+
+
+def spu_line_frames(rvas):
+    """RVA -> the frames llvm-symbolizer gives for it (innermost first) as
+    (function, file, line), from the PDB a PORT_SPU_LINES build writes."""
+    exe = os.path.join(BUILD, "GowARecomp.exe")
+    if not os.path.exists(os.path.join(BUILD, "GowARecomp.pdb")):
+        die("no build/GowARecomp.pdb: build with --spu-lines")
+    sym = llvm_tool("llvm-symbolizer")
+    if not sym:
+        die("llvm-symbolizer not found")
+    base = 0x140000000
+    rvas = sorted(rvas)
+    p = subprocess.run([sym, "--obj=" + exe, "--output-style=JSON", "--relativenames"],
+                       input="\n".join("0x%X" % (base + r) for r in rvas),
+                       capture_output=True, text=True)
+    out = {}
+    for r, line in zip(rvas, p.stdout.splitlines()):
+        frames = []
+        for s in json.loads(line).get("Symbol", []):
+            frames.append((s.get("FunctionName", "?"), s.get("FileName", ""), s.get("Line", 0)))
+        out[r] = frames
+    return out
+
+
+def spu_line_report(samples, syms, starts, top):
+    """--lines: the lifted SPU samples by lifted C line (one SPU instruction
+    each) and by the kind of operation on it: the helper it is inside, else
+    the first helper the line calls, else the shape of the line."""
+    def obj(r):
+        i = bisect.bisect_right(starts, r) - 1
+        return syms[i][2] if i >= 0 else ""
+    spu = [r for r in samples if r and "spu_recomp" in obj(r)]
+    if not spu:
+        print("no samples in lifted SPU code")
+        return
+    frames = spu_line_frames(set(spu))
+    src_cache = {}
+
+    def text(path, line):
+        full = path if os.path.isabs(path) else os.path.join(BUILD, path)
+        if full not in src_cache:
+            try:
+                src_cache[full] = open(full, encoding="utf-8", errors="replace").read().split("\n")
+            except OSError:
+                src_cache[full] = []
+        src = src_cache[full]
+        return src[line - 1].strip() if 0 < line <= len(src) else ""
+
+    by_line, by_kind = {}, {}
+    for r in spu:
+        fr = frames.get(r) or []
+        outer = next((f for f in reversed(fr) if f[1].endswith("spu_recomp.c")), None)
+        inner = fr[0] if fr else ("?", "", 0)
+        if outer is None:
+            key, kind = ("(no line)", "", 0), "(no line)"
+        else:
+            key = (outer[0], outer[1], outer[2])
+            if inner is not outer and not inner[1].endswith("spu_recomp.c"):
+                kind = inner[0]
+            else:
+                t = text(outer[1], outer[2])
+                m = re.search(r"\b(spu_\w+|SPU_\w+)\s*\(", t)
+                kind = (m.group(1) if m else
+                        "register copy" if re.match(r"ctx->gpr\[\d+\] = ctx->gpr\[\d+\];", t) else
+                        "branch" if t.startswith(("if", "goto", "}", "return")) else
+                        "line 0" if outer[2] == 0 else "other: " + t[:40])
+        by_line[key] = by_line.get(key, 0) + 1
+        by_kind[kind] = by_kind.get(kind, 0) + 1
+    tot = len(spu)
+    print("lifted SPU samples: %d" % tot)
+    print("by operation:")
+    for k, c in sorted(by_kind.items(), key=lambda kv: -kv[1])[:top]:
+        print("  %5.1f%%  %s" % (100.0 * c / tot, k))
+    print("by lifted line:")
+    for (fn, path, line), c in sorted(by_line.items(), key=lambda kv: -kv[1])[:top]:
+        print("  %5.1f%%  %s:%d  %s" % (100.0 * c / tot, fn[:44], line, text(path, line)[:70]))
+
+
 def symbolize_rvas(args, syms, starts):
     """--rvas: a PS3_SAMPLE_RVAS file (one RVA per sample, "# <ms>" after each
     report's block), counted by function and by object file over the last
-    --last seconds. Lifted PPU functions show as func_XXXXXXXX."""
-    blocks, cur = [], []
+    --last seconds. Lifted PPU functions show as func_XXXXXXXX. A file from
+    PS3_SAMPLE_THREAD tags each RVA with the thread name it matched; each name
+    is then counted on its own (--thread picks one), and a SPURS worker's
+    sample with the workload it was running (--wid picks one)."""
+    blocks, cur, names = [], [], []
     for line in open(args.rvas):
-        if line.startswith("#"):
+        if line.startswith("#!"):
+            names = line.split(None, 2)[2].rstrip("\n").split("|")
+        elif line.startswith("#"):
             blocks.append((int(line.split()[1]), cur))
             cur = []
         elif line.strip():
-            cur.append(int(line, 16))
+            f = line.split()
+            cur.append((int(f[0], 16), int(f[1]) if len(f) > 1 else 0, int(f[2]) if len(f) > 2 else -1))
     if not blocks:
         die("no sample blocks in %s" % args.rvas)
     end = blocks[-1][0]
     picked = [b for t, b in blocks if t >= end - args.last * 1000]
-    samples = [r for b in picked for r in b]
-    say("%d samples in the last %.0f s (%d reports)" % (len(samples), args.last, len(picked)))
+    tagged = [s for b in picked for s in b if args.wid is None or s[2] == args.wid]
+    say("%d samples in the last %.0f s (%d reports)" % (len(tagged), args.last, len(picked)))
+    names = names or ["all threads"]
 
     def name(r):
         if r == 0:
@@ -812,20 +907,36 @@ def symbolize_rvas(args, syms, starts):
         m = re.match(r"\?(func_[0-9A-F]{8})@@", syms[i][1])
         return (m.group(1) if m else syms[i][1]), syms[i][2]
 
-    by_fn, by_obj = {}, {}
-    for r in samples:
-        n, o = name(r)
-        by_fn[(n, o)] = by_fn.get((n, o), 0) + 1
-        kind = ("lifted PPU" if n.startswith("func_") else
-                "lifted SPU" if "spu_recomp" in o else o or n)
-        by_obj[kind] = by_obj.get(kind, 0) + 1
-    tot = len(samples) or 1
-    print("by object file:")
-    for k, c in sorted(by_obj.items(), key=lambda kv: -kv[1])[:15]:
-        print("  %5.1f%%  %s" % (100.0 * c / tot, k))
-    print("by function:")
-    for (n, o), c in sorted(by_fn.items(), key=lambda kv: -kv[1])[:args.top]:
-        print("  %5.1f%%  %-48s %s" % (100.0 * c / tot, n[:48], o))
+    for cls, cname in enumerate(names):
+        if args.thread and not cname.startswith(args.thread):
+            continue
+        samples = [r for r, c, w in tagged if c == cls]
+        if not samples:
+            continue
+        print("=== %s: %d samples ===" % (cname, len(samples)))
+        wids = {}
+        for r, c, w in tagged:
+            if c == cls and w >= 0:
+                wids[w] = wids.get(w, 0) + 1
+        if wids:
+            print("by workload: " + ", ".join("w%d %.1f%%" % (w, 100.0 * n / len(samples))
+                                              for w, n in sorted(wids.items(), key=lambda kv: -kv[1])))
+        by_fn, by_obj = {}, {}
+        for r in samples:
+            n, o = name(r)
+            by_fn[(n, o)] = by_fn.get((n, o), 0) + 1
+            kind = ("lifted PPU" if n.startswith("func_") else
+                    "lifted SPU" if "spu_recomp" in o else o or n)
+            by_obj[kind] = by_obj.get(kind, 0) + 1
+        tot = len(samples)
+        print("by object file:")
+        for k, c in sorted(by_obj.items(), key=lambda kv: -kv[1])[:15]:
+            print("  %5.1f%%  %s" % (100.0 * c / tot, k))
+        print("by function:")
+        for (n, o), c in sorted(by_fn.items(), key=lambda kv: -kv[1])[:args.top]:
+            print("  %5.1f%%  %-48s %s" % (100.0 * c / tot, n[:48], o))
+        if args.lines:
+            spu_line_report(samples, syms, starts, args.top)
     return 0
 
 
@@ -890,6 +1001,9 @@ def main():
     p.add_argument("--fresh", action="store_true", help="delete build/ and configure again")
     p.add_argument("--no-spu", action="store_true",
                    help="don't lift and register the game ELF's embedded SPU programs")
+    p.add_argument("--spu-lines", action="store_true",
+                   help="line tables for the lifted SPU code and a PDB, for "
+                        "`symbolize --rvas --lines` (PORT_SPU_LINES; same code)")
     p = sub.add_parser("run", help="start the port")
     p.add_argument("--quiet", action="store_true", help="write the log only, not the console")
     p.add_argument("--seconds", type=int, default=0, help="stop the port after this many seconds")
@@ -903,6 +1017,12 @@ def main():
     p.add_argument("--rvas", help="a PS3_SAMPLE_RVAS file instead of a log: count every sample")
     p.add_argument("--last", type=float, default=1e9, help="with --rvas: only the last N seconds")
     p.add_argument("--top", type=int, default=30, help="with --rvas: functions to list")
+    p.add_argument("--thread", help="with --rvas from PS3_SAMPLE_THREAD: only this thread name")
+    p.add_argument("--wid", type=int, help="with --rvas from PS3_SAMPLE_THREAD: only samples of "
+                                         "SPURS workers running this workload")
+    p.add_argument("--lines", action="store_true",
+                   help="with --rvas: lifted SPU samples by lifted C line and operation "
+                        "(needs a build with --spu-lines)")
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "lle": cmd_lle, "build": cmd_build,

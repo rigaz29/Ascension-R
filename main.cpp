@@ -760,6 +760,13 @@ static void title_environment(void)
      * its post chain into a third within one frame, and with a single
      * backbuffer each overwrote the frame on screen. */
     env_default("RSX_DISPLAY_RT", "1");
+    /* SPU single precision on the host's own float ops: SPU code runs with
+     * MXCSR at round toward zero with FTZ and DAZ, which is how the SPU
+     * rounds, so fa/fm/fma need no exact emulation (bit-identical results,
+     * runtime/spu/tests/test_spu_float_exact.c). That emulation was ~70% of
+     * the menu's limiting workload (docs/notes/2026-10-28-l7-analysis.md).
+     * SPU_FLOAT_RZ=0 goes back to it. */
+    env_default("SPU_FLOAT_RZ", "1");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));
