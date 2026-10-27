@@ -13,9 +13,10 @@ the same engine and SPU programs on ps3recomp, from disc releases, and are past 
 - No frame is flipped. The main thread waits per frame slot (`0x41CBDC`) for the batch counters at
   `0xA0B740`; the RSX waits (`SEMAPHORE_ACQUIRE`, IO `0x2FEE54`) for the MLAA tasks' label; the MLAA
   control block (`0xA1FDB0`) is empty because RsxSync (wid 17) takes no entry of its job list.
-- **Update, end of 2026-10-27:** steps 0-3 done. The first-use screens are drawn and take pad
-  input, with unreadable text, at about 2.4 frames/s
-  ([notes/2026-10-27-first-screen.md](notes/2026-10-27-first-screen.md)). Next: step 5.
+- **Update, end of 2026-10-27:** steps 0-3 done, step 5's text part done. The first-use screens
+  are drawn, read correctly (gold text, sRGB) and take pad input, at about 2.4 frames/s
+  ([first screen](notes/2026-10-27-first-screen.md), [text](notes/2026-10-27-text.md)). Next: step 4
+  (past the first-use screens), then 6 and 7.
 
 ## 2. How a frame is made (both refs, confirmed here where marked)
 
@@ -51,7 +52,8 @@ vblank handler ─► patches the frame's park; flip
 | loading | `GCM_FIFO_CIRCLE_PASSES=0` (the title's `put` stays fixed, ring driven by parks) | done |
 | loading | PPU lifter fixes: spill/reload, spilled jump-table base | done |
 | stability | MFC engines released, SetFlipCommand wrap only for SDK contexts, `bisl rt==ra` | done (upstream) |
-| menus | X16 font atlas, framebuffer sRGB, texture gamma, `DDX`/`DDY` | X16 done; the rest unchecked in D3D12 (**step 5**) |
+| menus | X16 font atlas, framebuffer sRGB, texture gamma, `DDX`/`DDY` | done in D3D12 (the vtable path; X16 also needed the SRV format) |
+| menus | texture units 4-15 in the D3D12 vtable path (it binds t0-t3) | open; nothing visible missing yet |
 | cinematic | `cellVdec` with FFmpeg | present (God of War HD); formats unchecked (**step 6**) |
 | speed | the other 25 `0xC0DEC0DE` job modules, indirect entries, kernel pass without the 1 ms sleep, MLAA cost (lifted ~100x slow) | **step 7** |
 | frame order | hold a patched park while SPURS tasks run (ref B 0017), readyCount as a level (ref B 0011) | later, if frames misorder |
@@ -110,15 +112,19 @@ Batch counters at `0xA0B740` reach 0, the main thread leaves `0x41CBDC`, flips h
 next stops from the refs: the two-stage SPU task batch (SPU-created tasks, step 3 of the matrix),
 EDGE holes in the ring. Done when `gowa_drive.ps1` gets a screenshot.
 
-### Step 4: loading screen and first-use dialog
+### Step 4: loading screen and first-use dialog (the current wall)
+
+Reached: the brightness calibration and screen-adjust screens, driven with `PAD_FILE`. Next: what
+follows them (save-data prompt, then loading).
 
 The save-data prompt (`cellSaveData`, works in God of War HD), then the loading screen. Ref B reached
 the first-use dialog right after the SPU-created task fix.
 
-### Step 5: what is drawn (the current wall)
+### Step 5: what is drawn (text done 2026-10-27)
 
-Measured: the calibration and settings screens draw their text as blocks, and the calibration
-screen's right half is lighter than its left.
+Text reads, in its gold, on the calibration and settings screens
+([notes/2026-10-27-text.md](notes/2026-10-27-text.md)). The calibration screen's lighter right half
+is its design. Left for later: units 4-15, a comparison with RPCS3 on a 3D scene.
 
 D3D12 backend against this title: sRGB framebuffer, texture gamma, `DDX`/`DDY` in fragment programs
 (ref B's live draw needed all three for readable menus), then a frame-by-frame comparison with RPCS3.

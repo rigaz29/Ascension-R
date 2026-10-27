@@ -9,7 +9,7 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 0 Setup | done: repo, submodule (`rigaz29/ps3recomp`, branch `gowa`), `scripts/gowa.py`, decrypted executables |
 | 1 Analysis | done: see [docs/ANALYSIS.md](docs/ANALYSIS.md) |
 | 2 First build | done: `GowARecomp.exe` links, with the 4 SPU programs, the `Wws_Job` policy module and the lifted `libsre` |
-| 3 First boot | done: the title reaches its first-use screens (brightness calibration, then settings), which take pad input; text is unreadable, ~2.4 frames/s |
+| 3 First boot | done: the title reaches its first-use screens (brightness calibration, then screen adjust), which read correctly and take pad input; ~2.4 frames/s |
 | 4 Missing HLE | boot path done: SPURS2, Taskset2/Task2, workload flag, `cellGamePatchCheck` |
 | 5 SPU | started: the 4 embedded SPU programs (post-process, two-phase particle tasks, Edge Zlib), the `Wws_Job` policy module and its 6 engine-embedded job modules run lifted |
 | 6-13 | not started |
@@ -24,9 +24,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | SPURS2 with 32 workloads (EDGE2 and RsxSync were refused), the MLAA tasks no longer signalled at creation, Taskset2 event flags, the RSX waiting on its post-process semaphore. Two other ports of this title studied for the frame pipeline ([notes](docs/notes/2026-10-27-frame-pipeline.md)). |
 | 2026-10-27 | Roadmap steps 0 and 1: a frame pipeline probe (`GOWA_PIPE`), a per-workload policy trace, a relift with the merged lifter; EDGE2 and RsxSync's policy modules now run (a wid < 16 check), RsxSync takes its job list and the MLAA tasks get their batches ([notes](docs/notes/2026-10-27-rsxsync.md)). |
 | 2026-10-27 | **First screen.** Roadmap steps 2 and 3: a report waits while the post-process tasks run a batch (batch N+1's signal ended batch N's barrier waits), and tasks an SPU creates in a sibling taskset now start (the two-phase particle work). The brightness calibration screen is drawn and Cross moves on ([notes](docs/notes/2026-10-27-first-screen.md)). |
+| 2026-10-27 | Readable text: the D3D12 path binds the X16 font atlas with the right view format, the fragment decompiler does DDX/DDY, and the shader packer's sRGB output and texture gamma are modelled ([notes](docs/notes/2026-10-27-text.md)). |
 
 ## Next
 
-The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 5: the first-use screens draw
-their text as blocks (font atlas, sRGB/gamma, `DDX`/`DDY` in D3D12), then the save-data prompt, the
-cinematic and speed.
+The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 4: past the first-use screens
+(save-data prompt, loading), then the cinematic (step 6) and speed (step 7).
