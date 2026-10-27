@@ -767,6 +767,13 @@ static void title_environment(void)
      * the menu's limiting workload (docs/notes/2026-10-28-l7-analysis.md).
      * SPU_FLOAT_RZ=0 goes back to it. */
     env_default("SPU_FLOAT_RZ", "1");
+    /* Every MFC channel access looks up its context's DMA engine: a shared
+     * lock and a walk over every context's engine, and the policy modules
+     * keep one context per workload and SPU. That was ~10% of the SPU
+     * workers' time in the first level. The runtime's per-thread memo of the
+     * last context hits for a whole run (docs/notes/2026-10-28-level-after-l7.md).
+     * SPU_MFC_LOOKUP_CACHE=0 goes back to the locked walk. */
+    env_default("SPU_MFC_LOOKUP_CACHE", "1");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

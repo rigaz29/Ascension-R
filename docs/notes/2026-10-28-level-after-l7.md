@@ -86,3 +86,20 @@ game's.
 2. Profile again; then the dispatch path (`spu_indirect_branch`, `spu_lifted_lookup`,
    `spu_drain_call`) and the PIC verification.
 3. Lifted code: LS access and function entries.
+
+## Result: the lookup cache as the port default
+
+`SPU_MFC_LOOKUP_CACHE=1` in `main.cpp`. A/B against `=0`, two runs each, alternated, only
+`GOWA_THREADS`:
+
+| | `=0` | `=1` |
+|---|---|---|
+| menu, from 25 s after the movie | 18.5-19.8 (median ~19.05) | 19.7-20.4 (median ~20.0), +5% |
+| first level, 10-70 s in | 4.7-6.9 (median 6.26) | 5.7-8.0 (median 7.31), +17% |
+
+At every matching point of the level the cached side was equal or higher. The menu gains less:
+it is bound by workload 2 and the main thread's own work, not by DMA lookups.
+
+Seen in both sides' level screenshots, so not from this: in the scene after the first
+quick-time event the background behind the characters is black where a sky should be (with the
+black patch above, for a comparison with RPCS3).

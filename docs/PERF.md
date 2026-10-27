@@ -15,6 +15,7 @@ listed at the end; nothing here is estimated unless it says so.
 | L2 EDGE fragments (26, position-independent) | 2026-10-27 | 48-50 | 13.7-15 | 9.2-10.5 on arrival, 4.8-6 later | interpreted steps 40 -> 1.3-4 M/s; EDGE 1.3-1.8 -> 0.20-0.24 ms a run; menu now bound by workload 2 (98%); [notes](notes/2026-10-27-l2-analysis.md) |
 | re-measured with the 3D scenes drawn | 2026-10-27 | 44-50 | 3.4-3.5 | 2.0-5.3 on arrival, 1.2-1.5 later in the opening scene | profile screens 14.7; process CPU 550-640%, `spurs pm` x6 400-450% in menu and level; with `SPURS_MAXCONT=14=1,15=1,16=1`: menu 1.9-2.0, profile screens 9, level 1.1-2.4. Geometry order with EDGE on three SPUs: the same poses render the same as on one SPU, no broken meshes |
 | L7a SPU single precision on the host's RZ mode (x86), `shufb` | 2026-10-28 | not measured | 18.0-19.1 (13.0 with `SPU_FLOAT_RZ=0`) | 5.0-6.9 (4.4-5.9 with `=0`) | per-thread profiler: float emulation was ~70% of workload 2, 25-38% of audio and EDGE; bit-identical (unit test, and 8.4 billion ops checked in game); [notes](notes/2026-10-28-l7-analysis.md) |
+| MFC engine lookup cached per thread | 2026-10-28 | not measured | 19.7-20.4 (19.05 with `SPU_MFC_LOOKUP_CACHE=0`) | 5.7-8.0, median 7.31 (6.26 with `=0`) | the locked walk over every context's DMA engine was ~10% of the SPU workers; the main thread polls the job graph, so L8 waits; [notes](notes/2026-10-28-level-after-l7.md) |
 
 ## 1. Baseline
 
