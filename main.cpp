@@ -53,6 +53,7 @@
  * there is nothing to shim: the 15.6 ms default timer granularity this works
  * around is a Windows problem. */
 #include <timeapi.h>
+#include <tlhelp32.h>   /* GOWA_THREADS: the process's thread list */
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -559,6 +560,118 @@ static DWORD WINAPI pipe_probe(LPVOID arg)
 }
 
 /* ---------------------------------------------------------------------------
+ * Per-thread CPU table
+ * -----------------------------------------------------------------------*/
+/* GOWA_THREADS=<seconds>: every so many seconds, how busy each host thread
+ * was (percent of one core over the window), by the name the runtime gives it
+ * ("ppu main", "spurs kernel", "spu job", "frame clock", ...), with the flips
+ * and presents of the window and the threads that started and ended in it.
+ * CPU of threads that both started and ended inside the window is the
+ * process total less the live threads ("gone"). This is the first number to
+ * read before changing anything for speed: which side of the frame is busy. */
+#ifdef _WIN32
+static DWORD WINAPI thread_table(LPVOID arg)
+{
+    const unsigned every = (unsigned)(uintptr_t)arg;
+    typedef HRESULT (WINAPI *get_desc_fn)(HANDLE, PWSTR*);
+    const get_desc_fn get_desc = (get_desc_fn)(void*)GetProcAddress(
+        GetModuleHandleA("kernel32.dll"), "GetThreadDescription");
+    enum { MAXT = 1024 };
+    static DWORD tid_prev[MAXT], tid_now[MAXT];
+    static ULONGLONG cpu_prev[MAXT], cpu_now[MAXT];
+    static char name_now[MAXT][48];
+    int n_prev = 0;
+    const DWORD pid = GetCurrentProcessId();
+    auto ft64 = [](const FILETIME& f) { return ((ULONGLONG)f.dwHighDateTime << 32) | f.dwLowDateTime; };
+    auto process_cpu = [&]() {
+        FILETIME c, e, k, u;
+        GetProcessTimes(GetCurrentProcess(), &c, &e, &k, &u);
+        return ft64(k) + ft64(u);
+    };
+    ULONGLONG wall_prev = GetTickCount64(), proc_prev = process_cpu();
+    unsigned flips_prev = cellGcm_flip_request_count();
+    LONG pres_prev = g_frames_presented;
+    unsigned t = 0;
+    for (;;) {
+        Sleep(every * 1000u);
+        t += every;
+        int n = 0;
+        ULONGLONG live_delta = 0;
+        HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        THREADENTRY32 te; te.dwSize = sizeof te;
+        int started = 0;
+        for (BOOL ok = Thread32First(snap, &te); ok && n < MAXT; ok = Thread32Next(snap, &te)) {
+            if (te.th32OwnerProcessID != pid) continue;
+            HANDLE h = OpenThread(THREAD_QUERY_LIMITED_INFORMATION, FALSE, te.th32ThreadID);
+            if (!h) continue;
+            FILETIME c, e, k, u;
+            if (!GetThreadTimes(h, &c, &e, &k, &u)) { CloseHandle(h); continue; }
+            tid_now[n] = te.th32ThreadID;
+            cpu_now[n] = ft64(k) + ft64(u);
+            snprintf(name_now[n], sizeof name_now[n], "tid %lu", (unsigned long)te.th32ThreadID);
+            PWSTR w = NULL;
+            if (get_desc && SUCCEEDED(get_desc(h, &w)) && w && w[0]) {
+                int i = 0;
+                for (; w[i] && i < 47; i++) name_now[n][i] = (char)(w[i] < 128 ? w[i] : '?');
+                name_now[n][i] = 0;
+            }
+            if (w) LocalFree(w);
+            CloseHandle(h);
+            ULONGLONG before = 0; int seen = 0;
+            for (int j = 0; j < n_prev; j++) if (tid_prev[j] == tid_now[n]) { before = cpu_prev[j]; seen = 1; break; }
+            if (!seen) started++;
+            live_delta += cpu_now[n] - before;
+            n++;
+        }
+        CloseHandle(snap);
+        int ended = 0;
+        for (int j = 0; j < n_prev; j++) {
+            int alive = 0;
+            for (int i = 0; i < n; i++) if (tid_now[i] == tid_prev[j]) { alive = 1; break; }
+            ended += !alive;
+        }
+        const ULONGLONG wall = GetTickCount64(), proc = process_cpu();
+        const double win = (double)(wall - wall_prev) * 1e4;   /* 100 ns units */
+        const unsigned flips = cellGcm_flip_request_count();
+        const LONG pres = g_frames_presented;
+        const double gone = proc - proc_prev > live_delta ? (double)(proc - proc_prev - live_delta) : 0.0;
+        fprintf(stderr, "[threads] t=%us flips=%.2f/s presents=%.2f/s process=%.0f%% gone=%.0f%% "
+                        "threads=%d started=%d ended=%d\n",
+                t, (flips - flips_prev) * 1e7 / win, (pres - pres_prev) * 1e7 / win,
+                (proc - proc_prev) * 100.0 / win, gone * 100.0 / win, n, started, ended);
+        /* Group by name: "spu job" x12 is one line; numbered helpers too. */
+        static char gname[MAXT][48]; static double gcpu[MAXT]; static int gcount[MAXT];
+        int g = 0;
+        for (int i = 0; i < n; i++) {
+            ULONGLONG before = 0;
+            for (int j = 0; j < n_prev; j++) if (tid_prev[j] == tid_now[i]) { before = cpu_prev[j]; break; }
+            const double pct = (cpu_now[i] - before) * 100.0 / win;
+            char key[48]; snprintf(key, sizeof key, "%s", name_now[i]);
+            if (!strncmp(key, "tid ", 4)) snprintf(key, sizeof key, "(unnamed)");
+            for (char* q = key; *q; q++) if (*q >= '0' && *q <= '9' && !strncmp(key, "shader build", 12)) *q = '#';
+            int k = 0;
+            for (; k < g; k++) if (!strcmp(gname[k], key)) break;
+            if (k == g) { snprintf(gname[g], sizeof gname[g], "%s", key); gcpu[g] = 0; gcount[g] = 0; g++; }
+            gcpu[k] += pct; gcount[k]++;
+        }
+        for (int shown = 0; shown < 14; shown++) {
+            int best = -1;
+            for (int k = 0; k < g; k++) if (gcount[k] > 0 && (best < 0 || gcpu[k] > gcpu[best])) best = k;
+            if (best < 0 || gcpu[best] < 0.5) break;
+            fprintf(stderr, "[threads]   %6.1f%%  %-28s x%d\n", gcpu[best], gname[best], gcount[best]);
+            gcount[best] = -gcount[best];
+        }
+        memcpy(tid_prev, tid_now, sizeof(DWORD) * n);
+        memcpy(cpu_prev, cpu_now, sizeof(ULONGLONG) * n);
+        n_prev = n;
+        wall_prev = wall; proc_prev = proc; flips_prev = flips; pres_prev = pres;
+        fflush(stderr);
+    }
+    return 0;
+}
+#endif
+
+/* ---------------------------------------------------------------------------
  * Settings and the title's environment
  * -----------------------------------------------------------------------*/
 /* gowa.ini next to the executable. */
@@ -764,6 +877,10 @@ int main(int argc, char** argv)
     CreateThread(NULL, 4u * 1024 * 1024, frame_clock, NULL, 0, NULL);
     if (const char* wd = getenv("GOWA_WATCHDOG"))
         CreateThread(NULL, 0, hang_watchdog, (LPVOID)wd, 0, NULL);
+#ifdef _WIN32
+    if (const char* tt = getenv("GOWA_THREADS"))
+        if (atoi(tt) > 0) CreateThread(NULL, 0, thread_table, (LPVOID)(uintptr_t)atoi(tt), 0, NULL);
+#endif
     if (const char* pp = getenv("GOWA_PIPE"))
         if (atoi(pp) > 0) CreateThread(NULL, 0, pipe_probe, (LPVOID)(uintptr_t)atoi(pp), 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */

@@ -719,6 +719,50 @@ def cmd_run(args):
     return rc
 
 
+def symbolize_rvas(args, syms, starts):
+    """--rvas: a PS3_SAMPLE_RVAS file (one RVA per sample, "# <ms>" after each
+    report's block), counted by function and by object file over the last
+    --last seconds. Lifted PPU functions show as func_XXXXXXXX."""
+    blocks, cur = [], []
+    for line in open(args.rvas):
+        if line.startswith("#"):
+            blocks.append((int(line.split()[1]), cur))
+            cur = []
+        elif line.strip():
+            cur.append(int(line, 16))
+    if not blocks:
+        die("no sample blocks in %s" % args.rvas)
+    end = blocks[-1][0]
+    picked = [b for t, b in blocks if t >= end - args.last * 1000]
+    samples = [r for b in picked for r in b]
+    say("%d samples in the last %.0f s (%d reports)" % (len(samples), args.last, len(picked)))
+
+    def name(r):
+        if r == 0:
+            return "(outside the executable)", ""
+        i = bisect.bisect_right(starts, r) - 1
+        if i < 0:
+            return "?", ""
+        m = re.match(r"\?(func_[0-9A-F]{8})@@", syms[i][1])
+        return (m.group(1) if m else syms[i][1]), syms[i][2]
+
+    by_fn, by_obj = {}, {}
+    for r in samples:
+        n, o = name(r)
+        by_fn[(n, o)] = by_fn.get((n, o), 0) + 1
+        kind = ("lifted PPU" if n.startswith("func_") else
+                "lifted SPU" if "spu_recomp" in o else o or n)
+        by_obj[kind] = by_obj.get(kind, 0) + 1
+    tot = len(samples) or 1
+    print("by object file:")
+    for k, c in sorted(by_obj.items(), key=lambda kv: -kv[1])[:15]:
+        print("  %5.1f%%  %s" % (100.0 * c / tot, k))
+    print("by function:")
+    for (n, o), c in sorted(by_fn.items(), key=lambda kv: -kv[1])[:args.top]:
+        print("  %5.1f%%  %-48s %s" % (100.0 * c / tot, n[:48], o))
+    return 0
+
+
 def cmd_symbolize(args):
     """Name the runtime-code RVAs in a PS3_SAMPLE report ("[samp] rva 0x...")
     from the linker map the build writes next to the executable. Only valid
@@ -737,6 +781,8 @@ def cmd_symbolize(args):
                 syms.append((int(m.group(2), 16) - base, m.group(1), m.group(3).split(":")[-1]))
     syms.sort()
     starts = [s[0] for s in syms]
+    if args.rvas:
+        return symbolize_rvas(args, syms, starts)
     log = args.log or max((os.path.join(ROOT, "logs", n) for n in os.listdir(os.path.join(ROOT, "logs"))
                            if n.endswith(".log")), key=os.path.getmtime)
     rva = re.compile(r"\[samp\] rva 0x([0-9A-Fa-f]+)\s+([\d.]+)%")
@@ -782,6 +828,9 @@ def main():
     p.add_argument("extra", nargs="*", help="extra arguments after the ELF path")
     p = sub.add_parser("symbolize", help="name the runtime addresses in a PS3_SAMPLE report")
     p.add_argument("log", nargs="?", help="run log (default: the newest in logs/)")
+    p.add_argument("--rvas", help="a PS3_SAMPLE_RVAS file instead of a log: count every sample")
+    p.add_argument("--last", type=float, default=1e9, help="with --rvas: only the last N seconds")
+    p.add_argument("--top", type=int, default=30, help="with --rvas: functions to list")
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "lle": cmd_lle, "build": cmd_build,

@@ -141,8 +141,11 @@ for the movie (ref B: the "black screen" was that card).
 
 ### Step 7: speed to a usable menu (the current wall)
 
-Measured: ~2.4 frames/s on 2D screens, ~0.35 in the first level. Every particle task starts on a
-new host thread (ten per frame). Measure an in-level frame first, from the saved profile.
+Mapped in [PERF.md](PERF.md): the menu (0.5 frames/s) and the level (0.2) are bound by SPU job
+time, most of it in the 25 WWS job modules the lift skips (their header has `0` where the lifted
+six have `0x4000`), which run in the interpreter. The main thread mostly waits. Order: lift those
+modules, then the host-side waste (spinning `usleep`, log lines, a thread per task), then the
+streamed fragments.
 
 The other 25 `0xC0DEC0DE` modules (ref A lifts 33, ref B 33 plus streamed-code fragments), indirect
 entries from `SPU_INTERP_STATS`, the SPURS kernel's 1 ms sleep between passes (ref A: 2.95 → 6.25
