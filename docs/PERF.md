@@ -11,7 +11,8 @@ listed at the end; nothing here is estimated unless it says so.
 | baseline | 2026-10-27 | 21.7 | 0.40-0.50 | 0.17-0.23 | flips/s |
 | L1 job modules | 2026-10-27 | 45-48 | 2.03 | 3.2 on arrival, 1.1-2.1 after | [notes](notes/2026-10-27-job-modules.md) |
 | L3 usleep timer, L4 task logs | 2026-10-27 | 50-52 | 2.0 | not measured | process CPU 447% -> 352%; [notes](notes/2026-10-27-host-waste-and-lanes.md) |
-| EDGE on three SPUs | 2026-10-27 | 48-50 | 3.6 | 2.4-4.4 | `SPURS_MAXCONT`, port default; recheck geometry order when 3D draws |
+| EDGE on three SPUs | 2026-10-27 | 48-50 | 3.6 | 2.4-4.4 | `SPURS_MAXCONT`, port default |
+| re-measured with the 3D scenes drawn | 2026-10-27 | 44-50 | 3.4-3.5 | 2.0-5.3 on arrival, 1.2-1.5 later in the opening scene | profile screens 14.7; process CPU 550-640%, `spurs pm` x6 400-450% in menu and level; with `SPURS_MAXCONT=14=1,15=1,16=1`: menu 1.9-2.0, profile screens 9, level 1.1-2.4. Geometry order with EDGE on three SPUs: the same poses render the same as on one SPU, no broken meshes |
 
 ## 1. Baseline
 
@@ -116,7 +117,8 @@ shows it.
    threads down, flips/s not lower.
 3. **L2** (fragments). They are position-independent: the same fragment runs at changing LS
    addresses, so it needs PIC lifting (ref B 0023/0031), not one lift per placement. Exit:
-   interpreted steps under 1 M/s overall.
+   interpreted steps under 1 M/s overall. Analysis, with the 26 fragments that hold >99% of the
+   interpreted steps and what lifting them needs: [notes](notes/2026-10-27-l2-analysis.md).
 4. Measure again (section 6) and take L6, L7 or L8 by what bounds the frame then.
 
 Expected after 1-3 (estimate): the level bound moves from the job modules to EDGE, audio and the
@@ -127,12 +129,13 @@ later work (lanes, native EDGE loops, walker costs).
 
 **Scenes.**
 
-- *Cinematic*: boot, no input, windows at 170-240 s.
-- *Menu*: boot, no input, windows from 330 s (the news screen is skipped once seen).
-- *Level*: menu at 310 s; Cross, then 70 s; Cross, 40 s; Cross, 40 s; Cross (Normal), 60 s;
-  Start; level from ~700 s. Windows at 720-800 s.
+- *Cinematic*: boot, no input, windows at 10-60 s.
+- *Menu*: skip the opening movie, then windows from 20 s after it closes.
+- *Level*: from the movie's close: 45 s, Cross; 35 s, Cross; 25 s, Cross; 25 s, Cross; the level
+  from ~165 s. Windows from 165 s.
 
-The opening cinematic cannot be skipped and costs ~4 minutes of every run.
+Square skips the opening movie (Start does not): press it every few seconds from 15 s until the log
+shows `[cellVdec] Close`. Times above count from that line.
 
 **Switches** (all off by default):
 
@@ -158,7 +161,6 @@ The opening cinematic cannot be skipped and costs ~4 minutes of every run.
 
 - `gowa.py bench --scene cinematic|menu|level`: start, drive the route with `PAD_FILE`, collect
   the windows, write JSON, and compare with a saved baseline (as `gow1hd.py check` does).
-- A development switch that ends the opening cinematic at once (four minutes a run).
 - Thread names in `PS3_SAMPLE_RVAS` records, so the SPU workers can be profiled apart from the
   main thread.
 
