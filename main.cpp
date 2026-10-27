@@ -755,6 +755,11 @@ static void title_environment(void)
      * again once the level's 3D scene draws: geometry order is the risk.
      * SPURS_MAXCONT=14=1,15=1,16=1 goes back to the title's value. */
     env_default("SPURS_MAXCONT", "14=3,15=3,16=3");
+    /* Each display buffer its own target, the flipped one presented: the title
+     * draws its video into one buffer, tonemaps into the next and composites
+     * its post chain into a third within one frame, and with a single
+     * backbuffer each overwrote the frame on screen. */
+    env_default("RSX_DISPLAY_RT", "1");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

@@ -19,6 +19,8 @@ the same engine and SPU programs on ps3recomp, from disc releases, and are past 
   ([first screen](notes/2026-10-27-first-screen.md), [text](notes/2026-10-27-text.md),
   [to the first level](notes/2026-10-27-to-the-first-level.md)). The level's 3D scene is almost
   black and runs at ~0.35 frames/s. Next: step 7 (speed), then 3D drawing.
+- **Update, later 2026-10-27:** the main menu and the first level's opening scene render
+  ([render units](notes/2026-10-27-render-units.md)); the level runs at 2.4-4.4 flips/s.
 
 ## 2. How a frame is made (both refs, confirmed here where marked)
 
@@ -127,7 +129,8 @@ the first-use dialog right after the SPU-created task fix.
 
 Text reads, in its gold, on the calibration and settings screens
 ([notes/2026-10-27-text.md](notes/2026-10-27-text.md)). The calibration screen's lighter right half
-is its design. Left for later: units 4-15, a comparison with RPCS3 on a 3D scene.
+is its design. Units 4-15 done with the 3D scenes ([notes](notes/2026-10-27-render-units.md)). Left
+for later: a comparison with RPCS3 on a 3D scene.
 
 D3D12 backend against this title: sRGB framebuffer, texture gamma, `DDX`/`DDY` in fragment programs
 (ref B's live draw needed all three for readable menus), then a frame-by-frame comparison with RPCS3.
@@ -154,8 +157,8 @@ frames/s), and the MLAA tasks.
 
 ### Step 8: the first level (reached 2026-10-27)
 
-It loads (`R_MEGAERAN`) and pauses, but its 3D scene is almost black and the pause menu has no
-labels.
+It loads (`R_MEGAERAN`) and pauses. Its 3D scene renders since
+[notes/2026-10-27-render-units.md](notes/2026-10-27-render-units.md); the pause menu has no labels.
 
 Ref B: a lost-task race in the taskset scheduler; ref A: frame segments and EDGE holes (M0.24) and
 the shared MFC engines (fixed upstream).
