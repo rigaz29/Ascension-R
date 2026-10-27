@@ -747,6 +747,14 @@ static void title_environment(void)
      * while the lifted tasks were still on batch N, and its signal ended their
      * barrier waits instead. A report waits while those tasks are in a round. */
     env_default("GCM_REPORT_SPU_HOLD_MS", "3000");
+    /* The title gives every SPURS workload a maximum contention of 1, and the
+     * three EDGE job lists (14-16) then ran one after another on SPU 0 while
+     * four SPUs idled: 85% of SPU 0, the whole of a level frame's critical
+     * path. Three SPUs each: menu 2.0 -> 3.6 flips/s, first level 1-3 -> 2.4-4.4
+     * (docs/PERF.md). Ref A runs its EDGE lists the same way. To be checked
+     * again once the level's 3D scene draws: geometry order is the risk.
+     * SPURS_MAXCONT=14=1,15=1,16=1 goes back to the title's value. */
+    env_default("SPURS_MAXCONT", "14=3,15=3,16=3");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

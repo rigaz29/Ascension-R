@@ -143,8 +143,10 @@ for the movie (ref B: the "black screen" was that card).
 
 Mapped in [PERF.md](PERF.md). L1 done: all 31 job modules lifted (menu 0.5 -> 2.0 flips/s,
 level 0.2 -> 1.1-3.2, cinematic 21.7 -> 45); see
-[notes/2026-10-27-job-modules.md](notes/2026-10-27-job-modules.md). Next: the host-side waste
-(spinning `usleep`, log lines, a thread per task) and the streamed fragments.
+[notes/2026-10-27-job-modules.md](notes/2026-10-27-job-modules.md). Then `usleep` on a timer, quiet
+task logs, and the EDGE lists on three SPUs: menu 3.6, level 2.4-4.4
+([notes](notes/2026-10-27-host-waste-and-lanes.md)). Next: position-independent lifting for the
+EDGE fragments (L2).
 
 The other 25 `0xC0DEC0DE` modules (ref A lifts 33, ref B 33 plus streamed-code fragments), indirect
 entries from `SPU_INTERP_STATS`, the SPURS kernel's 1 ms sleep between passes (ref A: 2.95 → 6.25

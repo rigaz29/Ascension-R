@@ -28,9 +28,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | **To the first level**, driven with `PAD_FILE`: both cinematics play, then the main menu, profile creation (save data written), difficulty, and the first level (`R_MEGAERAN`) with its pause menu. Its 3D scene is almost black, at ~0.35 frames/s ([notes](docs/notes/2026-10-27-to-the-first-level.md)). |
 | 2026-10-27 | Speed mapped ([docs/PERF.md](docs/PERF.md)): per-thread CPU (`GOWA_THREADS`), per-workload SPU time (`SPURS_WID_PROF`), traces and samples of the menu and the level. Both are bound by SPU jobs running in the interpreter: 25 of the 31 WWS job modules are not lifted. |
 | 2026-10-27 | All 31 WWS job modules lifted (25 had a header form the lift skipped; two needed callback entries found from the runs): cinematic 21.7 -> 45 flips/s, menu 0.5 -> 2.0, first level 0.2 -> 1.1-3.2 ([notes](docs/notes/2026-10-27-job-modules.md)). |
+| 2026-10-27 | `usleep` from 200 us on a high-resolution timer (a core back), per-task logs quiet, EDGE lists on three SPUs: cinematic 50, menu 2.0 -> 3.6, level 2.4-4.4 flips/s. The remaining interpreted code is position-independent EDGE fragments ([notes](docs/notes/2026-10-27-host-waste-and-lanes.md)). |
 
 ## Next
 
 The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed
-([docs/PERF.md](docs/PERF.md)): the job modules are lifted; next the host-side waste and the
-streamed fragments. Then the level's 3D scene (almost black) and the pause menu's labels.
+([docs/PERF.md](docs/PERF.md)): job modules lifted, host waste cut, EDGE on three SPUs; next
+position-independent lifting for the EDGE fragments. Then the level's 3D scene (almost black) and the pause menu's labels.

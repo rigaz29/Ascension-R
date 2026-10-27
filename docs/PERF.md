@@ -10,6 +10,8 @@ listed at the end; nothing here is estimated unless it says so.
 |---|---|---|---|---|---|
 | baseline | 2026-10-27 | 21.7 | 0.40-0.50 | 0.17-0.23 | flips/s |
 | L1 job modules | 2026-10-27 | 45-48 | 2.03 | 3.2 on arrival, 1.1-2.1 after | [notes](notes/2026-10-27-job-modules.md) |
+| L3 usleep timer, L4 task logs | 2026-10-27 | 50-52 | 2.0 | not measured | process CPU 447% -> 352%; [notes](notes/2026-10-27-host-waste-and-lanes.md) |
+| EDGE on three SPUs | 2026-10-27 | 48-50 | 3.6 | 2.4-4.4 | `SPURS_MAXCONT`, port default; recheck geometry order when 3D draws |
 
 ## 1. Baseline
 
@@ -112,7 +114,9 @@ shows it.
    x4, level x6-15. Interpreted steps left are at the fragments' pages, not `0x4000-0x7FFF`.
 2. **L3, L4, L5** together (host waste, small and independent). Exit: process CPU and the spinning
    threads down, flips/s not lower.
-3. **L2** (fragments). Exit: interpreted steps under 1 M/s overall.
+3. **L2** (fragments). They are position-independent: the same fragment runs at changing LS
+   addresses, so it needs PIC lifting (ref B 0023/0031), not one lift per placement. Exit:
+   interpreted steps under 1 M/s overall.
 4. Measure again (section 6) and take L6, L7 or L8 by what bounds the frame then.
 
 Expected after 1-3 (estimate): the level bound moves from the job modules to EDGE, audio and the
