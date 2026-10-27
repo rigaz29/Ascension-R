@@ -4,6 +4,13 @@ Measured 2026-10-27 on the development machine (Ryzen 5 4600H, 6 cores / 12 thre
 Windows 11), port `8b59dca` + fork `a2b01654` with the tools below. All numbers come from the runs
 listed at the end; nothing here is estimated unless it says so.
 
+## 0. Progress
+
+| Lever | Done | Cinematic | Menu | Level | Note |
+|---|---|---|---|---|---|
+| baseline | 2026-10-27 | 21.7 | 0.40-0.50 | 0.17-0.23 | flips/s |
+| L1 job modules | 2026-10-27 | 45-48 | 2.03 | 3.2 on arrival, 1.1-2.1 after | [notes](notes/2026-10-27-job-modules.md) |
+
 ## 1. Baseline
 
 | Scene | How it is reached | Flips/s | Frame (ftrace median) | What bounds it |
@@ -101,8 +108,8 @@ shows it.
 
 ## 5. Order of work
 
-1. **L1** (job modules). Exit: interpreted steps at `0x4000-0x7FFF` under 1 M/s, and the menu
-   and level flips/s measured against this baseline.
+1. **L1** (job modules), done: all 31 lifted, with 178 extra entries found from the runs; menu
+   x4, level x6-15. Interpreted steps left are at the fragments' pages, not `0x4000-0x7FFF`.
 2. **L3, L4, L5** together (host waste, small and independent). Exit: process CPU and the spinning
    threads down, flips/s not lower.
 3. **L2** (fragments). Exit: interpreted steps under 1 M/s overall.

@@ -27,9 +27,10 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | Readable text: the D3D12 path binds the X16 font atlas with the right view format, the fragment decompiler does DDX/DDY, and the shader packer's sRGB output and texture gamma are modelled ([notes](docs/notes/2026-10-27-text.md)). |
 | 2026-10-27 | **To the first level**, driven with `PAD_FILE`: both cinematics play, then the main menu, profile creation (save data written), difficulty, and the first level (`R_MEGAERAN`) with its pause menu. Its 3D scene is almost black, at ~0.35 frames/s ([notes](docs/notes/2026-10-27-to-the-first-level.md)). |
 | 2026-10-27 | Speed mapped ([docs/PERF.md](docs/PERF.md)): per-thread CPU (`GOWA_THREADS`), per-workload SPU time (`SPURS_WID_PROF`), traces and samples of the menu and the level. Both are bound by SPU jobs running in the interpreter: 25 of the 31 WWS job modules are not lifted. |
+| 2026-10-27 | All 31 WWS job modules lifted (25 had a header form the lift skipped; two needed callback entries found from the runs): cinematic 21.7 -> 45 flips/s, menu 0.5 -> 2.0, first level 0.2 -> 1.1-3.2 ([notes](docs/notes/2026-10-27-job-modules.md)). |
 
 ## Next
 
-The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed, mapped in
-[docs/PERF.md](docs/PERF.md): lift the 25 job modules that run interpreted first. Then the level's
-3D scene (almost black) and the pause menu's labels.
+The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed
+([docs/PERF.md](docs/PERF.md)): the job modules are lifted; next the host-side waste and the
+streamed fragments. Then the level's 3D scene (almost black) and the pause menu's labels.

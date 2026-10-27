@@ -416,22 +416,31 @@ def wws_job_modules(elf):
 # code instead of in the SPU interpreter.
 JOBMODS_DIR = os.path.join(ROOT, "spu", "jobmods")
 # Job entries the function finder doesn't reach, per module: indirect branch
-# targets that missed the lifted set in the first boots, most of them the
-# return points of indirect calls. Modules overlap in local store, so each list
-# goes to its own module only.
-JOBMOD_EXTRA_FUNCS = {
-    "jobmod_3105a33a1cbe_e16A80": [
-        0x166A0, 0x169D8, 0x16A6C, 0x16A80, 0x16A94, 0x16AAC, 0x16AC4, 0x16ADC,
-        0x16F98, 0x17A40, 0x17AA4, 0x17AB4, 0x17BA8, 0x17C40, 0x17CD8, 0x17D68,
-        0x17E08, 0x17EA0, 0x17F38, 0x17FD8, 0x18070, 0x18110, 0x1E060, 0x1E4E0],
-    "jobmod_d3eebe50d457_e0A00": [0x4190, 0x41E8, 0x4790, 0x7260],
-}
+# targets that missed the lifted set in the first boots (callbacks the job API
+# calls through a register, the return points of indirect calls). Modules
+# overlap in local store, so each list goes to its own module only. Kept in
+# scripts/jobmods_extra.json; `jobmods-entries` adds what a run's
+# SPU_INTERP_ENTRIES log shows. A missing one is not only slow: the
+# interpreter that runs it goes on into the lifted caller's frame and can end
+# the policy module's run there.
+JOBMOD_EXTRA_FILE = os.path.join(ROOT, "scripts", "jobmods_extra.json")
+
+
+def jobmod_extra_funcs():
+    """{module name: [LS address, ...]} from scripts/jobmods_extra.json."""
+    if not os.path.exists(JOBMOD_EXTRA_FILE):
+        return {}
+    return {k: [int(a, 16) for a in v] for k, v in json.load(open(JOBMOD_EXTRA_FILE)).items()}
+
+
+# Modules left in the interpreter because their lift misbehaves, by header EA.
+JOBMOD_SKIP = {}
 
 
 def lift_jobmods(elf):
     shutil.rmtree(JOBMODS_DIR, ignore_errors=True)
-    extra = []
-    for name, addrs in sorted(JOBMOD_EXTRA_FUNCS.items()):
+    extra = ["--skip-ea", ",".join("%X" % ea for ea in sorted(JOBMOD_SKIP))] if JOBMOD_SKIP else []
+    for name, addrs in sorted(jobmod_extra_funcs().items()):
         extra += ["--extra-funcs", name + "=" + ",".join("0x%X" % a for a in addrs)]
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
             "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c")]
@@ -441,8 +450,45 @@ def lift_jobmods(elf):
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
 
 
+def cmd_jobmods_entries(args):
+    """Merge the [interp-entry] lines of runs made with
+    SPU_INTERP_ENTRIES=4000-40000 into scripts/jobmods_extra.json: each entry
+    inside a lifted job module (image id 200 + its place in the manifest)
+    becomes an extra function of that module. Lift and build again after."""
+    man = json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json")))
+    by_img = {200 + i: m["name"] for i, m in enumerate(man)}
+    extra = jobmod_extra_funcs()
+    added = {}
+    pat = re.compile(r"\[interp-entry\] pc=0x([0-9A-F]+) owner=(\d+)")
+    for log in args.logs:
+        for line in open(log, encoding="utf-8", errors="replace"):
+            mm = pat.search(line)
+            if not mm:
+                continue
+            pc, img = int(mm.group(1), 16), int(mm.group(2))
+            name = by_img.get(img)
+            if not name:
+                continue
+            code_end = next(m["code_end"] for m in man if m["name"] == name)
+            if pc < 0x4030 or pc >= code_end or pc in extra.get(name, []):
+                continue
+            extra.setdefault(name, []).append(pc)
+            added.setdefault(name, []).append(pc)
+    data = {k: ["0x%X" % a for a in sorted(set(v))] for k, v in sorted(extra.items())}
+    open(JOBMOD_EXTRA_FILE, "w", encoding="utf-8", newline="\n").write(json.dumps(data, indent=1) + "\n")
+    for name, pcs in sorted(added.items()):
+        say("%s: +%d (%s)" % (name, len(pcs), " ".join("0x%X" % a for a in sorted(pcs))))
+    say("%d new entries in %d modules -> %s" % (sum(map(len, added.values())), len(added),
+                                                os.path.relpath(JOBMOD_EXTRA_FILE, ROOT)))
+    return 0
+
+
 def cmd_lift(args):
     elf = need_elf()
+    if args.jobmods_only:
+        lift_jobmods(elf)
+        say("re-run `build` so CMake picks up the new file list")
+        return 0
     funcs = os.path.join(ANALYSIS, "GOWA.functions.json")
     imports = os.path.join(ANALYSIS, "GOWA.imports.json")
     if not (os.path.exists(funcs) and os.path.exists(imports)):
@@ -811,6 +857,11 @@ def main():
     p.add_argument("--chunks", default="96",
                    help="number of source files to split into (default 96; more "
                         "files = less memory per compile job)")
+    p.add_argument("--jobmods-only", action="store_true",
+                   help="lift only the WWS job modules into spu/jobmods/ (minutes, not the PPU)")
+    p = sub.add_parser("jobmods-entries",
+                       help="add the job-module interpreter entries of runs (SPU_INTERP_ENTRIES) as extra functions")
+    p.add_argument("logs", nargs="+", help="run logs")
     sub.add_parser("lle", help="relocate and lift firmware/libsre.prx for its SPURS queue functions")
     p = sub.add_parser("build", help="configure + build with clang-cl")
     p.add_argument("--jobs", default="3", help="parallel compile jobs (default 3 for 16 GB RAM)")
@@ -834,7 +885,7 @@ def main():
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "lle": cmd_lle, "build": cmd_build,
-            "run": cmd_run, "symbolize": cmd_symbolize}[args.cmd](args)
+            "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "symbolize": cmd_symbolize}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -141,11 +141,10 @@ for the movie (ref B: the "black screen" was that card).
 
 ### Step 7: speed to a usable menu (the current wall)
 
-Mapped in [PERF.md](PERF.md): the menu (0.5 frames/s) and the level (0.2) are bound by SPU job
-time, most of it in the 25 WWS job modules the lift skips (their header has `0` where the lifted
-six have `0x4000`), which run in the interpreter. The main thread mostly waits. Order: lift those
-modules, then the host-side waste (spinning `usleep`, log lines, a thread per task), then the
-streamed fragments.
+Mapped in [PERF.md](PERF.md). L1 done: all 31 job modules lifted (menu 0.5 -> 2.0 flips/s,
+level 0.2 -> 1.1-3.2, cinematic 21.7 -> 45); see
+[notes/2026-10-27-job-modules.md](notes/2026-10-27-job-modules.md). Next: the host-side waste
+(spinning `usleep`, log lines, a thread per task) and the streamed fragments.
 
 The other 25 `0xC0DEC0DE` modules (ref A lifts 33, ref B 33 plus streamed-code fragments), indirect
 entries from `SPU_INTERP_STATS`, the SPURS kernel's 1 ms sleep between passes (ref A: 2.95 → 6.25
