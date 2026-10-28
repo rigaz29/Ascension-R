@@ -179,3 +179,22 @@ images need a new profile in that save; not done without asking.
 - Level: 10.3-10.9 flips/s against 11.9 before (two runs): a frame now draws about half as
   many draws again as it did, and uploads whole mip chains.
 - Still as before: the red panels (step 2.1 next).
+
+**Step 2, done** (fork `428d3289`, `b0122755`). The state is decoded and recorded per draw first,
+and `RSX_CENSUS` counted how the level uses it (a minute): ~2,500 draws blend with the constant
+colour (fade levels such as `0xDCDCDCDC`); the depth bounds test on ~300,000 draws (min ~0.97);
+MRT colour masks `0xFFF0` and `0xEEE0` (the G-buffer's alpha left alone); z min/max control
+`0x1` and `0x110`; MRT blend enables always all on or all off; no depth range other than 0..1;
+no alpha to coverage.
+- 2.1 The blend colour is set per draw (`RSX_BLEND_COLOR=0` turns it off). Not the red panels.
+- 2.3 **The red panels were the depth bounds test**: a red light curtain in the far background,
+  drawn with bounds of ~0.97-1.0, went over the whole scene without them. With the test (a
+  pipeline state stream for those draws, `OMSetDepthBounds`) it stays behind everything; with
+  `RSX_DEPTH_BOUNDS=0` the panels come back, as in every earlier run at that moment.
+- 2.2 MRT 1-3 take their own colour masks and blend enables; 2.4 depth clipping follows
+  `SET_ZMIN_MAX_CONTROL` (the guest pipelines clamped every draw).
+- Level: 10.4-10.6 flips/s, the same as after step 1.
+- RPCS3 with Profile 2 hung on its own at boot ("nv406e::semaphore_acquire has timed out"),
+  black at 1 FPS; to try again.
+- The FIFO park freeze came once more (a depth-bounds-off run); `ab_runner.ps1` now keeps a
+  frozen try's logs.
