@@ -8,6 +8,9 @@ listed at the end; nothing here is estimated unless it says so.
 the machine above, with only `GOWA_THREADS` on. Each lever is kept only if an A/B shows more
 flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7.3 (median).
 
+**2026-10-28: the target is now RPCS3's speed on this machine, or better.** What is measured, what
+is suspected, and the work in order: [performance map](notes/2026-10-28-performance-map.md).
+
 ## 0. Progress
 
 | Lever | Done | Cinematic | Menu | Level | Note |
