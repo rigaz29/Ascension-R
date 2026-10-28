@@ -16,6 +16,7 @@ freezes): [rendering accuracy plan](notes/2026-10-28-rendering-accuracy-plan.md)
 
 | Lever | Done | Menu | Level | Note |
 |---|---|---|---|---|
+| Rendering accuracy step 1: FP precision, MAX_DRAWS 8192, polygon offset, mip chains (fork `8c2916e2`) | 2026-10-28 | not measured | 10.3-10.9 (11.9 before) | not a speed lever: the frame now draws the ~50% of its draws that were dropped and uploads whole mip chains; kept for correctness ([plan](notes/2026-10-28-rendering-accuracy-plan.md), section 5) |
 | D3D12 texture cache bounded by bytes, hash lookup (fork `39ffb3b3`) | 2026-10-28 | not measured | 11.9 median (9.2 before), +29% | the 192-slot cache evicted and re-uploaded 20-50 textures a frame (25-55 ms on the frame clock thread) and refused 400-2,200 binds, which drew the sky black; now 2-3 ms a frame. Skipping unchanged null SRVs on top: -4 ms a frame on that thread, +1%, not kept ([map](notes/2026-10-28-performance-map.md), section 6) |
 | SPU float forms chosen at compile time (`PORT_SPU_FLOAT_RZ_ONLY`) | 2026-10-28 | not measured | 9.46 median (9.40 before) | SPU job time -3..-15% (General6 1,643 -> 1,403 us), bit-identical, executable 6 MB smaller; kept as the leaner float forms were. Job modules with `--merge-chunks` on top: 9.54, not kept (+13 MB of C). `TEX_BUDGET=50` probe: 12.1-12.3 flips/s, so the D3D12 texture work is on the frame's path ([notes](notes/2026-10-28-spu-codegen-design.md)) |
 

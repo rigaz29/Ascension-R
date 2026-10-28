@@ -153,3 +153,29 @@ moments before and after (menu, level +150/+185/+210 s), and flips/s not lower.
 - 4.1 The red panels around the Fury (after 2.1).
 - 4.2 Menu transitions (after 0.3).
 - 4.3 Whatever the reference images still show different, one effect at a time.
+
+## 5. Progress
+
+**0.1, the freeze** (paused by the user to move on). `GCM_PARK_DUMP_MS=<ms>` (fork `c1d2fa4e`)
+dumps the FIFO, the last SPU-written blocks and the SPURS scheduler as `spurs_pick` sees it once
+a park has stood that long. Two level runs with it and `GOWA_WWS_WATCH=2` did not freeze; it
+stays on for the next one.
+
+**0.2, RPCS3 on this machine** (RPCS3 0.0.43, the user's settings unchanged, booted from the
+command line with the keyboard input profile for that run only). It first rebuilt its caches
+(~4 minutes), then: menus 42-56 FPS, gameplay **33-40 FPS** -- in Chapter 3 (The Guardhouse),
+since "Continue" loaded the user's save, not the opening this port's runs reach. Same-scene
+images need a new profile in that save; not done without asking.
+
+**Step 1, done** (fork `8dad92bf`, `ee59fa6e`, `61ccc5fe`, `8c2916e2`):
+- 1.1 RSX precision in the fragment decompiler (`RSX_FP_PRECISION=0` turns it off).
+- 1.2 `MAX_DRAWS` 8192: the level's frames need up to 3,226 draws; two thirds of them had lost
+  what came after 2,048, the tutorial prompts ("Dodge") among it, drawn now.
+- 1.3 Polygon offset as the pipeline's depth bias.
+- 1.4 Mip chains, with two corrections the first run showed: a min filter without mipmapping
+  reads level 0 only and the LOD clamps of `TEXTURE_CONTROL0` hold, and a linear texture's
+  levels keep level 0's pitch (`TEX_MIPCHECK`: a linear A8R8G8B8 chain read half padding).
+  Before them the Fury's legs came out as torn beige ribbons; after, as before step 1 but mipped.
+- Level: 10.3-10.9 flips/s against 11.9 before (two runs): a frame now draws about half as
+  many draws again as it did, and uploads whole mip chains.
+- Still as before: the red panels (step 2.1 next).
