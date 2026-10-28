@@ -144,7 +144,12 @@ per line.
   sparse checksum of the guest bytes at every bind of a texture from an earlier frame. With
   thousands of binds a frame and more than 192 live textures it re-converts and re-uploads every
   frame. Suspected for the 62 ms; to be confirmed by counting uploads against hits.
-- **SRV descriptors are written per draw and per texture unit.**
+  **Confirmed and fixed (fork `39ffb3b3`), see section 6.** Counted (`TEX_STATS`): a level frame
+  binds ~200 distinct textures in ~7,000 binds; with 192 slots it evicted and uploaded 20-50 of
+  them again every frame (25-55 ms) and refused 400-2,200 binds. A new texture costs ~1-1.5 ms
+  to create its resource, ~0.15 ms to convert, and ~0.5 ms for each one released to make room.
+- **SRV descriptors are written per draw and per texture unit**: ~31,000 a frame, two thirds of
+  them the null SRV of a unit the draw does not sample.
 - No GPU timing (timestamp queries); `PERF` times the CPU side only.
 
 What RPCS3 does: a texture cache keyed by address and invalidated by write-protecting the
@@ -163,9 +168,18 @@ guest pages, cached descriptors, optional Multithreaded RSX for vertex work.
 
 - `SPURS_IDLE_MAX=0/1` (more frequent probes) hangs the game: a race when a policy module runs
   empty very often. Possibly the same as the intermittent FIFO park hang (~2 runs in 20).
+  Counted later over 76 level runs: 2 froze, one of them with `SPURS_IDLE_MAX`. In the other
+  (texture cache build, default settings) the walker stood at a self-JUMP park at `0x00548830`
+  for the whole 10 s `GCM_PARK_GRACE_MS` with `put` elsewhere, resynced past 5.7 MB of FIFO
+  and the title never flipped again: an SPU job stopped filling its command-buffer hole first,
+  the resync is the symptom.
 - `D3D12_RECORD_AHEAD=0` hangs the device.
 - Rendering differences from RPCS3: a black patch for the sky in the level, missing pause-menu
-  labels.
+  labels. The sky, and the blurred look of the level's frames, were the 192-slot texture cache
+  refusing binds; fixed with it. Drawn now instead: an effect around the Fury in the opening
+  fight shows as hard-edged translucent red panels with vertical streaks (a refraction-like
+  copy of the scene inside them); its alpha or blending is not right yet. Not yet compared
+  with RPCS3.
 - Memory: the runs need several GB of commit; see section 2.
 
 ## 5. Budget for 30 flips/s (33 ms) on this machine
@@ -195,6 +209,19 @@ jobs 3-16% faster with the frame rate unchanged, and a probe that skips the D3D1
 texture work gave +30% (9.4 -> 12.2 flips/s). The frame is co-limited by the SPU chain and the
 frame clock thread's texture work, so the texture cache (2.1-2.2 below) goes first now, then the
 rest of the SPU work.
+
+**Update, texture cache done (2.1 without the dirty pages; fork `39ffb3b3`):** 4,096 slots
+behind a hash table, bounded by bytes (`TEX_CACHE_MB`, default a third of the adapter's VRAM:
+1,311 MB on the GTX 1650 Ti, which a level fills). Texture work 2-3 ms a frame instead of
+25-55, no bind refused, **9.2 -> 11.9 flips/s (+29%)**, two runs a side; the sky is drawn. What
+the frame clock thread does on top no longer moves the frame:
+- 2.2's cheap half, leaving a window slot's null SRV alone when it already holds one (21,000
+  of 31,000 writes a frame), took ~4 ms a frame off that thread and gave +1% (11.64 against
+  11.52, three runs against two): within the noise, not kept.
+- A new texture taking over the resource of an idle one of the same size and format (no
+  release, no creation: ~5 ms a frame where the level streams textures in) is the same kind
+  of saving: not measured, for when that thread limits again.
+Next: measure the chain again (0.1) to see what sets the 84 ms frame now.
 
 **1. SPU code generation** (with the D3D12 texture work, sets the frame: the latency of each serial job)
 - 1.1 Registers in locals inside a lifted function, written back at calls, exits and runtime

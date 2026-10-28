@@ -6,13 +6,15 @@ listed at the end; nothing here is estimated unless it says so.
 
 **Target** ([ROADMAP.md](ROADMAP.md) step 7): the first level at a steady 30 flips/s or more on
 the machine above, with only `GOWA_THREADS` on. Each lever is kept only if an A/B shows more
-flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7.3 (median).
+flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7.3 (median) in
+the morning, ~11.9 after the texture cache in the evening.
 
 **2026-10-28: the target is now RPCS3's speed on this machine, or better.** What is measured, what
 is suspected, and the work in order: [performance map](notes/2026-10-28-performance-map.md).
 
 | Lever | Done | Menu | Level | Note |
 |---|---|---|---|---|
+| D3D12 texture cache bounded by bytes, hash lookup (fork `39ffb3b3`) | 2026-10-28 | not measured | 11.9 median (9.2 before), +29% | the 192-slot cache evicted and re-uploaded 20-50 textures a frame (25-55 ms on the frame clock thread) and refused 400-2,200 binds, which drew the sky black; now 2-3 ms a frame. Skipping unchanged null SRVs on top: -4 ms a frame on that thread, +1%, not kept ([map](notes/2026-10-28-performance-map.md), section 6) |
 | SPU float forms chosen at compile time (`PORT_SPU_FLOAT_RZ_ONLY`) | 2026-10-28 | not measured | 9.46 median (9.40 before) | SPU job time -3..-15% (General6 1,643 -> 1,403 us), bit-identical, executable 6 MB smaller; kept as the leaner float forms were. Job modules with `--merge-chunks` on top: 9.54, not kept (+13 MB of C). `TEX_BUDGET=50` probe: 12.1-12.3 flips/s, so the D3D12 texture work is on the frame's path ([notes](notes/2026-10-28-spu-codegen-design.md)) |
 
 ## 0. Progress
