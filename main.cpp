@@ -547,6 +547,109 @@ static void pipe_report(unsigned t)
     }
 }
 
+/* GOWA_WWS_WATCH=<s>: the ticket rows of the job lists the frame waits on --
+ * RenderJobs, MeshProcJobs, EDGE0-2, RsxSync -- polled every few microseconds
+ * on a thread of its own (it keeps one host core busy). Every s seconds, per
+ * list: jobs published and taken a second; how much of the time the workload
+ * was running, idle with its list empty (waiting for whoever publishes), and
+ * idle with entries pending (a wait entry, or the scheduler not there yet);
+ * and what ran each time a job was published -- each workload that was
+ * running, or "none" (a PPU thread). */
+extern "C" unsigned spurs_pm_running_mask(void);
+extern "C" void ps3_ft_watch_word(uint32_t ea);
+static DWORD WINAPI wws_watch(LPVOID arg)
+{
+    ps3_thread_name("wws watch");
+    const unsigned every = (unsigned)(uintptr_t)arg;
+    /* GOWA_WWS_TRACE=1: only hand the rows to PS3_FTRACE (PS3_FT_LINE), once a
+     * second as the lists appear; no polling, so the trace is not disturbed. */
+    const bool trace_only = getenv("GOWA_WWS_TRACE") != nullptr;
+    const uint32_t sp = 0x7001AD00;
+    enum { W0 = 12, W1 = 17, NW = W1 - W0 + 1, NL = 4 };
+    struct Row {
+        uint32_t ea, last;
+        double run, empty, pend, pend_n;
+        unsigned pub, took, by[33];
+        int pending;
+    } rows[NW][NL];
+    memset(rows, 0, sizeof rows);
+    LARGE_INTEGER f, c;
+    QueryPerformanceFrequency(&f);
+    auto now_us = [&]() { QueryPerformanceCounter(&c); return (double)c.QuadPart * 1e6 / (double)f.QuadPart; };
+    double t_last = now_us(), t_report = t_last, t_resolve = 0;
+    for (;;) {
+        const double t = now_us(), dt = t - t_last;
+        t_last = t;
+        if (t - t_resolve > 1e6) {   /* the lists appear when the level loads */
+            t_resolve = t;
+            if (pipe_r8(sp + 0x74) & 0x40)
+                for (uint32_t w = W0; w <= W1; w++) {
+                    const uint32_t hi = w >= 16;
+                    const uint32_t info = sp + (hi ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+                    const uint32_t data = pipe_r32(info + 0xC);
+                    for (uint32_t l = 0; l < NL; l++) {
+                        Row& r = rows[w - W0][l];
+                        const uint32_t ea = data && pipe_r32(data + 0x30 + 4 * l) ? data + 0x40 + 0x10 * l : 0;
+                        if (ea != r.ea) { r.ea = ea; r.last = ea ? pipe_r32(ea) : 0;
+                                          if (ea) ps3_ft_watch_word(ea); }
+                    }
+                }
+        }
+        if (trace_only) { Sleep(1000); continue; }
+        const unsigned run = spurs_pm_running_mask();
+        for (uint32_t w = W0; w <= W1; w++)
+            for (uint32_t l = 0; l < NL; l++) {
+                Row& r = rows[w - W0][l];
+                if (!r.ea) continue;
+                const uint32_t row = pipe_r32(r.ea);
+                const unsigned pub = row >> 16, cons = row & 0xFFFF;
+                const unsigned dpub = (pub - (r.last >> 16)) & 0xFFFF, dcons = (cons - (r.last & 0xFFFF)) & 0xFFFF;
+                if (dpub && dpub < 0x8000) {
+                    r.pub += dpub;
+                    const unsigned others = run & ~(1u << w);
+                    if (!others) r.by[32] += dpub;
+                    for (unsigned b = 0; b < 32; b++)
+                        if (others >> b & 1) r.by[b] += dpub;
+                }
+                if (dcons && dcons < 0x8000) r.took += dcons;
+                r.last = row;
+                if (run >> w & 1) { r.run += dt; r.pending = 0; }
+                else if (pub == cons) { r.empty += dt; r.pending = 0; }
+                else { r.pend += dt; if (!r.pending) r.pend_n++; r.pending = 1; }
+            }
+        if (t - t_report >= every * 1e6) {
+            const double win = t - t_report;
+            t_report = t;
+            for (uint32_t w = W0; w <= W1; w++)
+                for (uint32_t l = 0; l < NL; l++) {
+                    Row& r = rows[w - W0][l];
+                    if (!r.ea || (!r.pub && !r.took)) continue;
+                    char by[256]; int o = 0;
+                    for (int k = 0; k < 4; k++) {   /* the four commonest */
+                        int best = -1;
+                        for (int b = 0; b < 33; b++)
+                            if (r.by[b] && (best < 0 || r.by[b] > r.by[best])) best = b;
+                        if (best < 0) break;
+                        const double share = 100.0 * r.by[best] / r.pub;
+                        if (best == 32) o += snprintf(by + o, sizeof by - o, " none %.0f%%", share);
+                        else o += snprintf(by + o, sizeof by - o, " w%d %.0f%%", best, share);
+                        r.by[best] = 0;
+                    }
+                    fprintf(stderr, "[wws] w%-2u %-12s L%u: %5.0f published/s %5.0f taken/s; running %3.0f%%, idle empty %3.0f%%, "
+                            "idle pending %3.0f%% (%.0f/s, %.2f ms each); published while running:%s\n",
+                            w, s_pipe_wkl[w], l, r.pub * 1e6 / win, r.took * 1e6 / win, 100 * r.run / win,
+                            100 * r.empty / win, 100 * r.pend / win, r.pend_n * 1e6 / win,
+                            r.pend_n ? r.pend / 1000.0 / r.pend_n : 0.0, by);
+                    memset(r.by, 0, sizeof r.by);
+                    r.run = r.empty = r.pend = r.pend_n = 0; r.pub = r.took = 0;
+                }
+            fflush(stderr);
+        }
+        for (int i = 0; i < 64; i++) YieldProcessor();
+    }
+    return 0;
+}
+
 static DWORD WINAPI pipe_probe(LPVOID arg)
 {
     unsigned every = (unsigned)(uintptr_t)arg, t = 0;
@@ -766,7 +869,21 @@ static void title_environment(void)
      * runtime/spu/tests/test_spu_float_exact.c). That emulation was ~70% of
      * the menu's limiting workload (docs/notes/2026-10-28-l7-analysis.md).
      * SPU_FLOAT_RZ=0 goes back to it. */
+#ifdef PORT_SPU_FLOAT_RZ_ONLY
+    /* Not a choice in this build: the lifted SPU code carries only the
+     * round-toward-zero forms (CMakeLists.txt, PORT_SPU_FLOAT_RZ_ONLY), which
+     * are right only in that mode. */
+    if (const char* e = getenv("SPU_FLOAT_RZ"))
+        if (strcmp(e, "1") != 0)
+            fprintf(stderr, "[gowa] SPU_FLOAT_RZ=%s ignored: this build's SPU code needs SPU_FLOAT_RZ=1\n", e);
+#ifdef _WIN32
+    _putenv_s("SPU_FLOAT_RZ", "1");
+#else
+    setenv("SPU_FLOAT_RZ", "1", 1);
+#endif
+#else
     env_default("SPU_FLOAT_RZ", "1");
+#endif
     /* Every MFC channel access looks up its context's DMA engine: a shared
      * lock and a walk over every context's engine, and the policy modules
      * keep one context per workload and SPU. That was ~10% of the SPU
@@ -910,6 +1027,10 @@ int main(int argc, char** argv)
 #endif
     if (const char* pp = getenv("GOWA_PIPE"))
         if (atoi(pp) > 0) CreateThread(NULL, 0, pipe_probe, (LPVOID)(uintptr_t)atoi(pp), 0, NULL);
+    if (const char* ww = getenv("GOWA_WWS_WATCH"))
+        if (atoi(ww) > 0) CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)atoi(ww), 0, NULL);
+    if (getenv("GOWA_WWS_TRACE") && !getenv("GOWA_WWS_WATCH"))
+        CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)10, 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */
 
     printf("\n[boot] dispatching entry OPD 0x%08X (stack top 0x%08X)\n\n",

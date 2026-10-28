@@ -268,12 +268,28 @@ add_executable(${PROJECT_NAME}
 #                          (gowa.py symbolize --lines). Line tables do not
 #                          change the generated code; the link keeps /OPT:REF
 #                          and /OPT:ICF, which /DEBUG would otherwise drop.
+#   PORT_SPU_FLOAT_RZ_ONLY -- with AVX2: the lifted SPU code carries only the
+#                          round-toward-zero forms of single precision
+#                          (SPU_FLOAT_RZ_ONLY), and the port always runs SPU code
+#                          in that mode. Chosen at run time, every float operation
+#                          was compiled in both forms -- the exact one widened to
+#                          double beside the native one -- about two and a half
+#                          times the code of a float-heavy job, for the same
+#                          results (docs/notes/2026-10-28-spu-codegen-design.md).
 option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
 option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling)" OFF)
+option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float forms only" ON)
 if(SPU_SOURCES)
+    set(spu_defs SPU_USE_DISPATCH_MT)
+    if(PORT_SPU_AVX2 AND PORT_SPU_FLOAT_RZ_ONLY)
+        list(APPEND spu_defs SPU_FLOAT_RZ_ONLY)
+        # main.cpp then sets SPU_FLOAT_RZ=1 whatever the environment says.
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" PROPERTIES
+            COMPILE_DEFINITIONS PORT_SPU_FLOAT_RZ_ONLY)
+    endif()
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
-        COMPILE_DEFINITIONS SPU_USE_DISPATCH_MT)
+        COMPILE_DEFINITIONS "${spu_defs}")
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
         set(spu_opts -O2 -msse4.1)
         if(PORT_SPU_AVX2)
