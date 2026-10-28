@@ -198,3 +198,33 @@ no alpha to coverage.
   black at 1 FPS; to try again.
 - The FIFO park freeze came once more (a depth-bounds-off run); `ab_runner.ps1` now keeps a
   frozen try's logs.
+
+**Step 3, in progress** (fork `1d379926`, `f1b353a5`, `0ec36a53`, `c2e87108`, `f62a4f6a`,
+`fa85c725`, `92a2f7e8`, `531d2252`):
+- 3.1 Fragment programs read their inline constants from b1 again (`c2e87108`), one pipeline
+  per program instead of one per set of constants. A level run: draws skipped waiting for a
+  build 1,399,836 -> 6,303, frames over 150 ms 11 -> 6, pipeline creation 43.5 -> 3.4 s,
+  flips/s 10.58 -> 11.38. Then programs are read to their end (16 KB: the depth of field pass
+  has 249 constants and ran past 4 KB) and each draw's b1 slot is as long as its program needs
+  (`531d2252`): in a minute of the level no program is compiled (194-375 before) and no draw
+  skipped (243-4,761), and the wide semi-transparent red bands, which the PS3 does not show,
+  are gone. Still 1,900-3,500 pipelines made a minute from the disk cache, ~0.1 ms each; the
+  pipeline library itself is not done.
+- That exposed a crash: with the two shader workers the level died with a corrupted heap in 8
+  of 15 runs. d3dcompiler_47 counts a blob's references without atomics, and the disk cache
+  shared its blobs between the workers and the drain thread (all 8 dumps: a blob freed twice,
+  from the same call). It now hands out copies (`f62a4f6a`): 8 of 8 runs clean. The shader
+  caches replace their least recently used entries (`fa85c725`): the level's first minute
+  draws with 106 vertex programs and holds 7,188-8,128 fragment pipelines.
+- 3.2 A new texture takes over an idle one's resource (`f1b353a5`, `RSX_TEX_TAKEOVER=0` off):
+  0.74 -> 0.41 resource creations a frame, but as many frames over 150 ms as before (7-8 a
+  run). In those, creation is about half of the upload time and decoding a tenth
+  (`0ec36a53`): next, textures placed in a heap.
+- 3.4 `AUDIO_RATE` reports the ring (`0ec36a53`): 45-52 short gaps per 5 s inside sound, and a
+  quarter of the reads with nothing written past the block read. The mixer's workload at
+  above-normal priority (`SPURS_BOOST_WID`, `1d379926`, off by default): silent blocks
+  17.3/17.6% -> 15.0/15.2%, the gaps not clearly fewer. A mixer paced by the clock is
+  written, not measured yet.
+- 3.3 not started.
+- Level: 11.4-11.9 flips/s (8 runs), against 10.4-10.6 after step 2. The few seconds of
+  stutter at the start of the Megaera scene the user saw: to look at again on this build.
