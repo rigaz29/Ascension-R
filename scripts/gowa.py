@@ -952,7 +952,7 @@ def cmd_symbolize(args):
     """Name the runtime-code RVAs in a PS3_SAMPLE report ("[samp] rva 0x...")
     from the linker map the build writes next to the executable. Only valid
     for the build that produced the log."""
-    mp = os.path.join(BUILD, "GowARecomp.map")
+    mp = args.map or os.path.join(BUILD, "GowARecomp.map")
     if not os.path.exists(mp):
         die("no %s; rebuild (the map is written at link time)" % os.path.relpath(mp, ROOT))
     base, syms = 0x140000000, []
@@ -1029,6 +1029,8 @@ def main():
     p.add_argument("--thread", help="with --rvas from PS3_SAMPLE_THREAD: only this thread name")
     p.add_argument("--wid", type=int, help="with --rvas from PS3_SAMPLE_THREAD: only samples of "
                                          "SPURS workers running this workload")
+    p.add_argument("--map", help="the linker map of the build that recorded the samples (default "
+                                 "build/GowARecomp.map; a later build moves the runtime's functions)")
     p.add_argument("--callers", action="store_true",
                    help="with --rvas: name a sample outside the executable by the caller in it "
                         "found on the stack (PS3_SAMPLE_THREAD files)")

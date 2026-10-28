@@ -119,3 +119,9 @@ and with SPU code taking no time at all it would still be ~17 flips/s. 30 flips/
 the main thread's own work roughly halved and the SPU chain shortened a lot, not a few percent
 off an SPU job. The changes that size of both are in how the lifters treat guest registers (held
 in memory, loaded and stored around every instruction), on the PPU side first.
+
+**Correction (same day):** the section above counted the main thread's polling loops as its
+own work. Measured properly ([L8 notes](2026-10-28-l8-main-thread.md)), its own work is ~19%
+of the frame (~25 ms), about 81% is waiting, and while it waits the SPU workers are half idle:
+the level is held by how the job chains are handed between threads and what they wait on, not
+by the main thread nor by SPU throughput.
