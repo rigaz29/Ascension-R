@@ -77,3 +77,45 @@ the main thread's lifted code). For both lifters the large lever is the same: gu
 held in memory, with every instruction loading and storing them. Lever 3 here removes the
 per-transfer cost of that design; keeping registers in host registers inside a function is the
 bigger change behind it.
+
+## Result: none of the four moved the frame
+
+Each lever was measured on the first level, from 10 s in, alternating executables (or a switch)
+run by run, with `GOWA_THREADS`; the later ones also with `SPURS_WID_PROF` for each workload's
+time per run.
+
+| lever | flips/s, median (windows) | per run | kept |
+|---|---|---|---|
+| 1. `/GS-` on the lifted SPU code | 7.16 (13) against 7.40 (14) | - | no |
+| 4. native float forms without the zero-product handling | 7.45 (13) against 7.35 (13) | - | yes, see below |
+| 2. per-line holder counts in the coherency notify | 7.34 (14) against 7.45 (13) | - | no |
+| 3. `preserve_none` for lifted SPU code | same within the spread | EDGE 138-148 us both ways, audio 245-251 against 247-263, w2 1672-1759 against 1556-1627 | no |
+
+What each did, from the profile: lever 3 took the register saves out of every transfer (the
+hot EDGE function's prologue went from 8 pushes and ten xmm stores to one push), and the lines
+at function entries fell from 5.1% to 2.7% of EDGE's lifted samples; `SPU_DIRECT` stayed at
+6.6% (its checks and the jump, not the frames). Lever 4 took the float forms from ~28% to ~22%
+of them, and lever 2 coherency from 5.5% to 4.5% of an EDGE run. Each is a few percent of an
+EDGE run, and an EDGE run is one link of the frame: the frame's wait on the EDGE chain is about
+29 ms of 137, so a few percent of it is about a millisecond a frame, under what two runs a side
+can tell apart. The estimate in this note ("most of the 14%") was wrong on that.
+
+Lever 4 stays although it does not show: it removes work and code (the vector forms stop
+computing the zero-product and zero-addend masks), the results are the same bit for bit
+(`test_spu_float_exact.c`: AVX2+FMA, AVX2 and SSE4.1 builds, both modes, 447M lanes each), and it
+adds nothing to keep correct. Levers 2 and 3 add a protocol (the counts beside the reservation
+Dekker pair) and an ABI split (two calling conventions in the SPU runtime, which clang only warns
+about when mixed) for nothing measurable; both reverted. The coherency counter used to size lever
+2 stays as a diagnostic (`SPU_COH_STATS=1`: per notify, 99 contexts walked, ~50 holding a
+reservation, 0.09 on the written line).
+
+## What this says about the target
+
+From the main thread's samples on the level: `usleep` 24.5%, the progress-counter wait 7%, the
+job-graph scan's polling ~20%, other waits ~6%: about 58% waiting, so its own work is about 57 ms
+of the 137 ms frame. The frame is a chain -- the main thread builds it and starts the job lists,
+the EDGE chain runs on the SPU workers, the main thread waits for the chain two frames later --
+and with SPU code taking no time at all it would still be ~17 flips/s. 30 flips/s (33 ms) needs
+the main thread's own work roughly halved and the SPU chain shortened a lot, not a few percent
+off an SPU job. The changes that size of both are in how the lifters treat guest registers (held
+in memory, loaded and stored around every instruction), on the PPU side first.

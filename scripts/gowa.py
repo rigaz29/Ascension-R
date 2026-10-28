@@ -504,6 +504,7 @@ def cmd_jobmods_entries(args):
 def cmd_lift(args):
     elf = need_elf()
     if args.jobmods_only:
+        lift_wws_pm(elf)
         lift_jobmods(elf)
         lift_pic(elf)
         say("re-run `build` so CMake picks up the new file list")
@@ -996,8 +997,9 @@ def main():
                    help="number of source files to split into (default 96; more "
                         "files = less memory per compile job)")
     p.add_argument("--jobmods-only", action="store_true",
-                   help="lift only the WWS job modules and the position-independent pieces "
-                        "(spu/jobmods/, spu/picfrags/; minutes, not the PPU)")
+                   help="lift only the SPU code this port lifts itself: the Wws_Job policy module, "
+                        "the job modules and the position-independent pieces "
+                        "(spu/wwspm/, spu/jobmods/, spu/picfrags/; minutes, not the PPU)")
     p = sub.add_parser("jobmods-entries",
                        help="add the job-module interpreter entries of runs (SPU_INTERP_ENTRIES) as extra functions")
     p.add_argument("logs", nargs="+", help="run logs")
