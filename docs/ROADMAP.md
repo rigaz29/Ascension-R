@@ -21,6 +21,8 @@ the same engine and SPU programs on ps3recomp, from disc releases, and are past 
   black and runs at ~0.35 frames/s. Next: step 7 (speed), then 3D drawing.
 - **Update, later 2026-10-27:** the main menu and the first level's opening scene render
   ([render units](notes/2026-10-27-render-units.md)); the level runs at 2.4-4.4 flips/s.
+- **Update, 2026-10-28:** menu ~20 flips/s, first level ~7.3 (median); step 7's target is now the
+  level, see below.
 
 ## 2. How a frame is made (both refs, confirmed here where marked)
 
@@ -142,7 +144,14 @@ Both cinematics play through `cellVdec` and libavcodec, start to end.
 `cellVdec` with FFmpeg as in God of War HD; check the cinematic format and the fade card that waits
 for the movie (ref B: the "black screen" was that card).
 
-### Step 7: speed to a usable menu (the current wall)
+### Step 7: speed (the current wall)
+
+**Target: the first level at a steady 30 frames/s or more on the development machine** (Ryzen 5
+4600H, 6 cores / 12 threads, GTX 1650 Ti), measured as in [PERF.md](PERF.md) section 6 with only
+`GOWA_THREADS` on. The first goal, a usable menu, was reached on 2026-10-28 (~20 flips/s). Past
+the target, speed work only buys CPU headroom for slower machines; the work then moves to what
+is drawn wrong and to stability (the FIFO park hang, the pause menu's labels, the black
+background and patch in the level).
 
 Mapped in [PERF.md](PERF.md). L1 done: all 31 job modules lifted (menu 0.5 -> 2.0 flips/s,
 level 0.2 -> 1.1-3.2, cinematic 21.7 -> 45); see

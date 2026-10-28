@@ -4,6 +4,10 @@ Measured 2026-10-27 on the development machine (Ryzen 5 4600H, 6 cores / 12 thre
 Windows 11), port `8b59dca` + fork `a2b01654` with the tools below. All numbers come from the runs
 listed at the end; nothing here is estimated unless it says so.
 
+**Target** ([ROADMAP.md](ROADMAP.md) step 7): the first level at a steady 30 flips/s or more on
+the machine above, with only `GOWA_THREADS` on. Each lever is kept only if an A/B shows more
+flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7.3 (median).
+
 ## 0. Progress
 
 | Lever | Done | Cinematic | Menu | Level | Note |
