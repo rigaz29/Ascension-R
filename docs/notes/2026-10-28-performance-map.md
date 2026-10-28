@@ -41,10 +41,41 @@ load). Every comparison below needs that number.
 | GPU | 30-34% busy in the cinematic and menus | `nvidia-smi` |
 | `ref` publication | about one fence a frame, queued 0.1-0.3 ms | `GCM_REF_STATS` |
 
-Not measured in the level yet: the D3D12 backend's steady state, GPU load, and who publishes the
-EDGE jobs. The run that was to measure them (ftrace with the new `PS3_FT_LINE` events, `PERF`,
-`nvidia-smi`) was stopped twice for low system memory: commit charge was at 21.8 of 27.5 GB,
-7.1 GB of it NVIDIA Overlay's private memory.
+### The level trace (10 s, 90 frames, median 97 ms)
+
+`PS3_FTRACE` with the new `PS3_FT_LINE` events (every atomic commit to a job list's ticket row,
+with who made it; `GOWA_WWS_TRACE=1` registers the rows), `PERF=1`, `nvidia-smi`. The first
+attempt was stopped twice for low system memory: commit charge was 21.8 of 27.5 GB, 7.1 GB of it
+NVIDIA Overlay's private memory; with the overlay restarted, 13.5 GB.
+
+Per frame, averaged over the 90 frames (`ft_groups.py`):
+
+| | SPU time | time with a run open | runs at once |
+|---|---|---|---|
+| EDGE w14-16 | 189 ms | 73 ms | 2.6 |
+| General6 w2 | 54 ms | 54 ms | 1 |
+| RenderJobs w12 | 32 ms | 32 ms | 1 |
+| RenJobSet w8-11 | 39 ms | 25 ms | 1.55 |
+| Batch w6 | 17 ms | 17 ms | 1 |
+| MeshProc w13 | 5 ms | 5 ms | 1 |
+| audio w7 | 81 ms | 81 ms | 1 (SPU 5 only) |
+| all SPU work | **~420 ms** on 6 workers | | 4.35 busy on average |
+
+- Main thread: 74 ms outside `usleep` (its own work plus the polls without a syscall), 28 ms in
+  the wait for the RSX (`ref`), 7 ms in the EDGE counter's.
+- RSX drain: 14 ms a frame. **D3D12 backend in the level: 50-85 ms a frame** on the same thread
+  (textures 28-59 ms with 5,800-7,300 binds a frame, SRV writes 35-67 ms, recording 6-20 ms);
+  `frame clock` 49% of a core.
+- GPU: 27% busy on average in the level, 43% at most.
+- Who publishes: the main thread publishes RenderJobs (355 jobs/s, ~4 a frame), MeshProcJobs
+  (45/s) and RsxSync's four lists (~12/s each). **The EDGE lists publish their own jobs**
+  (w14/15/16 100%, ~5,000/s each, each publish matched by one take): they run as self-renewing
+  chains, fed by what RenderJobs and the main thread set up.
+
+A typical frame (`ft_frame.py`, frame 27, 102 ms): RenderJobs runs on one SPU, run after run,
+from 0 to 34 ms while the main thread works and polls; MeshProc 34-40 ms; the main thread waits
+for the RSX 36-64 ms; EDGE runs two to three wide 36-80 ms; General6 34-70 ms; RenJobSet 66-94
+ms; the RSX reaches the flip at ~100 ms and the main thread asks for the next one at 102 ms.
 
 ## 3. The chain that sets the level's frame
 
@@ -55,20 +86,35 @@ EDGE jobs. The run that was to measure them (ftrace with the new `PS3_FT_LINE` e
    textures, writes descriptors and records draws, the walker does not walk, and a park's
    "waiting" time includes that.
 
-Two hypotheses, both settled by one level trace (section 6, step 0.1):
+Two hypotheses, settled by the level trace above:
 
-- **H1**: in the level, the frame clock thread is the cap: walker plus D3D12 work per frame is
-  most of the frame. Supported by: the backend's 30-95 ms a frame, the 17 ms from a park's release
-  to the walker moving on, SPU workers and EDGE lists idle much of the time, GPU mostly idle.
-- **H2**: the EDGE jobs' producer (the main thread, or an SPU job such as General6) publishes
-  late, and the frame waits for that chain.
+- **H1** (the frame clock thread is the cap): **not the limit today.** The drain shows as short
+  bursts where the SPU chain lets it go on; the backend's 50-85 ms a frame fits in the gaps. But
+  it is more than a 30 flips/s frame on its own, so it is the next limit once the SPU chain
+  shortens.
+- **H2** (the EDGE producer publishes late): **resolved differently.** EDGE feeds itself; what
+  sets the frame is a **serial chain of SPU job lists** -- RenderJobs, MeshProc, EDGE, General6,
+  RenJobSet -- with the main thread waiting for the RSX in the middle. Most of these lists run on
+  one SPU at a time because the title gives every workload a maximum contention of 1; EDGE was the
+  same until `SPURS_MAXCONT` let it use three SPUs, with the same geometry.
+
+Widening the serial lists does not help: with `SPURS_MAXCONT=2=3,6=2,8=2,9=2,10=2,11=2,12=3,
+13=2,14=3,15=3,16=3` the level ran 7.35-10.14 flips/s (median ~9.45, the same as without), and
+the extra lanes ran empty (General6 24% -> 42% empty runs, Batch 24% -> 35%). Their jobs come
+one at a time, each after the last. **What sets the frame is how long one SPU job takes**, along
+a chain the title runs serially by design -- not SPU throughput or parallelism. On the PS3 the same
+chain fits in a frame because each job is short; RPCS3 gets close with fast SPU code.
+
+So, in order: **the latency of SPU job code** limits the frame now; the D3D12 backend's CPU
+time is the next wall; the main thread's own work (~25 ms) after that.
 
 ## 4. The gap, by part
 
 ### SPU (4.3 of the 6.6 busy cores)
 
-At 30 flips/s the frame-proportional work above would need ~11 host cores. With the PPU, the
-walker/backend and audio threads taking ~3, it has to get about 3.5x cheaper, or shrink.
+The frame waits on a serial chain of SPU jobs (section 3), so what matters first is how long
+one job takes, not how many SPUs there are: each job has to get about 3x faster for 33 ms. The
+total (~420 ms of SPU time a frame) has to roughly halve as well to fit six workers at 30 flips/s.
 
 Why lifted SPU code costs what it does (from the code and the profiles):
 
@@ -126,41 +172,45 @@ guest pages, cached descriptors, optional Multithreaded RSX for vertex work.
 
 | | now, per frame | needed |
 |---|---|---|
+| serial SPU chain (RenderJobs, MeshProc, EDGE, General6, RenJobSet, with the main thread's waits) | ~97 ms | ≤ 33 ms: each job ~3x faster |
+| all SPU work | ~420 ms on 6 workers (audio 81 ms of it, fixed in time) | ≤ ~200 ms |
+| frame clock thread (walker + D3D12 backend) | 64-100 ms (14 drain + 50-85 backend) | ≤ 20 ms |
 | main thread's own work | ~25 ms | ≤ 25 ms, with its waits no longer spinning |
-| frame clock thread (walker + backend) | ~45-110 ms (to confirm in the level) | ≤ 20 ms |
-| frame-proportional SPU work | ~360 ms of core time | ≤ ~100 ms (~3 cores) |
-| GPU | 30-34% at lighter scenes | not the limit yet |
+| GPU | 27% busy in the level | not the limit |
 
 ## 6. The map, in order
 
 Each item is kept only if an A/B on the level shows more flips/s, as before.
 
 **0. Measure first**
-- 0.1 Free memory (restart NVIDIA Overlay or turn its in-game overlay off), then one level run
-  with `PS3_FTRACE` + `GOWA_WWS_TRACE=1` (who publishes EDGE jobs), `PERF=1`, `nvidia-smi`:
-  settles H1/H2.
+- 0.1 Done: the level trace above (who publishes, the per-frame chain, the backend, the GPU).
 - 0.2 RPCS3 at the same point, with and without its patches.
-- 0.3 D3D12: texture uploads against cache hits a frame, SRV writes a frame, GPU time from
+- 0.3 Where General6, RenderJobs, RenJobSet and EDGE jobs spend their time (`PS3_SAMPLE_THREAD`
+  with workload tags, `--spu-lines`): which lifted functions, which helpers, how much is runtime.
+- 0.4 D3D12: texture uploads against cache hits a frame, SRV writes a frame, GPU time from
   timestamp queries; backend spans in the ftrace.
 
-**1. RSX/D3D12 backend** (if H1 holds; likely the largest near-term gain)
-- 1.1 Texture cache keyed by (offset, format, size) in a hash map, sized by memory, not 192
+**1. SPU code generation** (sets the frame now: the latency of each serial job)
+- 1.1 Registers in locals inside a lifted function, written back at calls, exits and runtime
+  entries; guest memory stores marked so they do not alias the context. The largest single
+  change, and what RPCS3's SPU LLVM does.
+- 1.2 Cold paths out of line (LS diagnostics compiled out of release builds, float fix paths in a
+  cold section); a lifted-to-lifted convention without the Windows x64 frame (`preserve_none`,
+  measured again now that SPU job latency is the limit).
+- 1.3 An approximate float option, as RPCS3's default.
+- 1.4 Lock-line lock per line (striped) and per-line reservation holders for the notify.
+- 1.5 Audio (w7, 0.8 of a core at any frame rate, alone on SPU 5).
+- Ruled out: running the serial lists on more SPUs (`SPURS_MAXCONT`, above); honouring SPURS
+  priorities; more frequent back-off probes; waking the walker on a park's release.
+
+**2. RSX/D3D12 backend** (the next wall: 50-85 ms a frame in the level)
+- 2.1 Texture cache keyed by (offset, format, size) in a hash map, sized by memory, not 192
   slots; skip the checksum for textures whose guest pages nobody wrote (a per-page dirty bit
   from the PPU store path, SPU DMA and the walker).
-- 1.2 One persistent SRV per cached texture; per draw only copy descriptors (or a bindless
+- 2.2 One persistent SRV per cached texture; per draw only copy descriptors (or a bindless
   table).
-- 1.3 Walker on its own thread, feeding the backend through a queue; the walker never waits
+- 2.3 Walker on its own thread, feeding the backend through a queue; the walker never waits
   for recording.
-
-**2. SPU code generation**
-- 2.1 Registers in locals inside a lifted function, written back at calls, exits and runtime
-  entries; guest memory stores marked so they do not alias the context.
-- 2.2 Cold paths out of line (LS diagnostics compiled out of release builds, float fix paths in a
-  cold section); a lifted-to-lifted convention without the Windows x64 frame (`preserve_none`,
-  measured again now that the SPU side may be on the path).
-- 2.3 An approximate float option, as RPCS3's default.
-- 2.4 Lock-line lock per line (striped) and per-line reservation holders for the notify.
-- 2.5 Profile audio (w7, 0.8 core).
 
 **3. PPU**
 - 3.1 Register caching in the PPU lifter.
