@@ -64,3 +64,30 @@ kernel picks the next workload on the same core.
    writes). Needs a job-level view: which job, waiting on what, for how long.
 3. The main thread's own work (L8) and the lifters' register handling come after: at ~25 ms a
    frame they are not what holds the level at 7.
+
+## Result: L6, the worker picks its next workload itself
+
+`cellSpurs.c`: when a policy-module run ends, its worker -- already holding the instance lock --
+runs the coordinator's pick for its own slot (`spurs_pick`, the coordinator's per-slot body
+moved into a function both use): the next workload round robin from the cursor, kicked (ready
+count, signal, workload flag) or found work in its last run (idle 0). The idle back-off probes
+stay with the coordinator, whose passes count them. Only when that finds nothing does the
+worker wake the coordinator. Each worker also sleeps on a condition variable of its own, so the
+coordinator wakes the one it handed a run instead of all seven threads. `SPURS_SELF_PICK=0`
+goes back to coordinator picks.
+
+`SPURS_DISPATCH_PROF` on the level: wake 15-17 us -> 2.2 us, the same workload again after a
+working run 18-19 us -> 1.2 us, coordinator passes 20,000/s -> 5,500/s (more of them now on the
+1 ms timeout). EDGE runs 127-137 us -> 123 us, ~4,300 -> ~4,900 runs/s per list.
+
+First level, from 10 s in, three ways alternated, two runs each, with `GOWA_THREADS`,
+`SPURS_WID_PROF` and `SPURS_DISPATCH_PROF`:
+
+| | flips/s median (mean) |
+|---|---|
+| before | 7.15 (7.02) |
+| own condition variables only (`SPURS_SELF_PICK=0`) | 7.50 (7.30) |
+| self-pick | 9.44 (9.09), +32% |
+
+To watch: with fewer passes, a workload that is only ever started by a back-off probe (never
+kicked) is probed less often in real time -- every 16 passes at idle 4 is now ~3 ms, was ~0.8 ms.

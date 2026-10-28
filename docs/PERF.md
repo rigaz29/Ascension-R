@@ -21,6 +21,7 @@ flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7
 | L7a SPU single precision on the host's RZ mode (x86), `shufb` | 2026-10-28 | not measured | 18.0-19.1 (13.0 with `SPU_FLOAT_RZ=0`) | 5.0-6.9 (4.4-5.9 with `=0`) | per-thread profiler: float emulation was ~70% of workload 2, 25-38% of audio and EDGE; bit-identical (unit test, and 8.4 billion ops checked in game); [notes](notes/2026-10-28-l7-analysis.md) |
 | MFC engine lookup cached per thread | 2026-10-28 | not measured | 19.7-20.4 (19.05 with `SPU_MFC_LOOKUP_CACHE=0`) | 5.7-8.0, median 7.31 (6.26 with `=0`) | the locked walk over every context's DMA engine was ~10% of the SPU workers; the main thread polls the job graph, so L8 waits; [notes](notes/2026-10-28-level-after-l7.md) |
 | EDGE job cost: `/GS-`, coherency holder counts, `preserve_none`, leaner float forms | 2026-10-28 | not measured | not measured | no change (7.3-7.45 median either way) | each a few percent of an EDGE run, ~1 ms of a 137 ms frame; only the float forms kept (less code, bit-identical); the main thread waits ~81% of the frame, SPU workers half idle meanwhile ([L8 notes](notes/2026-10-28-l8-main-thread.md)); [notes](notes/2026-10-28-edge-job-cost.md) |
+| L6 a SPURS worker picks its next workload itself | 2026-10-28 | not measured | 22.8-23.7 (20.4-21.5 before) | 9.44 median (7.15 before), +32% | the hand-off between policy-module runs was two thread wake-ups, ~36 us against a ~140 us EDGE run; now ~3 us ([notes](notes/2026-10-28-l8-main-thread.md)) |
 
 ## 1. Baseline
 
