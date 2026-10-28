@@ -190,7 +190,13 @@ Each item is kept only if an A/B on the level shows more flips/s, as before.
 - 0.4 D3D12: texture uploads against cache hits a frame, SRV writes a frame, GPU time from
   timestamp queries; backend spans in the ftrace.
 
-**1. SPU code generation** (sets the frame now: the latency of each serial job)
+**Update, steps 1-2 of the [SPU codegen design](2026-10-28-spu-codegen-design.md) done:** SPU
+jobs 3-16% faster with the frame rate unchanged, and a probe that skips the D3D12 backend's
+texture work gave +30% (9.4 -> 12.2 flips/s). The frame is co-limited by the SPU chain and the
+frame clock thread's texture work, so the texture cache (2.1-2.2 below) goes first now, then the
+rest of the SPU work.
+
+**1. SPU code generation** (with the D3D12 texture work, sets the frame: the latency of each serial job)
 - 1.1 Registers in locals inside a lifted function, written back at calls, exits and runtime
   entries; guest memory stores marked so they do not alias the context. The largest single
   change, and what RPCS3's SPU LLVM does.

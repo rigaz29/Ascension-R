@@ -138,7 +138,34 @@ resuming stop. Interrupts are taken only at transfer points, which write back al
 `iret` that unwinds handler frames resumes from the context. The prototype (`promote.py`)
 applies these rules to lifted C and compiles.
 
-## 4. What is measured after each step
+## 4. Results of steps 1 and 2
+
+First level, two runs a side alternated, `GOWA_THREADS` + `SPURS_WID_PROF`; flips/s from 185 s
+after the movie, time per run averaged over the level's windows:
+
+| | flips/s median | General6 | RenJobSet w11 | EDGE | audio | RenderJobs | Batch |
+|---|---|---|---|---|---|---|---|
+| before | 9.40 | 1,643 us | 560 | 122 | 220 | 648 | 892 |
+| step 1: `SPU_FLOAT_RZ_ONLY` | 9.46 | 1,403 (-15%) | 511 (-9%) | 112 (-8%) | 202 (-8%) | 609 (-6%) | 862 (-3%) |
+| steps 1 + 2: job modules with `--merge-chunks` | 9.54 | 1,382 (-16%) | 493 (-12%) | 111 (-9%) | 198 (-10%) | 616 (-5%) | 851 (-5%) |
+
+- Step 1 is kept although the frame rate did not move, as the leaner float forms were: it is
+  less code (the executable 6 MB smaller) with the same results (`test_spu_float_exact`
+  446,840,832 lanes bit-identical in three builds), and nothing to keep correct beyond running
+  SPU code in the RZ mode, which the port now always does. Fork `b184d749`; `CMakeLists.txt`
+  option `PORT_SPU_FLOAT_RZ_ONLY`.
+- Step 2 is not kept: 1-6% more off a few workloads, nothing on the frame, and 13 MB more lifted
+  C (every chunk is lifted alone as well as in its group). To try again once the SPU chain is the
+  limit on its own.
+
+Why the jobs got faster and the frame did not: with `TEX_BUDGET=50` (the D3D12 backend skips
+almost every texture bind -- wrong textures, a probe only) the level ran **12.1-12.3 flips/s,
++30%**, its texture time 28-59 ms a frame down to 0.5-4 ms. The texture work on the frame
+clock thread, which also walks the FIFO, is on the frame's path together with the SPU chain:
+shortening one moves little until the other shortens too. The texture cache comes next
+([performance map](2026-10-28-performance-map.md), section 6).
+
+## 5. What is measured after each step
 
 - Per workload: `SPURS_WID_PROF` us/run on the level (now: General6 1,610, Batch 866, RenderJobs
   627, EDGE ~118, audio 214).

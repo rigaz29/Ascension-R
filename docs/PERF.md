@@ -11,6 +11,10 @@ flips/s; less CPU alone is not a reason. At 2026-10-28: menu ~20, first level ~7
 **2026-10-28: the target is now RPCS3's speed on this machine, or better.** What is measured, what
 is suspected, and the work in order: [performance map](notes/2026-10-28-performance-map.md).
 
+| Lever | Done | Menu | Level | Note |
+|---|---|---|---|---|
+| SPU float forms chosen at compile time (`PORT_SPU_FLOAT_RZ_ONLY`) | 2026-10-28 | not measured | 9.46 median (9.40 before) | SPU job time -3..-15% (General6 1,643 -> 1,403 us), bit-identical, executable 6 MB smaller; kept as the leaner float forms were. Job modules with `--merge-chunks` on top: 9.54, not kept (+13 MB of C). `TEX_BUDGET=50` probe: 12.1-12.3 flips/s, so the D3D12 texture work is on the frame's path ([notes](notes/2026-10-28-spu-codegen-design.md)) |
+
 ## 0. Progress
 
 | Lever | Done | Cinematic | Menu | Level | Note |
