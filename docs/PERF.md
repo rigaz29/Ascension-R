@@ -11,6 +11,8 @@ the morning, ~11.9 after the texture cache in the evening.
 
 **2026-10-28: the target is now RPCS3's speed on this machine, or better.** What is measured, what
 is suspected, and the work in order: [performance map](notes/2026-10-28-performance-map.md).
+Paused the same evening for rendering accuracy (wrong colours, dropped draws, flicker, stutter,
+freezes): [rendering accuracy plan](notes/2026-10-28-rendering-accuracy-plan.md).
 
 | Lever | Done | Menu | Level | Note |
 |---|---|---|---|---|
