@@ -103,3 +103,32 @@ it is bound by workload 2 and the main thread's own work, not by DMA lookups.
 Seen in both sides' level screenshots, so not from this: in the scene after the first
 quick-time event the background behind the characters is black where a sky should be (with the
 black patch above, for a comparison with RPCS3).
+
+## What a level frame waits for (after the cache)
+
+Profile again, cache on: the dispatch path (`spu_indirect_branch`, `spu_lifted_lookup*`,
+`spu_lookup`, `spu_drain_call`) is 8% of the workers' samples, spread over many lines (the
+largest: `spu_indirect_branch`'s entry, 12% of its own time, and the dispatch cache's compare).
+No single fix there. The workers wait for work 33% of the time.
+
+`PS3_FTRACE` over 10 s of the level (72 frames, median 136 ms with the trace on): the main
+thread is blocked 38 ms a frame, 29 ms of it in `usleep` at `0x41D5C8`, the call of
+`func_0041CBDC` from the frame loop (`func_0041D4E8`). That function sleeps 30 us at a time
+until a 16-bit counter at `0xA0B740 + 4 * (frame % 3)` reads 0. The PPU only sets the counters
+up (`func_0041B998`); the job manager's policy module updates them with `GETLLAR`/`PUTLLC` on
+that line (`SPU_ATOM_EA`, pc `0x2628`): the counter is the frame's job chain, and the main thread
+waits for its jobs to finish two frames later.
+
+While it waits, 7.2 SPU busy spans are open on average, 6.3 of them EDGE (workloads 14-16:
+2.6, 2.2, 1.5) and 0.8 audio; over the whole trace, 4.0. So in that phase the SPU side is full
+of EDGE work, and the level's frame is bound by how fast the EDGE jobs run, not by the main
+thread (whose own work is about a third of its time) nor by the RSX drain (17 ms a frame).
+
+Inside an EDGE run (w14), after the cache: lifted code ~65%, runtime ~25% (coherency 4.5%,
+dispatch, MFC). In the lifted code: `shufb` 10.6%, LS reads 9.3% and writes 5.9%, `fma` 7.7%
+and `fm` 5.1% (now the native forms), direct branches (`SPU_DIRECT`) 7.3%, function entries
+~5%.
+
+Next: per-EDGE-job cost. First look at where direct branches and function entries go in the
+generated code (the Windows x64 ABI keeps xmm6-15 callee-saved, so every lifted function that
+uses them saves and restores them), and at the LS access codegen, before choosing.
