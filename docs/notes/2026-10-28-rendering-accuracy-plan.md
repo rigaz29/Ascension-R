@@ -306,3 +306,19 @@ seams and the menu flicker, before speed again):
 - Testing note: with the laptop on battery and nobody at it, the display turns off after 30
   minutes and vsync'd presents drop the game to ~3.8 flips/s (exes that ran at 60 in the menus
   did the same). Unattended runs use `D3D12_VSYNC=0`.
+
+**The seams, continued** (fork `740c1b62`, `5c906fb2`):
+- Both suspects left above are fixed, and the seams are still there. ZPASS reports now carry the
+  GPU's counts: each query is `CLEAR_REPORT_VALUE(1)`, one indexed bounding shape,
+  `GET_REPORT(1)`, and the D3D12 backend counts the draws between them with occlusion queries;
+  ~30% come back hidden, the level runs ~2% faster (median 12.32-12.51 against 12.12-12.20) and
+  nothing goes missing. A depth surface is now made only for a pass that uses it, so the
+  1408x1408 depth-only pass has its own.
+- The depth-bounds commands are written by SPU job modules (all 345,000 seen were in lines an
+  SPU PUT; the writes come from the job manager's context, called from modules such as
+  `jobmod_e8f44fbc6dbf`). Of what the RSX produces, the SPUs read only the reports (~5,000
+  16-byte reads a second from the report area); no GET from local memory at all, list DMA
+  included, and no NV0039 copy out of it.
+- So each tile's bounds are worked out on the SPU from the title's own data. Whether the PS3
+  shows the same seams needs a reference: in RPCS3 the opening is reached from a new profile in
+  the user's save, which they have to allow first.
