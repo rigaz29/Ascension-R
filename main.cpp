@@ -673,6 +673,33 @@ static DWORD WINAPI wws_watch(LPVOID arg)
     return 0;
 }
 
+/* GCM_PARK_DUMP_MS: the job lists the frame waits on, once, when the RSX has
+ * stood at a park that long -- the port's half of the runtime's park dump,
+ * which does not know these lists. Per list: its ticket row (published and
+ * consumed counts) and the first words of the list. */
+extern "C" void (*gcm_park_dump_hook)(void);
+static void wws_rows_dump(void)
+{
+    const uint32_t sp = 0x7001AD00;
+    if (!(pipe_r8(sp + 0x74) & 0x40)) { fprintf(stderr, "[park-dump] job lists not set up yet\n"); return; }
+    for (uint32_t w = 12; w <= 17; w++) {
+        const uint32_t info = sp + (w >= 16 ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+        const uint32_t data = pipe_r32(info + 0xC);
+        for (uint32_t l = 0; data && l < 4; l++) {
+            const uint32_t list = pipe_r32(data + 0x30 + 4 * l);
+            if (!list) continue;
+            const uint32_t row = data + 0x40 + 0x10 * l;
+            const uint32_t t = pipe_r32(row);
+            fprintf(stderr, "[park-dump] w%-2u %-12s L%u: published %u consumed %u%s; row %08X %08X %08X %08X; "
+                            "list 0x%08X: %08X %08X %08X %08X %08X %08X %08X %08X\n",
+                    w, s_pipe_wkl[w], l, t >> 16, t & 0xFFFF, (t >> 16) != (t & 0xFFFF) ? " (pending)" : "",
+                    t, pipe_r32(row + 4), pipe_r32(row + 8), pipe_r32(row + 12), list,
+                    pipe_r32(list), pipe_r32(list + 4), pipe_r32(list + 8), pipe_r32(list + 12),
+                    pipe_r32(list + 16), pipe_r32(list + 20), pipe_r32(list + 24), pipe_r32(list + 28));
+        }
+    }
+}
+
 static DWORD WINAPI pipe_probe(LPVOID arg)
 {
     unsigned every = (unsigned)(uintptr_t)arg, t = 0;
@@ -1061,6 +1088,7 @@ int main(int argc, char** argv)
         if (atoi(pp) > 0) CreateThread(NULL, 0, pipe_probe, (LPVOID)(uintptr_t)atoi(pp), 0, NULL);
     if (const char* ww = getenv("GOWA_WWS_WATCH"))
         if (atoi(ww) > 0) CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)atoi(ww), 0, NULL);
+    gcm_park_dump_hook = wws_rows_dump;
     if (getenv("GOWA_WWS_TRACE") && !getenv("GOWA_WWS_WATCH"))
         CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)10, 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */

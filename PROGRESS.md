@@ -31,10 +31,11 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 | 2026-10-27 | `usleep` from 200 us on a high-resolution timer (a core back), per-task logs quiet, EDGE lists on three SPUs: cinematic 50, menu 2.0 -> 3.6, level 2.4-4.4 flips/s. The remaining interpreted code is position-independent EDGE fragments ([notes](docs/notes/2026-10-27-host-waste-and-lanes.md)). |
 | 2026-10-27 | **3D scenes on screen.** The D3D12 path binds texture units 4-15, draws inline arrays (the whole post chain), keeps each display buffer as a target of its own, replays the display copies the post chain reads, and handles a pass that samples its own target and memory used as both depth and colour. The main menu and the first level's opening scene render, without the yellow flashes ([notes](docs/notes/2026-10-27-render-units.md)). |
 | 2026-10-27 | **L2: EDGE fragments lifted.** The 26 position-independent code pieces the EDGE jobs stream to changing LS addresses run lifted (`spu_lifter.py --pic`, runtime regions resident wherever they land): menu 3.5 -> 15 flips/s, first level 2-5 -> 5-10. Flips on the title's own command buffers are queued in the FIFO again, so the menu keeps its UI at that speed ([notes](docs/notes/2026-10-27-l2-analysis.md)). |
+| 2026-10-29 | **The FIFO park freeze, fixed.** It was an SPU task's assertion: the particle work's first phase creates tasks in a sibling Taskset2 and checks each one's exit-code entry, and a task the runtime ran to its exit first left 2 there where libsre writes 0x12. Progress on the rendering plan, the seams and the menu flicker are in [the plan](docs/notes/2026-10-28-rendering-accuracy-plan.md), section 5. |
 
 ## Next
 
 The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed
 ([docs/PERF.md](docs/PERF.md)): job modules lifted, host waste cut, EDGE on three SPUs; next
-position-independent lifting for the EDGE fragments. The menu and level now render; open: the pause menu's labels, an
-intermittent FIFO park hang, and the device loss with `D3D12_RECORD_AHEAD=0`.
+position-independent lifting for the EDGE fragments. The menu and level now render; open: the pause menu's labels and the device loss with
+`D3D12_RECORD_AHEAD=0`.

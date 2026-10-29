@@ -258,3 +258,51 @@ no alpha to coverage.
   darker than the rest), with either copy mode; for step 4.
 - Level: 12.2-12.3 flips/s; around entering it 3 frames over 150 ms (730-740 ms, the longest
   361-373), against 3-8 (0.9-2.3 s, the longest 434-485) before.
+
+**0.1 found, and where 4's seams and 0.3's flicker stand** (asked for: the freeze, then the
+seams and the menu flicker, before speed again):
+- **The freeze was an SPU task's assertion.** Every frozen run in the logs (8 of 8) printed
+  `HALT-ASSERT heqi pc=0x0CA10 img=323211119` seconds before its park; four other runs printed
+  it and went on. Image 323211119 is the particle work's first phase: its last task creates the
+  next five in the sibling Taskset2 (`0x70031F80`) from the SPU. The task library's create
+  (`0xC3E0`-`0xCA78` in that image): find a free id and set its enabled bit, PUT the TaskInfo,
+  PUT the task's exit-code entry (`+0x1980 + 16 * id`) with state 1, set the pending bit,
+  signal the taskset's workload, then read the entry back and halt unless its state is 1 or
+  0x12, and set 0x10. The runtime starts a task at the commit that makes it pending, so a short
+  task could exit before that read, and the runtime's exit wrote 2 there where libsre's taskset
+  policy module writes 0x12 (its exit path in `libsre.prx`, file offset `0x25694`: `il r15, 18`
+  and the byte insert at +15, the exit code at +8). The halted task's frame never finished:
+  RsxSync had entries published and no runner, and the RSX stood at the park the frame would
+  have patched. Fix (fork): the exit leaves 0x12, with a test of the entry against the
+  creator's check. Proved with a local build that sleeps 5 ms after the pending-bit commit
+  (the race made certain): with 2 both runs halted at the first early exit and froze, with 0x12
+  five early exits in a row and the frames went on. No halt in ~20 runs since (before: ~5% of
+  runs).
+- The park dump now prints the job lists' ticket rows (`[park-dump] w12-17`, port), and
+  `RSX_CAP_DIP=<n>` captures frames drawing less than half of the frame before; `RSX_CAP_SHOT=1`
+  captures the frame of each screenshot and the one after it. Manifests carry each draw's
+  scissor, depth surface, depth/stencil key, depth bounds and samplers.
+- **Seams.** Their vertical edges sit exactly on an 8x8 grid of screen tiles (x = 160, 320, 480,
+  640, ...). They come from a screen mask (`0x01D90000`, red channel) the object lighting reads
+  the batch after: per frame, seven depth slices, each one quad per screen tile with its own
+  depth bounds (from the SPU, e.g. 0.9116..0.9158), a stencil test, and a fragment program that
+  projects the position from the linear depth copy onto one 256x512 DXT1 light pattern
+  (wrapped, so no border). Adjacent tiles get the pattern through different slices at the same
+  depth, and the mask jumps at the tile edge (e.g. ~200 -> 0 at x = 640). With the depth bounds
+  test off the edges are gone, but the scene comes out darker, so that is not the fix. Ruled
+  out: the scissor (now applied, but the title's always matches its viewport; only its
+  shadow-map clears are smaller than the target), the offscreen target cache (28 targets, no
+  eviction), SPU reads of RSX memory (none, list DMA included), the occlusion count (1 and
+  0xFFFF give the same seams). Open: what the SPU bases each tile's bounds on. The title issues
+  ~400 occlusion queries a frame, all answered "visible" here (0 culls nearly the whole scene),
+  and its 1408x1408 depth-only pass (722 draws) gets no depth surface: the six-entry pool is
+  full, so it renders into the shared buffer that every pass switch clears.
+- **Menu flicker.** One frame with a strong orange radial blur shows when the title screen
+  turns into the main menu by itself (~75 s, before any button). It is a whole frame the title
+  draws through its 3D path and post chain and flips (one flip per present, buffers in
+  rotation), and its blur samples the depth copy (`0x02EC0000`) the frame before should have
+  written. Not the target cache (no eviction) or aliasing (nothing overlaps that copy). Whether
+  the PS3 shows the same frame needs a reference from RPCS3.
+- Testing note: with the laptop on battery and nobody at it, the display turns off after 30
+  minutes and vsync'd presents drop the game to ~3.8 flips/s (exes that ran at 60 in the menus
+  did the same). Unattended runs use `D3D12_VSYNC=0`.
