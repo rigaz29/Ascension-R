@@ -385,6 +385,8 @@ thread, the main thread's waits). The chain sets it now, so what shortens a chai
     by 1.7-2.6%, for builds that differed by nothing on the hot path.
   - In ABBA order (a b b a) the same builds were within 1%. A gain under ~3% measured the old
     way needs measuring again.
+  - The occlusion counts (fork `5c906fb2`, +2% the old way) hold. In ABBA order, one executable,
+    they gave 11.69 against 11.21 flips/s with `RSX_ZPASS=0`: +4.3%, both runs above both.
 - On the charger. `D3D12_VSYNC=0` for unattended runs: on battery the display turns off after
   30 minutes and vsync'd presents drop to ~3.8 flips/s.
 - Frame-rate claims with only `GOWA_THREADS` on; the trace and sampler runs are for the
