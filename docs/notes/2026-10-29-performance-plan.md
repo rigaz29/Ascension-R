@@ -228,21 +228,42 @@ Share of each workload's samples:
 
 Each item is small and is measured on its own.
 
-- **1.1 Approximate SPU float** (design step 3: `SPU_FLOAT_APPROX` at compile time).
-  - What: native `addps`/`mulps`/FMA, no range checks, no +0 flush. This is RPCS3's setting for
-    this title.
-  - SPU code already runs at round toward zero with FTZ and DAZ, so native operations differ
-    from the SPU's only outside the IEEE range (the SPU's extended range) and in the sign of a
-    zero result.
-  - Evidence: compiled x86 instructions fall from 7,709 to 3,135 in General6 `4F00`, and from
-    4,745 to 1,786 in EDGE `A950`.
-  - Expected: General6 and EDGE runs 20-35% shorter (estimate).
-  - Check:
-    - on the replay, how many outputs differ and by how much;
-    - screenshots at fixed times against the exact build;
-    - a play-through of the first level.
+- **1.1 SPU float. Done 2026-10-30** (fork `6544cbc8`, port `0d958e1`). The approximate float
+  planned here is wrong for this title; leaner exact forms took its place.
+  - Planned: native `addps`/`mulps`/FMA with no range check and no +0 flush (RPCS3's setting for
+    this title). On the replay, General6 jobs took 754 us instead of 1,256 and EDGE jobs 37.9
+    instead of 71.5, but 13 of 40 EDGE jobs then issued different DMA: they culled differently.
+    - The title counts on the SPU's extended range. EDGE makes all-ones masks as
+      `x * 0xFFFFFFFF` (-0, or -max saturated), and General6 refines 1/0 (`0x7FFFF800`) with
+      `fma`. On x86 those words are NaN.
+    - Clamping the reciprocal estimates to FLT_MAX changed nothing; the masks are the cause.
+    - What the range check costs: native without it is 25% (General6) and 38% (EDGE) below the
+      exact forms below. A check per block, or only at the sites a profile shows, would be the
+      way to get some of that back.
+  - Done instead, bit-exact: the round-toward-zero forms keep their result in a register (a
+    union merged through the stack had cost a store and a reload per operation), the redo of a
+    vector out of range is a `__vectorcall` with its operands in registers, and the +0 rule is two
+    operations. `test_spu_float_exact`: 446.8M lanes identical in every x86 build mode.
+  - `PORT_SPU_FLOAT_APPROX` (`gowa.py build --spu-approx`), off by default: -0 kept where the SPU
+    has +0, the range check kept. On the replay only scratch words, registers and two output
+    words of one EDGE job differ (-0 for +0).
+  - Replay, us per job (fastest of 10 runs):
+
+    | | before | exact, leaner | approx | native, unchecked |
+    |---|---|---|---|---|
+    | General6 w2 | 1,256 | 1,002 | 932 | 754 |
+    | RenderJobs w12 | 627 | 617 | 613 | 611 |
+    | EDGE w15 | 71.5 | 61.4 | 61.0 | 37.9 |
+
+  - Level, ABBA, two runs each (`logs/bench-float`): before 11.71, leaner exact 11.86 (+1.3%),
+    approx 11.96 (+2.1%). Within the method's noise; the screenshots look alike. The SPU workers
+    used 10-17% of a core less (`spurs pm` 480% -> 463-471%).
+  - So the frame is not bound by these jobs' float code: a fifth off General6 and a seventh off
+    EDGE moved the frame rate 1-2%. What the chain waits on needs a fresh trace before 1.2.
 - **1.2 The SPU runtime's share** (~30% of a RenderJobs or EDGE run; by the replay, a job alone
-  takes 80% of its game run in RenderJobs and 68% in EDGE):
+  takes 80% of its game run in RenderJobs and 68% in EDGE). The replay can be profiled:
+  `PS3_SAMPLE=1 PS3_SAMPLE_MAIN=1 PS3_SAMPLE_RVAS=<file>` with enough `--reps` to last a few
+  10 s reports, then `gowa.py symbolize --rvas <file>`:
   - **dispatch:** an indirect branch looks its target up through `spu_lifted_lookup` and the
     "full" lookup with its lock. Cache the target per call site or per module.
   - **DMA:** a fast path for the common sizes, and list DMA without channel emulation per

@@ -107,6 +107,10 @@ Static counts are not run time; each step below is kept only if the level's per-
 - `SPU_FLOAT_APPROX` (compile time): native `addps`/`mulps`/`vfmadd` in the RZ mode, no range
   check, no +0 flush, no fix path. Off by default; turned on for this title only if the level
   looks the same (screenshots against the exact build) and it pays in the A/B.
+- 2026-10-30: without the range check this title's EDGE masks and General6's 1/0 go wrong
+  ([performance plan](2026-10-29-performance-plan.md), 1.1). `SPU_FLOAT_APPROX` keeps the check and
+  drops only the +0 rule, off by default; the exact forms were made leaner instead (General6 jobs
+  -20%, EDGE -14%, bit-identical).
 
 **Step 4. LS accesses without the diagnostic gate in release builds.**
 - `spu_ls_read128`/`write128` check `g_spu_ls_watch_n` and keep a cold call to the diagnostic

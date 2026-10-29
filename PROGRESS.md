@@ -38,6 +38,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 Speed, toward RPCS3's on this machine or better (first level at 12.3 flips/s; RPCS3 22.9 FPS in
 the same fight): the [performance plan](docs/notes/2026-10-29-performance-plan.md). Phase 0 is
 done (`gowa.py bench`, `gowa.py frames`, SPU job capture and `gowa.py replay`, RPCS3 measured at
-the same scene); next phase 1 (approximate SPU float judged on the replay, the SPU runtime's
-share, the main thread's polls, no full GPU drain per batch, descriptors, MLAA on the GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+the same scene). Phase 1.1 is done: leaner exact SPU float forms (General6 jobs -20%, EDGE -14%,
+bit-identical); native float breaks this title's EDGE masks, so no approximate mode by default.
+The level moved only 1-2%, so next is a fresh trace of what the frame's chain waits on, then the
+rest of phase 1 (the SPU runtime's share, the main thread's polls, no full GPU drain per batch,
+descriptors, MLAA on the GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.
