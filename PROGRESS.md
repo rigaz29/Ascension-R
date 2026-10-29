@@ -35,7 +35,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 
 ## Next
 
-The ordered plan is in [docs/ROADMAP.md](docs/ROADMAP.md). Now step 7, speed
-([docs/PERF.md](docs/PERF.md)): job modules lifted, host waste cut, EDGE on three SPUs; next
-position-independent lifting for the EDGE fragments. The menu and level now render; open: the pause menu's labels and the device loss with
-`D3D12_RECORD_AHEAD=0`.
+Speed, toward RPCS3's on this machine or better (first level at 12.3 flips/s): the
+[performance plan](docs/notes/2026-10-29-performance-plan.md), phase 0 first (a bench command,
+an SPU job replay, RPCS3 and the port at one scene), then phase 1 (approximate SPU float, the SPU
+runtime's share, the main thread's polls, no full GPU drain per batch, descriptors, MLAA on the
+GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+the rectangular seams (an RPCS3 reference), the menu's one-frame flash.

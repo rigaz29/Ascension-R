@@ -14,6 +14,12 @@ is suspected, and the work in order: [performance map](notes/2026-10-28-performa
 Paused the same evening for rendering accuracy (wrong colours, dropped draws, flicker, stutter,
 freezes): [rendering accuracy plan](notes/2026-10-28-rendering-accuracy-plan.md).
 
+**2026-10-29: speed again, at 12.3 flips/s.** The frame measured afresh (a chain of SPU job
+lists, 80 ms; the GPU 25% busy at 645 MHz) and the work in phases, from faster measurement to
+native and GPU replacements of the hottest SPU jobs:
+[performance plan](notes/2026-10-29-performance-plan.md). It replaces the performance map's
+order of work.
+
 | Lever | Done | Menu | Level | Note |
 |---|---|---|---|---|
 | ZPASS reports carry the GPU's occlusion counts (fork `5c906fb2`) | 2026-10-29 | not measured | 12.32-12.51 median (12.12-12.20 with every query "visible"; two runs a side, alternating) | a correctness change first: of the ~400 queries a frame ~30% now come back hidden and the title skips those objects; screenshots at 150/250/350 s show nothing missing ([plan](notes/2026-10-28-rendering-accuracy-plan.md), section 5) |

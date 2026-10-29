@@ -1,5 +1,9 @@
 # Performance map: what stands between the port and RPCS3
 
+**2026-10-29:** the order of work below is replaced by the
+[performance plan](2026-10-29-performance-plan.md), written at 12.3 flips/s from a new trace and
+sample of the level. This note stays as the record of the 2026-10-28 measurements and levers.
+
 Written 2026-10-28, after L6 (first level 9.4 flips/s median, main menu ~23, opening cinematic
 ~50). The new target is RPCS3's speed on this machine or better. This note collects what is
 measured, what is only suspected, and the work in the order it should pay.
