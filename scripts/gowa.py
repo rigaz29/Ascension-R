@@ -670,7 +670,9 @@ def cmd_build(args):
               "-DPORT_SPU_INPUTS=" + spu_inputs,
               "-DPORT_SPU_LINES=" + ("ON" if args.spu_lines else "OFF"),
               "-DPORT_SPU_JOBCAP=" + ("ON" if args.jobcap else "OFF"),
-              "-DPython3_EXECUTABLE=" + sys.executable] + ff_opts, env=env)
+              "-DPORT_SPU_FLOAT_APPROX=" + ("ON" if args.spu_approx else "OFF"),
+              "-DPython3_EXECUTABLE=" + sys.executable] + ff_opts
+             + ["-D" + d for d in args.define], env=env)
     if rc:
         die("cmake configure failed")
     # The lifted TUs are huge: each clang-cl job can take several GB, so the
@@ -1040,6 +1042,10 @@ def main():
     p.add_argument("--jobcap", action="store_true",
                    help="SPU job capture and replay hooks (PORT_SPU_JOBCAP), for SPU_JOB_CAPTURE and "
                         "`replay`; a measurement build, not for play")
+    p.add_argument("--spu-approx", action="store_true",
+                   help="SPU float results of zero may be -0 (PORT_SPU_FLOAT_APPROX); default bit-exact")
+    p.add_argument("-D", dest="define", action="append", default=[], metavar="VAR=VALUE",
+                   help="another CMake cache setting, kept for later builds (e.g. -D PORT_PPU_FAST_FP=ON)")
     p = sub.add_parser("run", help="start the port")
     p.add_argument("--quiet", action="store_true", help="write the log only, not the console")
     p.add_argument("--seconds", type=int, default=0, help="stop the port after this many seconds")

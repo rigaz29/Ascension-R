@@ -81,11 +81,16 @@ message(STATUS "Lifted sources:  ${RECOMP_SOURCE_COUNT} file(s)")
 # compiles those paths as before. Before add_subdirectory: the runtime library
 # needs the definition too.
 option(PORT_SPU_JOBCAP "SPU job capture and replay hooks (measurement builds)" OFF)
+get_directory_property(port_compile_defs COMPILE_DEFINITIONS)
 if(PORT_SPU_JOBCAP)
     add_compile_definitions(PS3_SPU_JOBCAP)
 endif()
 add_subdirectory("${PS3RECOMP_DIR}" "${CMAKE_BINARY_DIR}/ps3recomp_sdk"
                  EXCLUDE_FROM_ALL)
+# The lifted SPU code takes it with its other definitions (spu_defs below); the
+# lifted PPU code has none of the hooks, and with the definition on its command
+# line every switch rebuilt all of it.
+set_directory_properties(PROPERTIES COMPILE_DEFINITIONS "${port_compile_defs}")
 
 # ---------------------------------------------------------------------------
 # The HLE NID table
@@ -285,13 +290,26 @@ add_executable(${PROJECT_NAME}
 #                          double beside the native one -- about two and a half
 #                          times the code of a float-heavy job, for the same
 #                          results (docs/notes/2026-10-28-spu-codegen-design.md).
+#   PORT_SPU_FLOAT_APPROX -- with PORT_SPU_FLOAT_RZ_ONLY: a zero result of an SPU
+#                          float operation keeps the host's sign, -0 where the SPU
+#                          has +0 (SPU_FLOAT_APPROX), which saves the two
+#                          operations that make it +0. The extended-range checks
+#                          stay: this title's EDGE jobs depend on them. Off, the
+#                          lifted SPU code is bit-exact.
 option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
 option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling)" OFF)
 option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float forms only" ON)
+option(PORT_SPU_FLOAT_APPROX "Lifted SPU code: a zero float result may be -0 (SPU_FLOAT_APPROX)" OFF)
 if(SPU_SOURCES)
     set(spu_defs SPU_USE_DISPATCH_MT)
+    if(PORT_SPU_JOBCAP)
+        list(APPEND spu_defs PS3_SPU_JOBCAP)
+    endif()
     if(PORT_SPU_AVX2 AND PORT_SPU_FLOAT_RZ_ONLY)
         list(APPEND spu_defs SPU_FLOAT_RZ_ONLY)
+        if(PORT_SPU_FLOAT_APPROX)
+            list(APPEND spu_defs SPU_FLOAT_APPROX)
+        endif()
         # main.cpp then sets SPU_FLOAT_RZ=1 whatever the environment says.
         set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" PROPERTIES
             COMPILE_DEFINITIONS PORT_SPU_FLOAT_RZ_ONLY)
