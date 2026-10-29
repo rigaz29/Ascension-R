@@ -75,6 +75,15 @@ message(STATUS "Lifted sources:  ${RECOMP_SOURCE_COUNT} file(s)")
 # imported one arrives without SDL2, pthreads, the Metal frameworks or the
 # Winsock/XInput imports -- the link then fails on every platform for a
 # different reason. add_subdirectory hands all of that over with the target.
+# PORT_SPU_JOBCAP: SPU job capture and replay (SPU_JOB_CAPTURE, SPU_JOB_REPLAY,
+# gowa.py replay). Its hooks wrap the runtime's DMA, channel and drain paths, so
+# only measurement builds have them (gowa.py build --jobcap) and a default build
+# compiles those paths as before. Before add_subdirectory: the runtime library
+# needs the definition too.
+option(PORT_SPU_JOBCAP "SPU job capture and replay hooks (measurement builds)" OFF)
+if(PORT_SPU_JOBCAP)
+    add_compile_definitions(PS3_SPU_JOBCAP)
+endif()
 add_subdirectory("${PS3RECOMP_DIR}" "${CMAKE_BINARY_DIR}/ps3recomp_sdk"
                  EXCLUDE_FROM_ALL)
 

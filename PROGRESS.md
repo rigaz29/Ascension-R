@@ -35,9 +35,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 
 ## Next
 
-Speed, toward RPCS3's on this machine or better (first level at 12.3 flips/s): the
-[performance plan](docs/notes/2026-10-29-performance-plan.md), phase 0 first (a bench command,
-an SPU job replay, RPCS3 and the port at one scene), then phase 1 (approximate SPU float, the SPU
-runtime's share, the main thread's polls, no full GPU drain per batch, descriptors, MLAA on the
-GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+Speed, toward RPCS3's on this machine or better (first level at 12.3 flips/s; RPCS3 22.9 FPS in
+the same fight): the [performance plan](docs/notes/2026-10-29-performance-plan.md). Phase 0 is
+done (`gowa.py bench`, `gowa.py frames`, SPU job capture and `gowa.py replay`, RPCS3 measured at
+the same scene); next phase 1 (approximate SPU float judged on the replay, the SPU runtime's
+share, the main thread's polls, no full GPU drain per batch, descriptors, MLAA on the GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.

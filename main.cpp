@@ -68,6 +68,7 @@ void     ppu_fs_register(void);               /* cellFs over the real game direc
 void     lv2_init_syscalls(void);             /* the lv2 syscall table */
 int      ppu_run(uint32_t entry_opd, uint32_t stack_top);
 void     cellGame_init_from_paramsfo(const char* sfo_path);  /* libs/system/cellGame.c */
+int      spu_job_replay_main(const char* dir);           /* runtime/spu/spu_jobcap.c */
 
 /* This project's own: load whatever real system PRX modules the title needs
  * into guest RAM and register their exports. stubs.cpp has the empty version
@@ -1073,6 +1074,13 @@ int main(int argc, char** argv)
     ppu_sysprx_register();   /* boot-critical CRT */
     ppu_fs_register();       /* cellFs over the game directory */
     lv2_init_syscalls();     /* the lv2 syscall table */
+
+    /* SPU_JOB_REPLAY=<dir>: run the SPU jobs an SPU_JOB_CAPTURE run recorded,
+     * time them and compare their output, instead of the game. The ELF is
+     * loaded (the jobs' code regions) and the lifted SPU code registered; no
+     * PPU thread, no GPU. */
+    if (const char* rd = getenv("SPU_JOB_REPLAY"))
+        return spu_job_replay_main(rd);
 
     /* Install the guest-callback hook, then start the frame clock. It no-ops
      * until the title registers its vblank and flip handlers during init. */

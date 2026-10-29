@@ -16,12 +16,17 @@ changes what the game shows is an option, never a silent default.
   - no frame over 50 ms in a 60 s window outside loading;
   - audio without gaps;
   - the same in the later chapters.
-- **RPCS3 on this machine** runs Chapter 3's Guardhouse (the user's save) at 33-40 FPS, measured
-  2026-10-28 with the user's settings: PPU and SPU LLVM, XFloat Approximate, SPU block size
-  Safe, 6 SPURS threads, Vulkan at 100%, Write Color Buffers on, Multithreaded RSX off.
-  - That is not the scene the port is measured on; step 0.3 measures both at one scene.
-- **Now:** a frame takes 80.5 ms (median). 30 flips/s means 33 ms, so it has to get 2.4 times
-  shorter.
+- **RPCS3 on this machine**, with the user's settings (PPU and SPU LLVM, XFloat Approximate, SPU
+  block size Safe, 6 SPURS threads, Vulkan at 100%, Write Color Buffers on, Multithreaded RSX
+  off):
+  - **the first level's Megaera fight, the scene the port is measured on: 22.9 FPS median**
+    (10 s windows 19.5-24.2; step 0.3, 2026-10-29);
+  - the story cutscene before it: ~36 FPS; Chapter 3's Guardhouse: 33-40 FPS (2026-10-28).
+  - Its threads in the fight: the six SPU threads at ~92% of a core each (they busy-wait),
+    `rsx::thread` 87%, the PPU main thread 73%; 7.4 logical CPUs in all. GPU 3D ~18%.
+- **Now:** a frame takes 80.5 ms (median), 12.3 flips/s.
+  - RPCS3's speed in the same scene means ~23 flips/s: 1.9 times faster, a 43 ms frame.
+  - 30 flips/s means 33 ms, 2.4 times faster. On this laptop that is beyond RPCS3.
 
 ## 2. Where a frame goes now
 
@@ -154,27 +159,70 @@ Share of each workload's samples:
 
 ## 5. The plan
 
-### Phase 0: measure faster (first; the rest depends on it)
+### Phase 0: measure faster (first; the rest depends on it). Done 2026-10-29
 
-- **0.1 `gowa.py bench level`.** The scratchpad A/B runner as a repo tool.
-  - It drives to the level and takes 10 s windows from 175 s after the movie.
-  - It writes medians and JSON, and compares them with a baseline.
-  - The same run records the GPU engine counters and CPU per thread.
-- **0.2 SPU job replay.** Capture N jobs of General6, RenderJobs, EDGE and audio at their start:
-  the LS image, the registers, and the main memory their DMA reads. Replay them in a loop in a
-  test executable, with the time per job and a hash of everything each job writes (LS and DMA
-  out).
-  - A codegen change is then a deterministic measurement of seconds, with an output check,
-    instead of 25 minutes of level runs that can only see the frame.
-  - Ref A built the same for its EDGE work (capture, replay, replace); we take the idea, not the
-    code.
-- **0.3 RPCS3 and the port at one scene**, with RPCS3's performance overlay on the same windows.
-  Either option needs the user's OK:
-  - (a) the user's Chapter 3 save in the port: a copy of `BCUS98232-PROFDATA-*` into the port's
-    `gamedata`;
-  - (b) a new RPCS3 profile, to reach the first level.
-- **0.4 One frame report:** `ft_groups`, `ft_chain`, `ft_frame` and `ft_sema` from the
-  scratchpad into `tools/`.
+- **0.1 `gowa.py bench`. Done 2026-10-29** (`scripts/bench.py`).
+  - It drives to the level (the same route as the scratchpad runner) and takes 10 s windows
+    from 175 s after the movie.
+  - It runs variants alternately (`--variant "name|exe|ENV=1"`, `--runs`), retries a run that
+    failed, and compares with a baseline (`--baseline result.json`).
+  - It records the GPU engine counters (`--gpu`), CPU per thread, private bytes and screenshots
+    (`--shots`), all in `logs/bench-<stamp>/result.json`.
+  - First baseline (`logs/bench-base`): 11.77 flips/s median (12 windows, 10.5-12.2), GPU 3D
+    27% at 765 MHz.
+- **0.2 SPU job replay. Done 2026-10-29** (fork `runtime/spu/spu_jobcap.c`; ref A built the
+  same for its EDGE work, we took the idea, not the code).
+  - Only in a build with `gowa.py build --jobcap` (`PORT_SPU_JOBCAP`).
+    - Its hooks wrap every DMA, channel read and drain, so a default build compiles those paths
+      as before.
+    - What the hooks cost is below what a level A/B sees. Two A/Bs in plain alternation put
+      the build without them 1.7-2.6% ahead. With the hooks compiled out entirely, it still came
+      out 1.9% ahead. In ABBA order the same two builds were within 1%: 11.51 against 11.61.
+    - The order made those gaps, not the hooks (`bench` now runs ABBA, section 8).
+  - **Capture:** `SPU_JOB_CAPTURE=<dir>` (absolute), `SPU_JOB_CAPTURE_WIDS=2,12,15`, `_N`,
+    `_EVERY`, `_T0`.
+    - A job starts where the Wws job manager branches into it with its return address 0x3368 as
+      the link (`SPU_JOB_CAPTURE_LINK`). The manager's own helpers live above 0x4000 too, and job
+      code runs under its image id, so only the link tells a job call apart.
+    - It ends at the dispatch back to 0x3368. The job modules return through a continuation
+      that the drain hands back to the execution driver.
+    - Recorded: the context and LS at the start; in order every GET and PUT with their bytes,
+      atomic, channel read and count, outbound mailbox word, and the kernel's copy of the SPURS
+      instance line into LS 0x100. Jobs that stop or halt are dropped (the audio list's jobs
+      leave that way); interrupts are kept.
+  - **Replay:** `gowa.py replay <dir> [--reps N] [--only _w15_]` (`SPU_JOB_REPLAY` in the
+    port's `main.cpp`).
+    - Each job runs from its saved context, with every input served from the record and every
+      output compared.
+    - It runs in the SPU float mode, and is the execution driver that `spu_restart_dispatch`
+      jumps back to.
+    - Output: the time per job (fastest run and median) per workload, and `replay.csv`.
+  - **The gate passes:** 120 jobs (40 each of General6, RenderJobs, EDGE), 10 runs each, all
+    byte-identical with the record (PUTs, LS, registers, every event used). A run costs seconds
+    instead of a 25-minute level A/B.
+  - **What it measured first:**
+
+    | workload | the job alone (replay) | a policy-module run in the game |
+    |---|---|---|
+    | General6 w2 | 1,257 us | 1,518 us |
+    | RenderJobs w12 | 629 us | 790 us |
+    | EDGE w15 | 74 us | ~110 us |
+
+    The rest of each run in the game (the job manager around the job, fetching the job's code,
+    the runtime, other threads on the same cores) is a fifth of a General6 or RenderJobs run and
+    a third of an EDGE run (step 1.2).
+- **0.3 RPCS3 and the port at one scene. Done 2026-10-29:** 22.9 FPS in the Megaera fight
+  (section 1).
+  - Method: the user's RPCS3 saves of this title moved aside, then a new profile from first
+    boot (calibration, screen adjust, the unskippable first-boot intro, New Game, Normal).
+  - FPS from RPCS3's window title, one sample a second, 10 s window means. GPU counters and CPU
+    per thread over 20 s.
+- **0.4 One frame report. Done 2026-10-29:** `gowa.py frames <trace> [--rows] [--grid N]`
+  (`scripts/frames.py`).
+  - Per frame: each workload group's SPU time, the main thread's waits, and the walker's drains
+    and semaphore waits.
+  - With `--rows`, the job lists' publishers and consumers; with `--grid N`, N frames on a
+    2 ms grid.
 
 ### Phase 1: the chain's cheapest time, waits and waste
 
@@ -183,6 +231,9 @@ Each item is small and is measured on its own.
 - **1.1 Approximate SPU float** (design step 3: `SPU_FLOAT_APPROX` at compile time).
   - What: native `addps`/`mulps`/FMA, no range checks, no +0 flush. This is RPCS3's setting for
     this title.
+  - SPU code already runs at round toward zero with FTZ and DAZ, so native operations differ
+    from the SPU's only outside the IEEE range (the SPU's extended range) and in the sign of a
+    zero result.
   - Evidence: compiled x86 instructions fall from 7,709 to 3,135 in General6 `4F00`, and from
     4,745 to 1,786 in EDGE `A950`.
   - Expected: General6 and EDGE runs 20-35% shorter (estimate).
@@ -190,7 +241,8 @@ Each item is small and is measured on its own.
     - on the replay, how many outputs differ and by how much;
     - screenshots at fixed times against the exact build;
     - a play-through of the first level.
-- **1.2 The SPU runtime's share** (~30% of a RenderJobs or EDGE run):
+- **1.2 The SPU runtime's share** (~30% of a RenderJobs or EDGE run; by the replay, a job alone
+  takes 80% of its game run in RenderJobs and 68% in EDGE):
   - **dispatch:** an indirect branch looks its target up through `spu_lifted_lookup` and the
     "full" lookup with its lock. Cache the target per call site or per module.
   - **DMA:** a fast path for the common sizes, and list DMA without channel emulation per
@@ -222,8 +274,10 @@ Each item is small and is measured on its own.
 - **1.6 MLAA on the GPU.**
   - Answer the five tasks at their signal: the label, the counter and the kick, without the work.
     Ref A does the same; check it with our own probe.
-  - Run an SMAA (or FXAA) pass on the GPU at the snapshot the title samples, so the game gets
-    its anti-aliasing back. The port shows none today.
+  - The game gets its anti-aliasing back from the GPU instead. The port shows none today.
+    - The runtime already has SMAA 1x on the display target before scaling
+      (`graphics.antialiasing`, `libs/video/rsx_smaa.c`).
+    - Better: run it at the snapshot the title samples, where the PS3 runs its MLAA.
   - It takes the tasks out of the RsxSync-to-EDGE path; the GPU pass is under 1 ms at 720p
     (estimate).
 - **1.7 Thread placement on Zen 2.**
@@ -277,8 +331,10 @@ Each item is small and is measured on its own.
 
 - **4.1 Frame pacing:** a steady 30 when 60 cannot be held. The title flips on vblank; present
   every second one.
-- **4.2 Resolution scale with FSR 1 / CAS:** the GPU has the room. RPCS3's Disable Mesh Trimming
-  patch is what lets the title draw correctly above 720p.
+- **4.2 Resolution:** the GPU has the room.
+  - FSR 1 output scaling exists (`graphics.scaling = fsr1`, `libs/video/rsx_fsr1.c`).
+  - Missing: an internal resolution scale. RPCS3's Disable Mesh Trimming patch is what lets the
+    title draw correctly above 720p.
 - **4.3 RPCS3's patches as port options**, applied to the ELF and SPU images before lifting:
   - Disable MLAA (with 1.6, the title also stops its copies);
   - Depth of Field, Motion Blur;
@@ -301,8 +357,8 @@ and shorten each link by the shares in section 2.2.
 
 - RPCS3 gets its speed with phase 1 and 2 kinds of work: LLVM register allocation and
   approximate float.
-- Phase 3 is what a static port can add on top.
-- Whether the first level is heavier than RPCS3's Chapter 3 scene is step 0.3's question.
+- Its 22.9 FPS in this scene (step 0.3) is where phase 2 should land.
+- Phase 3 is what a static port can add on top, and it is what 30 needs on this laptop.
 - Per step, the main thread and frame clock thread budgets (section 3) are checked too. 1.3,
   1.4, 1.5 and 2.3 keep them under the chain.
 
@@ -323,8 +379,12 @@ thread, the main thread's waits). The chain sets it now, so what shortens a chai
 
 ## 8. How each step is measured
 
-- One change at a time. Two runs a side, alternated. Medians of 10 s windows from 175 s after
+- One change at a time. Two runs a side in ABBA order. Medians of 10 s windows from 175 s after
   the movie.
+  - Plain alternation (a b a b) put the first variant of each round ahead in 6 pairs out of 6,
+    by 1.7-2.6%, for builds that differed by nothing on the hot path.
+  - In ABBA order (a b b a) the same builds were within 1%. A gain under ~3% measured the old
+    way needs measuring again.
 - On the charger. `D3D12_VSYNC=0` for unattended runs: on battery the display turns off after
   30 minutes and vsync'd presents drop to ~3.8 flips/s.
 - Frame-rate claims with only `GOWA_THREADS` on; the trace and sampler runs are for the

@@ -33,6 +33,10 @@ import subprocess
 import sys
 import threading
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import bench  # noqa: E402  (scripts/bench.py)
+import frames  # noqa: E402  (scripts/frames.py)
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PS3RECOMP = os.path.join(ROOT, "ps3recomp")
 TOOLS = os.path.join(PS3RECOMP, "tools")
@@ -665,6 +669,7 @@ def cmd_build(args):
               "-DPS3RECOMP_DIR=" + PS3RECOMP, "-DRECOMP_DIR=" + RECOMPILED,
               "-DPORT_SPU_INPUTS=" + spu_inputs,
               "-DPORT_SPU_LINES=" + ("ON" if args.spu_lines else "OFF"),
+              "-DPORT_SPU_JOBCAP=" + ("ON" if args.jobcap else "OFF"),
               "-DPython3_EXECUTABLE=" + sys.executable] + ff_opts, env=env)
     if rc:
         die("cmake configure failed")
@@ -785,6 +790,25 @@ def cmd_run(args):
     killed = " (stopped after %ds)" % args.seconds if args.seconds and rc in (1, -9) else ""
     say("exit code %d%s, log in %s" % (rc, killed, os.path.relpath(log, ROOT)))
     return rc
+
+
+def cmd_replay(args):
+    """SPU_JOB_REPLAY: run the jobs an SPU_JOB_CAPTURE run recorded, alone, and report the
+    time per job and whether each one's output came out the same (runtime/spu/spu_jobcap.c)."""
+    exe = os.path.abspath(args.exe or os.path.join(BUILD, "GowARecomp" + (".exe" if os.name == "nt" else "")))
+    if not os.path.isfile(exe):
+        die("no executable: " + exe)
+    env = dict(os.environ)
+    env["SPU_JOB_REPLAY"] = os.path.abspath(args.dir)
+    env["SPU_JOB_REPLAY_REPS"] = str(args.reps)
+    if args.only:
+        env["SPU_JOB_REPLAY_ONLY"] = args.only
+    p = subprocess.run([exe, "--no-launcher"], cwd=os.path.dirname(exe), env=env,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+    for line in p.stderr.splitlines():
+        if line.startswith("[replay"):
+            print(line)
+    return p.returncode
 
 
 def llvm_tool(name):
@@ -1013,6 +1037,9 @@ def main():
     p.add_argument("--spu-lines", action="store_true",
                    help="line tables for the lifted SPU code and a PDB, for "
                         "`symbolize --rvas --lines` (PORT_SPU_LINES; same code)")
+    p.add_argument("--jobcap", action="store_true",
+                   help="SPU job capture and replay hooks (PORT_SPU_JOBCAP), for SPU_JOB_CAPTURE and "
+                        "`replay`; a measurement build, not for play")
     p = sub.add_parser("run", help="start the port")
     p.add_argument("--quiet", action="store_true", help="write the log only, not the console")
     p.add_argument("--seconds", type=int, default=0, help="stop the port after this many seconds")
@@ -1037,10 +1064,22 @@ def main():
     p.add_argument("--lines", action="store_true",
                    help="with --rvas: lifted SPU samples by lifted C line and operation "
                         "(needs a build with --spu-lines)")
+    p = sub.add_parser("bench", help="drive the port to the first level and measure flips/s "
+                                     "(A/B variants, a baseline, screenshots, GPU use)")
+    bench.add_args(p)
+    p = sub.add_parser("replay", help="run captured SPU jobs (SPU_JOB_CAPTURE) alone: time and output check")
+    p.add_argument("dir", help="the folder the capture wrote")
+    p.add_argument("--reps", type=int, default=10, help="runs per job (default 10)")
+    p.add_argument("--only", help="only files whose name contains this, e.g. _w15_")
+    p.add_argument("--exe", help="the executable (default build/GowARecomp.exe; built with --jobcap, "
+                                  "the same runtime as the capture)")
+    p = sub.add_parser("frames", help="frame report of a PS3_FTRACE trace (workloads, waits, the RSX, a grid)")
+    frames.add_args(p)
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "lle": cmd_lle, "build": cmd_build,
-            "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "symbolize": cmd_symbolize}[args.cmd](args)
+            "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "symbolize": cmd_symbolize,
+            "bench": bench.main, "frames": frames.main, "replay": cmd_replay}[args.cmd](args)
 
 
 if __name__ == "__main__":
