@@ -166,6 +166,7 @@ extern "C" int  rsx_null_backend_pump_messages(void);
  * took. A hidden or occluded window makes present block hard, and pacing the
  * ticks behind it paces the whole game behind it. */
 static volatile LONG g_frames_presented = 0;
+static volatile LONG g_vblanks = 0;   /* vblank beats ticked, for GOWA_THREADS */
 
 /* Frames handed to the backend at a guest FLIP boundary -- one per frame the
  * guest actually finished. The presents made before the guest's first flip, so
@@ -203,6 +204,21 @@ static ULONGLONG clock_ms(void)
 #endif
 }
 
+/* Microseconds on the same counter, for the vblank beat. */
+static ULONGLONG clock_us(void)
+{
+#ifdef _WIN32
+    static LARGE_INTEGER freq;
+    LARGE_INTEGER c;
+    if (!freq.QuadPart) QueryPerformanceFrequency(&freq);
+    QueryPerformanceCounter(&c);
+    return (ULONGLONG)(c.QuadPart / freq.QuadPart) * 1000000ull +
+           (ULONGLONG)(c.QuadPart % freq.QuadPart) * 1000000ull / (ULONGLONG)freq.QuadPart;
+#else
+    return GetTickCount64() * 1000ull;
+#endif
+}
+
 static DWORD WINAPI frame_clock(LPVOID)
 {
     ps3_thread_name("frame clock");   /* vblank ticks, the RSX drain and presents */
@@ -214,7 +230,12 @@ static DWORD WINAPI frame_clock(LPVOID)
             rsx_ok ? "OK -- window open" : "FAILED");
 
     unsigned  last_flip = 0;
-    ULONGLONG next_tick = clock_ms();
+    /* Vblank beats at the PS3's 59.94 Hz (60000/1001), on the microsecond
+     * counter, as in wave/main.cpp: `+= 16` on the millisecond clock beat at
+     * 62.5 Hz. The title registers a vblank handler and flips in VSYNC mode;
+     * whatever it timed by vblanks ran 4.2% fast. */
+    ULONGLONG beat0 = clock_us();
+    ULONGLONG beats = 0;
     /* The title waits on its flip handler before building the next frame, so
      * every millisecond between the drain reaching a flip and the flip
      * completing is a millisecond it sits idle. Completing it only on the
@@ -243,9 +264,10 @@ static DWORD WINAPI frame_clock(LPVOID)
          * reads. GOWA_DRAIN_POLL_MS overrides. */
         cellGcm_fifo_kick_wait(drain_poll_ms);
         ULONGLONG now = clock_ms();
+        const ULONGLONG now_us = clock_us();
 
         int fired = 0;
-        while ((long long)(now - next_tick) >= 0 && fired < 240) {
+        while ((long long)(now_us - (beat0 + beats * 1001000ull / 60ull)) >= 0 && fired < 240) {
             cellGcmTickVBlank();
             cellGcmTickFlip();
             /* Present a pending flip BEFORE draining any further. The flip
@@ -263,10 +285,11 @@ static DWORD WINAPI frame_clock(LPVOID)
              * labels the game's per-frame logic blocks on, so it has to keep
              * advancing at 60 Hz even while present() throttles. */
             if (rsx_ok) cellGcm_rsx_process_fifo();
-            next_tick += 16;             /* ~60 Hz */
+            beats++;
+            InterlockedIncrement(&g_vblanks);
             fired++;
         }
-        if (fired >= 240) next_tick = now;   /* fell too far behind -- resync */
+        if (fired >= 240) { beat0 = now_us; beats = 0; }   /* fell too far behind -- resync */
 
         /* Drain at the outer cadence too, not only on the 16 ms tick: titles
          * fence every render pass on a label the drain writes, and one wave of
@@ -694,6 +717,7 @@ static DWORD WINAPI thread_table(LPVOID arg)
     ULONGLONG wall_prev = GetTickCount64(), proc_prev = process_cpu();
     unsigned flips_prev = cellGcm_flip_request_count();
     LONG pres_prev = g_frames_presented;
+    LONG vbl_prev = g_vblanks;
     unsigned t = 0;
     for (;;) {
         Sleep(every * 1000u);
@@ -737,10 +761,11 @@ static DWORD WINAPI thread_table(LPVOID arg)
         const double win = (double)(wall - wall_prev) * 1e4;   /* 100 ns units */
         const unsigned flips = cellGcm_flip_request_count();
         const LONG pres = g_frames_presented;
+        const LONG vbl = g_vblanks;
         const double gone = proc - proc_prev > live_delta ? (double)(proc - proc_prev - live_delta) : 0.0;
-        fprintf(stderr, "[threads] t=%us flips=%.2f/s presents=%.2f/s process=%.0f%% gone=%.0f%% "
+        fprintf(stderr, "[threads] t=%us flips=%.2f/s presents=%.2f/s vblanks=%.2f/s process=%.0f%% gone=%.0f%% "
                         "threads=%d started=%d ended=%d\n",
-                t, (flips - flips_prev) * 1e7 / win, (pres - pres_prev) * 1e7 / win,
+                t, (flips - flips_prev) * 1e7 / win, (pres - pres_prev) * 1e7 / win, (vbl - vbl_prev) * 1e7 / win,
                 (proc - proc_prev) * 100.0 / win, gone * 100.0 / win, n, started, ended);
         /* Group by name: "spu job" x12 is one line; numbered helpers too. */
         static char gname[MAXT][48]; static double gcpu[MAXT]; static int gcount[MAXT];
@@ -767,7 +792,7 @@ static DWORD WINAPI thread_table(LPVOID arg)
         memcpy(tid_prev, tid_now, sizeof(DWORD) * n);
         memcpy(cpu_prev, cpu_now, sizeof(ULONGLONG) * n);
         n_prev = n;
-        wall_prev = wall; proc_prev = proc; flips_prev = flips; pres_prev = pres;
+        wall_prev = wall; proc_prev = proc; flips_prev = flips; pres_prev = pres; vbl_prev = vbl;
         fflush(stderr);
     }
     return 0;
@@ -858,6 +883,13 @@ static void title_environment(void)
      * again once the level's 3D scene draws: geometry order is the risk.
      * SPURS_MAXCONT=14=1,15=1,16=1 goes back to the title's value. */
     env_default("SPURS_MAXCONT", "14=3,15=3,16=3");
+    /* The title mixes its audio in SPURS workload 7, and a block that
+     * workload has not filled when cellAudio takes it plays as a short gap.
+     * Its worker at above-normal priority, with the paced mixer: 27-35 gaps
+     * per 5 s in the first level -> 4-6, silent blocks 10-11% -> 8-10%,
+     * flips/s unchanged (docs/notes/2026-10-28-rendering-accuracy-plan.md, 3.4).
+     * SPURS_BOOST_WID=none leaves every worker at normal priority. */
+    env_default("SPURS_BOOST_WID", "7");
     /* Each display buffer its own target, the flipped one presented: the title
      * draws its video into one buffer, tonemaps into the next and composites
      * its post chain into a third within one frame, and with a single

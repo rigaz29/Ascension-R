@@ -228,3 +228,33 @@ no alpha to coverage.
 - 3.3 not started.
 - Level: 11.4-11.9 flips/s (8 runs), against 10.4-10.6 after step 2. The few seconds of
   stutter at the start of the Megaera scene the user saw: to look at again on this build.
+
+**Step 3, continued** (fork `f2d1cc0a`..`2e681a20`; asked for: the audio A/B, then 3.1-3.3):
+- 3.4 Audio, A/B: the mixer takes a block every 5.33 ms by the performance counter instead of
+  whenever the device has room (`f2d1cc0a`; shared-mode WASAPI frees ~10 ms at a time, so blocks
+  went in pairs): short gaps inside sound 27-35 -> 8-9 per 5 s. With SPURS workload 7, the
+  title's mixing, at above-normal priority on top (now the port's default): 4-6, silent blocks
+  10-11% -> 8-10%. Flips/s unchanged.
+- 3.2 Textures are placed in shared 64 MB heaps instead of an allocation each (`197cc661`):
+  creation in the 110 s around entering the level 183-222 -> 15-16 ms, the longest frame 458 ->
+  352-381 ms. Uploads past the 32 MB ring share reused spill chunks (`51f8bddd`): 43-110 upload
+  buffers -> 1-2.
+- 3.1 `PSO_MISS_WHY` showed the polygon offset as the key field new pipelines most often
+  differed in. Set per draw (dynamic depth bias, `a0fde298`) it is out of the key: pipelines
+  made in a minute of the level 2,000-3,000 -> 12-57, flips/s 11.6-11.9 -> 12.2. No pipeline
+  library warmed at boot is needed while that holds.
+- The stutter at the start of the Megaera scene was mostly one frame on the GPU: 65-170 ms of
+  draws, in runs of up to 128 particles that each sample the scene target they draw into, each
+  copying the 1280x720 target first. The title sends no texture cache invalidate between them,
+  so on the RSX they read the target as it was at the last one; the copy is now made there
+  (`2e681a20`): GPU wait at frame starts 167 -> 11 ms, frames over 150 ms 4 -> 2. Found with GPU
+  timestamps per frame and per pass in the hitch log (`8005c95f`, `1648cea9`).
+- 3.3 Presents are not paced: the title flips in VSYNC mode with a vblank handler, so its frames
+  are likely timed by vblanks, and one held back would show later than it was made for. The
+  vblank beat itself was 62.5 Hz (16 ms steps); it is 59.94 Hz now, as in `wave/main.cpp`.
+- Left around entering the level: one frame of 350-490 ms of which the backend takes ~50 ms,
+  and one frame of 67 ms on the GPU copying 122 new textures.
+- Seen in passing: rectangular seams in screenshots of the opening (a block of the platform
+  darker than the rest), with either copy mode; for step 4.
+- Level: 12.2-12.3 flips/s; around entering it 3 frames over 150 ms (730-740 ms, the longest
+  361-373), against 3-8 (0.9-2.3 s, the longest 434-485) before.
