@@ -20,8 +20,13 @@
  * first level (ABBA, two runs each).
  *
  * GOWA_POLL_WAIT_US=0 turns it off.
+ *
+ * Under PS3_FTRACE the passes at one loop head, first to last, are one span of
+ * the thread's, kind usleep with the loop head for its call site: `gowa.py
+ * frames` lists them with the usleeps ("usleep@49D708") and draws them as 'u'.
  */
 #include "ppu_recomp.h"
+#include "ps3emu/ps3_ftrace.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -77,10 +82,28 @@ struct PollWait {
 } s_poll;
 }
 
+/* A pass more than 200 us after the last one, or at another head, starts a new
+ * wait; a single pass did not wait. */
+static void poll_trace(ppu_context* ctx, uint32_t addr)
+{
+    static thread_local uint32_t head, passes;
+    static thread_local uint64_t t0, t1;
+    const uint64_t t = ps3_ft_now();
+    if (addr != head || t - t1 > 200000) {
+        if (passes > 1 && t1 - t0 >= ps3_ft_min_ns())
+            ps3_ft_span(PS3_FT_USLEEP, (uint32_t)ctx->thread_id, passes, head, t0, t1);
+        head = addr;
+        t0 = t;
+        passes = 0;
+    }
+    passes++;
+    t1 = t;
+}
+
 extern "C" void gowa_poll_wait(ppu_context* ctx, uint32_t addr)
 {
-    (void)ctx;
     if (s_poll.us < 0) s_poll.init();
+    if (PS3_FT_ON()) poll_trace(ctx, addr);
     if (s_poll.us <= 0) return;
 #if POLL_X86
     /* Passes in a row at one loop head: the previous pass ended at most 200 us

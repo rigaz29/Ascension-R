@@ -132,6 +132,67 @@ Share of each workload's samples:
   - They still sit in the signalling path: an RsxSync job signals them, and they write the RSX
     label and decrement the counter that kicks an EDGE list.
 
+### 2.7 Update, 2026-10-30 evening: what bounds the frame at 14.4 flips/s
+
+General6 is off the critical path. Its jobs became 10% shorter (2.1) and the level did not
+move. In a trace of the build before that change, the next RenderJobs list was published 8.6 ms
+before General6 ended.
+
+- **The main thread's cycle** (`PS3_FTRACE`, median times from its RenderJobs publish):
+  - 0 ms: it publishes RenderJobs, about 39 jobs in one burst.
+  - 3.5 ms: the flip request. 4.7 ms: MeshProc published.
+  - About 33 ms: RenderJobs' last run ends. About 37 ms: MeshProc's ends.
+  - About 70 ms: the next RenderJobs burst. RenderJobs idles, its list empty, 58% of the time.
+- **Where the main thread waits.** The poll loops' waits are now spans in the trace
+  (`poll_wait.cpp`; `gowa.py frames` lists them as usleep@<loop head>). The main thread runs
+  28 ms a frame and waits 39 ms:
+
+  | Loop | ms a frame | When, ms after the RenderJobs publish |
+  |---|---|---|
+  | `49B35C` | 12.0 | 0-20 |
+  | `44CD20` | 10.8 | 40-80 |
+  | `44D120` | 10.7 | 30-60 |
+  | `49D688` | 5.6 | 20-40 |
+
+  - The later waits end while EDGE and RenJobSet still run; a commit to an EDGE list falls
+    within 0.1 ms before most of them, but EDGE commits every ~40 us, so the timing alone does
+    not prove what they wait for.
+- **Which workloads bound the frame** (fork `9d16caba`, `SPURS_WID_SLOW=<wid>:<percent>`: each run
+  of the workload made that much longer). One run each, every workload +25%, base 14.55
+  flips/s, noise about +-2%:
+
+  | Slowed | flips/s | Change |
+  |---|---|---|
+  | RenJobSet w8-w11 | 13.69 | -5.9% |
+  | EDGE w14-w16 | 13.75 | -5.5% |
+  | RenderJobs w12 | 14.01 | -3.7% |
+  | audio w7 | 14.43 | -0.8% |
+  | Batch w6 | 14.50 | -0.3% |
+  | MeshProc w13 | 14.69 | +1.0% |
+  | General6 w2 | 14.71 | +1.1% |
+
+  The first three are the critical path; the other four have slack.
+- **In the game they run far longer than alone.** Per run in the game (`SPURS_WID_PROF`)
+  against per job on the replay: RenJobSet w8 95 vs 20 us, w10 116 vs 30, w11 667 vs 440;
+  EDGE 92 vs 58; RenderJobs 652 vs 535. Their in-game profiles (sampled):
+
+  | Share of the run | RenderJobs | EDGE w14 | RenJobSet w8 | w10 | w11 |
+  |---|---|---|---|---|---|
+  | lifted code | 69.5% | 64.5% | 40.0% | 55.2% | 74.8% |
+  | lock-line lock and coherency | 2.5% | 7.0% | 16.8% | 11.2% | 2.7% |
+  | dispatch (`spu_indirect_branch`, lookups) | 7.5% | 5.6% | 13.3% | 5.7% | 4.0% |
+  | DMA (`mfc_*` and its memcpy) | ~9% | ~8% | ~10% | ~10% | ~3% |
+  | `spu_drain_call` | 3.2% | 2.3% | 3.2% | 2.5% | 5.3% |
+  | interpreter | 0.6% | 0.2% | 4.6% | 0.1% | 0.9% |
+  - Every SPU atomic commit and every write to a reserved line takes one global lock
+    (`spu_lockline_lock`). Under it, it walks every SPU context and wakes the ones that lose
+    their reservation (`WakeAllConditionVariable`).
+  - w11 spends 6.6% in the exact float forms' per-lane redo (`fma_redo`, `fm_redo`): its
+    results often leave the single range.
+- So next: the critical workloads' runtime share. That means the lock-line lock (shorter
+  critical sections, or a lock per line), dispatch (2.2) and RenJobSet w8's interpreted code.
+  Then their lifted code: EDGE is 2.1 cores of SPU time a frame, 64% of it lifted code.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
