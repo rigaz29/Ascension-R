@@ -226,6 +226,12 @@ before General6 ended.
   - Level, three runs each: 15.28 -> 15.68 flips/s (+2.6%); the runs do not overlap.
   - Next: the crossing itself, a Windows x64 frame with xmm6-15 saved at each entry. That
     means `--merge-chunks` measured again, then `preserve_none`.
+- **`--merge-chunks` measured again, 2026-10-30: not kept.** Every job module but General6's was
+  merged; in General6's, merging takes `4F00` its speculative body, and that job was 13%
+  slower.
+  - Replay: RenderJobs 473 -> 447 us a job (-5.5%), EDGE -3%, RenJobSet -1% to -4%.
+  - Level, three runs each: 15.78 against 15.72 flips/s, no difference.
+  - Cost: 13 MB more lifted C (28 -> 41 MB). The same answer as on 2026-10-28.
 
 ## 3. The budget for 33 ms
 
