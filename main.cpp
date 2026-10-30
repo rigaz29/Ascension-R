@@ -571,8 +571,9 @@ static void pipe_report(unsigned t)
     }
 }
 
-/* GOWA_WWS_WATCH=<s>: the ticket rows of the job lists the frame waits on --
- * RenderJobs, MeshProcJobs, EDGE0-2, RsxSync -- polled every few microseconds
+/* GOWA_WWS_WATCH=<s>: the ticket rows of the job lists of workloads 2-17, General6
+ * to RsxSync (BatchJobList, RenJobSet, RenderJobs, MeshProcJobs and EDGE0-2
+ * among them) -- polled every few microseconds
  * on a thread of its own (it keeps one host core busy). Every s seconds, per
  * list: jobs published and taken a second; how much of the time the workload
  * was running, idle with its list empty (waiting for whoever publishes), and
@@ -589,7 +590,7 @@ static DWORD WINAPI wws_watch(LPVOID arg)
      * second as the lists appear; no polling, so the trace is not disturbed. */
     const bool trace_only = getenv("GOWA_WWS_TRACE") != nullptr;
     const uint32_t sp = 0x7001AD00;
-    enum { W0 = 12, W1 = 17, NW = W1 - W0 + 1, NL = 4 };
+    enum { W0 = 2, W1 = 17, NW = W1 - W0 + 1, NL = 4 };
     struct Row {
         uint32_t ea, last;
         double run, empty, pend, pend_n;
