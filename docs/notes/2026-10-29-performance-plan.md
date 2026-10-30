@@ -501,6 +501,14 @@ Each item is small and is measured on its own.
     - Not kept: locals for every function without calls or channel ops, stores and loops
       included. They took General6 to the same -12% but made RenderJobs and RenJobSet 2-6%
       slower.
+  - **Loops, 2026-10-30: not pursued.** RenderJobs' `6D90` is a 20-instruction loop and 9.5% of
+    its time. With the registers in locals:
+    - the loop body stores nothing to `ctx->gpr` any more (~75 -> ~55 x86 instructions an
+      iteration);
+    - RenderJobs gains 1.3% on the replay.
+
+    The loop's time is its chain (LS load, shuffle, address, load, `shufb`, store), not the
+    stores.
 - **2.2 Cheaper transfers between lifted functions:** the checks in `SPU_DIRECT`, function
   entries, drain calls; `preserve_none` and `--merge-chunks` measured again on the replay. These
   are RenderJobs' 13% and 9%.
