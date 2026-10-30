@@ -274,6 +274,7 @@ add_executable(${PROJECT_NAME}
 #                          audio mixer's SPU time in the God of War HD port.
 #                          PORT_SPU_AVX2=OFF keeps SSE4.1 only, for CPUs without
 #                          AVX2.
+#   /GS-                -- no stack cookie in lifted SPU functions (below).
 #   -mfma               -- with AVX2 (every AVX2 CPU has FMA3): SPU_FLOAT_RZ's fma is
 #                          one vfmadd. -ffp-contract=off keeps clang from fusing
 #                          anything else, as built without FMA3 it could not.
@@ -335,6 +336,15 @@ if(SPU_SOURCES)
         endif()
         if(PORT_SPU_LINES)
             list(APPEND spu_opts -gline-tables-only)
+        endif()
+        # No stack cookie: every lifted function with a large frame set and
+        # checked one at each entry and exit, and a transfer between lifted
+        # functions is an exit and an entry. The frames hold guest register
+        # values, not host buffers.
+        if(MSVC)
+            list(APPEND spu_opts /GS-)
+        else()
+            list(APPEND spu_opts -fno-stack-protector)
         endif()
         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS "${spu_opts}")
     endif()

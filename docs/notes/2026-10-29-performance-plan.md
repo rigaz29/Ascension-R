@@ -205,6 +205,27 @@ before General6 ended.
   - The slot sits in `spu_context`'s tail padding (12 bytes on Windows), so job captures keep
     their size.
   - Level, three runs each: 14.50 -> 15.49 flips/s (+6.8%); the runs do not overlap.
+- **Insertion controls and stack cookies. Done 2026-10-30** (fork `86e29fdc`, port `CMakeLists.txt`).
+  - A profile by lifted line (`--spu-lines`) of the critical workloads' lifted code:
+
+    | Share of the lifted code | RenderJobs | EDGE |
+    |---|---|---|
+    | crossing between lifted functions (`SPU_DIRECT`, entries, `spu_link`) | 24.5% | 13.4% |
+    | LS reads and writes | 22% | 15% |
+    | `shufb` | 9% | 13% |
+    | `cwx` | 7.7% | - |
+    | exact float forms | - | ~14% |
+    | int-float conversions | - | 6.6% |
+  - `cbd`/`chd`/`cwd`/`cdd` and their `x` forms built the control in memory and read it back
+    as one 16-byte value, which missed store-to-load forwarding. On x86 each is now a compare
+    and a blend.
+  - The lifted SPU code is built with `/GS-`. A function with a large frame set and checked a
+    stack cookie at every entry and exit, and every transfer between lifted functions is both.
+  - Replay: RenderJobs 552 -> 469 us a job (-15%), RenJobSet w10 34 -> 29 (-15%), w9 -10%.
+    EDGE and General6 are unchanged; outputs identical.
+  - Level, three runs each: 15.28 -> 15.68 flips/s (+2.6%); the runs do not overlap.
+  - Next: the crossing itself, a Windows x64 frame with xmm6-15 saved at each entry. That
+    means `--merge-chunks` measured again, then `preserve_none`.
 
 ## 3. The budget for 33 ms
 

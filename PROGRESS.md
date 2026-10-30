@@ -50,7 +50,8 @@ functions made its jobs 10% shorter in the game but left the level as it was (14
 General6 no longer bounds the frame. A fresh trace and a probe that slows one workload at a
 time found the three that do: RenJobSet, EDGE and RenderJobs (performance plan, 2.7). Their
 runtime share came first: the SPU coherency notifiers now scan an array of reserved lines
-instead of walking ~99 contexts under the lock-line lock, 14.50 -> 15.49. Next: dispatch, the
-rest of their runtime share, then their lifted code; no full GPU drain per batch,
-descriptors, MLAA on the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+instead of walking ~99 contexts under the lock-line lock, 14.50 -> 15.49; vector insertion
+controls (`cwx` & co.) and no stack cookies in the lifted SPU code, 15.28 -> 15.68. Next: the
+crossing between lifted functions (`--merge-chunks` again, `preserve_none`), dispatch, then
+the rest of their lifted code; no full GPU drain per batch, descriptors, MLAA on the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.

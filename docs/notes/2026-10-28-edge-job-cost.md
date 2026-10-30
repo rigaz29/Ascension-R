@@ -56,10 +56,12 @@ store; its 2.6% is workers waiting on each other.
 ## Levers, in order
 
 1. **`/GS-` for the lifted SPU sources.** The cookie on every entry and exit is not a property of
-   the guest code. No risk; measure on its own.
+   the guest code. No risk; measure on its own. *Done 2026-10-30, measured together with the
+   vector insertion controls ([performance plan](2026-10-29-performance-plan.md), 2.7).*
 2. **A list of the contexts holding a live reservation** for `spu_coh_notify_write` to walk,
    instead of every context. Kept under the lock-line lock where the reservation is set and
-   consumed. Expected: most of the 2.6% here and the main thread's 3.1%.
+   consumed. Expected: most of the 2.6% here and the main thread's 3.1%. *Done 2026-10-30 as an
+   array of each context's reserved line: 14.50 -> 15.49 flips/s (performance plan, 2.7).*
 3. **`preserve_none` for lifted SPU functions** and the runtime functions that tail-call into
    them (`spu_indirect_branch`, the dispatch chain), so a transfer between lifted functions
    saves nothing. A wide change (every pointer type to lifted code, the lifter's prototypes, the
