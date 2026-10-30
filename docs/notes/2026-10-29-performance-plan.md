@@ -513,6 +513,14 @@ Each item is small and is measured on its own.
     with the main thread's hottest functions.
 - **2.4 Profile-guided builds** of the lifted code (clang's instrumented build, profiles from the
   bench route).
+  - **Lifted SPU code, 2026-10-30: no gain.** `PORT_SPU_PGO=gen` instruments it, and `main.cpp`
+    writes the profile to `LLVM_PROFILE_FILE` every 15 s. `PORT_SPU_PGO=<.profdata>` builds with
+    the profile.
+  - The profile came from one bench run cut short at 270 s; the instrumented code runs the level
+    at ~2.8 flips/s. It still holds the level's jobs: EDGE's `EC08` 1.8M calls, RenderJobs'
+    `6D90` 0.96M.
+  - Level, three runs each: 15.85 against 15.69 flips/s.
+  - The option stays, off: the same mechanism can serve the lifted PPU code.
 
 ### Phase 3: native and GPU replacements, beyond an emulator
 

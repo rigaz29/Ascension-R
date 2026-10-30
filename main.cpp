@@ -988,6 +988,20 @@ static void title_environment(void)
     }
 }
 
+#if defined(PORT_SPU_PGO_GEN)
+/* PORT_SPU_PGO=gen: the lifted SPU code is instrumented. Its profile goes to LLVM_PROFILE_FILE
+ * every 15 s: the bench closes the game with WM_CLOSE and kills it 3 s later, so the write at
+ * exit cannot be counted on. */
+extern "C" int __llvm_profile_write_file(void);
+static DWORD WINAPI pgo_writer(void*)
+{
+    for (;;) {
+        Sleep(15000);
+        __llvm_profile_write_file();
+    }
+}
+#endif
+
 int main(int argc, char** argv)
 {
     /* gowa [--settings <file>] [--set <section.key=value>]... [--no-launcher] [<PPU ELF>]
@@ -1005,6 +1019,9 @@ int main(int argc, char** argv)
         else if (!elf)                                                 elf = argv[i];
     }
     if (!settings) { default_settings_path(settings_buf, sizeof settings_buf, argv[0]); settings = settings_buf; }
+#if defined(PORT_SPU_PGO_GEN)
+    CreateThread(NULL, 0, pgo_writer, NULL, 0, NULL);
+#endif
     const int src = ps3_settings_load(settings);
     gowa_port_defaults();
     printf("[settings] %s: %s\n", settings,

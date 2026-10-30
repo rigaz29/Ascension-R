@@ -308,6 +308,10 @@ option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling
 option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float forms only" ON)
 option(PORT_SPU_FLOAT_APPROX "Lifted SPU code: a zero float result may be -0 (SPU_FLOAT_APPROX)" OFF)
 option(PORT_SPU_LS_DIAG "Local-store diagnostics in the lifted SPU code (a gate per lqd/stqd)" OFF)
+# PORT_SPU_PGO: profile-guided optimization of the lifted SPU code (clang).
+#   gen          -- instrument it; main.cpp writes the profile to LLVM_PROFILE_FILE every 15 s
+#   <.profdata>  -- optimize it with that profile (llvm-profdata merge of the runs')
+set(PORT_SPU_PGO "" CACHE STRING "Lifted SPU code: 'gen' to instrument, or a .profdata to use")
 if(SPU_SOURCES)
     # SPU_INLINE_MFC_PARAMS: the MFC command parameters as stores, no call.
     set(spu_defs SPU_USE_DISPATCH_MT SPU_INLINE_MFC_PARAMS)
@@ -346,10 +350,28 @@ if(SPU_SOURCES)
         else()
             list(APPEND spu_opts -fno-stack-protector)
         endif()
+        if(PORT_SPU_PGO STREQUAL "gen")
+            list(APPEND spu_opts -fprofile-instr-generate)
+        elseif(PORT_SPU_PGO)
+            list(APPEND spu_opts "-fprofile-instr-use=${PORT_SPU_PGO}" -Wno-profile-instr-unprofiled
+                 -Wno-profile-instr-out-of-date -Wno-profile-instr-missing)
+        endif()
         set_source_files_properties(${SPU_SOURCES} PROPERTIES COMPILE_OPTIONS "${spu_opts}")
     endif()
     if(PORT_SPU_LINES AND MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
+    endif()
+    if(PORT_SPU_PGO STREQUAL "gen")
+        # The profile runtime of the clang that builds the port, next to its linker.
+        get_filename_component(_llvm_bin "${CMAKE_LINKER}" DIRECTORY)
+        file(GLOB _pgo_rt "${_llvm_bin}/../lib/clang/*/lib/windows/clang_rt.profile-x86_64.lib")
+        if(NOT _pgo_rt)
+            message(FATAL_ERROR "PORT_SPU_PGO=gen: no clang_rt.profile-x86_64.lib near ${CMAKE_LINKER}")
+        endif()
+        list(GET _pgo_rt 0 _pgo_rt)
+        target_link_libraries(${PROJECT_NAME} PRIVATE "${_pgo_rt}")
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" APPEND PROPERTY
+                     COMPILE_DEFINITIONS PORT_SPU_PGO_GEN)
     endif()
 endif()
 
