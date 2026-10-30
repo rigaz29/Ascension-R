@@ -260,12 +260,36 @@ Each item is small and is measured on its own.
     used 10-17% of a core less (`spurs pm` 480% -> 463-471%).
   - So the frame is not bound by these jobs' float code: a fifth off General6 and a seventh off
     EDGE moved the frame rate 1-2%. What the chain waits on needs a fresh trace before 1.2.
+- **What bounds the frame now (2026-10-30).** A trace of the level with the leaner float
+  (`logs/trace-lean.txt`, 154 frames) and a profile of the six workers and the main thread
+  (110 s, `PS3_SAMPLE_THREAD`):
+  - Frames take 58-100 ms (median 76.7), following the scene. In the slow ones RenderJobs' one
+    lane takes 36-45 ms instead of 18: it shares the cores with the previous frame's EDGE tail,
+    audio and Batch.
+  - The main thread runs 75 of every 77 ms; 61% of its samples poll (the job-graph scan 30%, the
+    progress counters 32%), 8% are the coherency notifies of those loops. The frame clock thread
+    takes half a core.
+  - So the frame is bound by the CPU's throughput, not by one job's latency: the six workers,
+    the main thread and the frame clock thread want more than six cores. CPU saved anywhere
+    moves the frame a little; a shorter job list on its own moves it little more.
+  - The workers: lifted SPU code 50% of samples, idle 21%, the runtime 27.5% (35% of busy
+    time). The largest runtime item was dispatch, ~11% of busy time (14% in audio).
 - **1.2 The SPU runtime's share** (~30% of a RenderJobs or EDGE run; by the replay, a job alone
-  takes 80% of its game run in RenderJobs and 68% in EDGE). The replay can be profiled:
-  `PS3_SAMPLE=1 PS3_SAMPLE_MAIN=1 PS3_SAMPLE_RVAS=<file>` with enough `--reps` to last a few
-  10 s reports, then `gowa.py symbolize --rvas <file>`:
-  - **dispatch:** an indirect branch looks its target up through `spu_lifted_lookup` and the
-    "full" lookup with its lock. Cache the target per call site or per module.
+  takes 80% of its game run in RenderJobs and 68% in EDGE):
+  - **dispatch. Done 2026-10-30** (fork `cc8af52a`).
+    - Counted every 5 s in the level: 38.5M indirect branches; 25M full resolutions, 17M of them
+      finding nothing (the interpreter asks at every step whether it can rejoin lifted code, and
+      misses were not cached); 400K verifications of streamed code comparing 7.3 GB, because
+      every GET into a verified span (the job manager loading a module again, a module's data
+      beside its code) marked it pending.
+    - Now misses are cached (a level run with `SPU_DISPATCH_CACHE=shadow`: 332M hits, no
+      disagreement), a GET compares only the code bytes it wrote, and the same module loaded
+      again keeps its slot: 4.2M full resolutions and 0.26 GB compared every 5 s.
+    - Level, ABBA, two runs each: 12.02 -> 12.61 flips/s (+4.9%).
+    - Left: `spu_indirect_branch`'s own checks on every branch, ~3% of worker time. A cache per
+      call site in the lifted code would skip them.
+    - Profiling the replay with `PS3_SAMPLE_MAIN` deadlocked (the sampler suspends the thread
+      that runs the jobs, which can hold a heap lock); profile the jobs in the game instead.
   - **DMA:** a fast path for the common sizes, and list DMA without channel emulation per
     element.
   - **coherency:** notify only lines with a live reservation; stripe the lock-line lock by line.

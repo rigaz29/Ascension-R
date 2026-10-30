@@ -40,7 +40,8 @@ the same fight): the [performance plan](docs/notes/2026-10-29-performance-plan.m
 done (`gowa.py bench`, `gowa.py frames`, SPU job capture and `gowa.py replay`, RPCS3 measured at
 the same scene). Phase 1.1 is done: leaner exact SPU float forms (General6 jobs -20%, EDGE -14%,
 bit-identical); native float breaks this title's EDGE masks, so no approximate mode by default.
-The level moved only 1-2%, so next is a fresh trace of what the frame's chain waits on, then the
-rest of phase 1 (the SPU runtime's share, the main thread's polls, no full GPU drain per batch,
-descriptors, MLAA on the GPU). Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+The level moved only 1-2%: a fresh trace shows the frame bound by CPU throughput, not by one job
+list. Dispatch is done (misses cached, reloads of the same code stay verified): 12.0 -> 12.6
+flips/s. Next the rest of phase 1: the SPU runtime's DMA and coherency, the main thread's polls,
+no full GPU drain per batch, descriptors, MLAA on the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.
