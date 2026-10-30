@@ -269,9 +269,17 @@ Each item is small and is measured on its own.
   - The main thread runs 75 of every 77 ms; 61% of its samples poll (the job-graph scan 30%, the
     progress counters 32%), 8% are the coherency notifies of those loops. The frame clock thread
     takes half a core.
-  - So the frame is bound by the CPU's throughput, not by one job's latency: the six workers,
-    the main thread and the frame clock thread want more than six cores. CPU saved anywhere
-    moves the frame a little; a shorter job list on its own moves it little more.
+  - **The critical path is a serial chain:** RenderJobs (one lane) -> MeshProc -> General6 (one
+    lane) -> the main thread -> the next frame's RenderJobs. The main thread publishes that
+    list 2.7 ms (median) after General6's last run of the frame ends; RenderJobs takes 37 ms from
+    there to its last run. EDGE (three lanes) ends ~5 ms after that publication: it has slack.
+  - Those two lanes run slower in the game than alone: a General6 job 1.55 ms against 1.0 on the
+    replay (+55%), a RenderJobs job 0.82 against 0.62 (+33%), General6 being 94% lifted code.
+    They share a physical core with a busy sibling (other workers, the main thread, the frame
+    clock thread) and start on cold data.
+  - Not total throughput: the main thread polling with a 0.5 ms OS sleep instead (96% -> 39% of a
+    core) left the workers at the same CPU and the frame rate within noise (12.70 -> 12.81).
+    (This bullet first said the frame was bound by throughput; these trials say otherwise.)
   - The workers: lifted SPU code 50% of samples, idle 21%, the runtime 27.5% (35% of busy
     time). The largest runtime item was dispatch, ~11% of busy time (14% in audio).
 - **1.2 The SPU runtime's share** (~30% of a RenderJobs or EDGE run; by the replay, a job alone
@@ -296,15 +304,20 @@ Each item is small and is measured on its own.
   - Coherency holder counts and `preserve_none` were tried on 2026-10-28, when the chain did not
     set the frame. Each moved its piece and not the frame. Measure again here, on the replay and
     then the level.
-- **1.3 The main thread's polls sleep.**
-  - Replace the job-graph scan's wait loop and the progress-counter loops (`func_0044CD20`,
-    `func_0049B76C` / `func_0049D688`) at their call sites with a host wait on the words they
-    read.
-  - The SPU's atomic commits and DMA writes to those lines wake it. The runtime already sees
-    every commit (`PS3_FT_LINE`).
-  - This gives back most of a core that the six workers share the six physical cores with, and
-    the coherency notifies of those loops.
-  - Measure: the workers' us/run (less SMT sharing), then flips.
+- **1.3 The main thread's polls wait. Done 2026-10-30** (fork `2accf30f` `--insn-hooks`; the
+  port's `poll_wait.cpp` and `scripts/ppu_hooks.json`).
+  - The lift calls `gowa_poll_wait` at the heads of four polling loops: `func_0049D688` (until
+    the least of seven u16 progress counters reaches a target), `func_0049B35C` (around
+    `func_0049CB6C`), and the job-graph scan's two callers `func_0044CD20` / `func_0044D120`.
+  - After 8 passes in a row at one head it waits 20 us with MONITORX/MWAITX and its timer: the
+    core stops issuing for the main thread, without the OS, and its SMT sibling gets it. A CPU
+    without MONITORX spins on PAUSE instead. `GOWA_POLL_WAIT_US=0` turns it off.
+  - Trials, ABBA, two runs each: a waitable-timer sleep (no shorter than ~0.5 ms here) 12.70 ->
+    12.81, noise; MWAITX 20 us 12.60 -> 12.94 (+2.7%). As built, two runs each 12.86 -> 12.90,
+    then three runs each 12.70 -> 12.92 (+1.7%; runs 12.70/12.80/12.60 against
+    12.86/13.11/12.90, every run above every one before). Pooled over the three A/Bs, +1.75%.
+  - A wake on the polled line itself (MONITORX on the counters' line, the scan's lines) is the
+    refinement: the loop would resume when an SPU writes, not at the timer.
 - **1.4 No full GPU drain per batch.**
   - Give the vertices, the constants and the texture staging FRAME_COUNT rings each.
   - `rf_open` then waits only for the batch that last used the same ring.
@@ -330,6 +343,10 @@ Each item is small and is measured on its own.
     threads in the other.
   - Five against six SPU workers, and the audio worker's priority.
   - RPCS3 has the same knobs: thread scheduler mode, max SPURS threads.
+  - Tried 2026-10-30, not kept: one physical core kept for the critical chain's workloads
+    (General6, RenderJobs, MeshProc) through Windows CPU sets, the process's default set leaving
+    it out. 12.82 -> 12.60 (-1.7%), with windows down to 9 flips/s: the other ten logical CPUs
+    got crowded.
 
 ### Phase 2: code generation, the work RPCS3 does in LLVM
 

@@ -1,0 +1,13 @@
+{
+  "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops",
+  "hooks": [
+    {"addr": "0x0049D708", "fn": "gowa_poll_wait",
+     "note": "func_0049D688: until the least of seven u16 progress counters the SPU jobs raise reaches a target"},
+    {"addr": "0x0049B3A0", "fn": "gowa_poll_wait",
+     "note": "func_0049B35C: until func_0049CB6C finds the counters it waits for"},
+    {"addr": "0x0044CD64", "fn": "gowa_poll_wait",
+     "note": "func_0044CD20: the job-graph scan (func_0044CA48) until its entries are done"},
+    {"addr": "0x0044D154", "fn": "gowa_poll_wait",
+     "note": "func_0044D120: the same scan, from its other caller"}
+  ]
+}

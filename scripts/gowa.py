@@ -525,6 +525,10 @@ def cmd_lift(args):
     if end:
         say("code ends at 0x%X (last executable section)" % end)
         cmd += ["--code-end", "0x%X" % end]
+    # The main thread's polling loops call gowa_poll_wait (poll_wait.cpp).
+    hooks = os.path.join(ROOT, "scripts", "ppu_hooks.json")
+    if os.path.exists(hooks):
+        cmd += ["--insn-hooks", hooks]
     rc = run(cmd)
     if rc:
         die("ppu_lifter failed")
