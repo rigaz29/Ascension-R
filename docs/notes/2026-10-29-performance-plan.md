@@ -296,6 +296,12 @@ Each item is small and is measured on its own.
     - Level, ABBA, two runs each: 12.02 -> 12.61 flips/s (+4.9%).
     - Left: `spu_indirect_branch`'s own checks on every branch, ~3% of worker time. A cache per
       call site in the lifted code would skip them.
+    - **Done 2026-10-30** (fork `6a2015f4`): a short path for the common branch instead (a target
+      at or above 0xA80, no interrupt return pending, no diagnostic set: the task resolution, the
+      lookup, the stack-reset check and the tail call, without the two dozen special cases), and
+      the MFC command parameters (LSA, EAH, EAL, Size, TagID, WrTagMask) as stores into the context
+      from lifted code (`SPU_INLINE_MFC_PARAMS`). Replay: RenderJobs 561 -> 540 us per job (-3.8%),
+      outputs identical. Level, three runs each: 13.80 -> 14.21 flips/s (+3.0%).
     - Profiling the replay with `PS3_SAMPLE_MAIN` deadlocked (the sampler suspends the thread
       that runs the jobs, which can hold a heap lock); profile the jobs in the game instead.
   - **LS diagnostic gates. Done 2026-10-30** (fork `c0925006`, `PORT_SPU_LS_DIAG` off; design

@@ -308,7 +308,8 @@ option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float 
 option(PORT_SPU_FLOAT_APPROX "Lifted SPU code: a zero float result may be -0 (SPU_FLOAT_APPROX)" OFF)
 option(PORT_SPU_LS_DIAG "Local-store diagnostics in the lifted SPU code (a gate per lqd/stqd)" OFF)
 if(SPU_SOURCES)
-    set(spu_defs SPU_USE_DISPATCH_MT)
+    # SPU_INLINE_MFC_PARAMS: the MFC command parameters as stores, no call.
+    set(spu_defs SPU_USE_DISPATCH_MT SPU_INLINE_MFC_PARAMS)
     if(PORT_SPU_JOBCAP)
         list(APPEND spu_defs PS3_SPU_JOBCAP)
     endif()
