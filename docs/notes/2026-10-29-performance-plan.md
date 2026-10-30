@@ -461,6 +461,12 @@ Each item is small and is measured on its own.
     (General6, RenderJobs, MeshProc) through Windows CPU sets, the process's default set leaving
     it out. 12.82 -> 12.60 (-1.7%), with windows down to 9 flips/s: the other ten logical CPUs
     got crowded.
+  - One SPU worker per physical core, 2026-10-30, measured at ~16 flips/s while the six
+    workers are full during EDGE. Worker k went on logical CPU 2k, one run of three each:
+    - as Windows places them: 15.99 flips/s;
+    - with that CPU as the ideal processor: 15.94;
+    - pinned there: 6.96, a pinned worker cannot leave a CPU another thread needs.
+    Windows' own placement stays.
 
 ### Phase 2: code generation, the work RPCS3 does in LLVM
 
