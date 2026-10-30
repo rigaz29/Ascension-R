@@ -504,6 +504,17 @@ Each item is small and is measured on its own.
 - **2.2 Cheaper transfers between lifted functions:** the checks in `SPU_DIRECT`, function
   entries, drain calls; `preserve_none` and `--merge-chunks` measured again on the replay. These
   are RenderJobs' 13% and 9%.
+  - **Dispatch and drain fast paths. Done 2026-10-30** (fork `d3ff2bdb`).
+    - `spu_indirect_branch`'s common branch shared a function with its slow path. That path's
+      frame (eight saved registers, xmm6, 0x338 bytes, a stack cookie) was set up and torn
+      down around every branch.
+    - `spu_drain_call` had the same problem with its interrupt frame's jmp_buf, around every
+      return from a lifted call.
+    - Each slow path is now a function of its own, which the fast path tail-calls.
+    - Replay: RenderJobs 469 -> 452 us a job (-3.5%), RenJobSet -2% to -2.6%; outputs
+      identical.
+    - Level, three runs each: 15.75 -> 15.88 flips/s, within the spread. Kept: it only removes
+      work.
 - **2.3 PPU:**
   - `PORT_PPU_FAST_FP` on: host NaNs, compared by screenshots. It made hot float code markedly
     shorter in God of War HD.
