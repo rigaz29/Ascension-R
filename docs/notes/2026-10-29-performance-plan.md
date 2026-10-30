@@ -233,6 +233,63 @@ before General6 ended.
   - Level, three runs each: 15.78 against 15.72 flips/s, no difference.
   - Cost: 13 MB more lifted C (28 -> 41 MB). The same answer as on 2026-10-28.
 
+### 2.8 Update, 2026-10-31: what bounds the frame at ~16 flips/s
+
+- **Not SPU throughput.** The six workers are 4.65 cores busy on average, and 21% of their
+  samples are idle waits. Audio (w7) made twice as long (`SPURS_WID_SLOW=7:100`, +0.3 core of
+  spinning): 16.47 against 16.43 flips/s.
+- **The workloads, +25% each** (`SPURS_WID_SLOW`), one run each. Base 15.90 in the same session,
+  16.43 earlier the same day:
+
+  | Slowed | flips/s |
+  |---|---|
+  | General6 w2 | 15.89 |
+  | RenderJobs w12 | 15.60 |
+  | RenJobSet w8-w11 | 15.38 |
+  | EDGE w14-w16 | 14.78 |
+
+  General6 made twice as long gives 14.00. Its one lane is busy 59% of the time, so doubling it
+  fills the lane.
+- **How the main thread feeds General6.** `GOWA_WWS_TRACE` now watches the lists of workloads
+  2-17; General6's is `70B14EF0`.
+  - Each cycle the main thread publishes 25 jobs in three bursts, timed from the RenderJobs
+    publish: +5 at ~19 ms, +5 at ~21 ms, +15 at ~29 ms.
+  - The last burst comes ~3 ms after RenderJobs' last run. The 16 jobs left then drain in ~28 ms.
+  - In every cycle, the main thread's last wait before the next RenderJobs publish (`49D688`)
+    ends 0.08 ms after a General6 run. Even so, the probe above says General6 has slack: the
+    cycle does not wait on it alone.
+- **EDGE runs one list at a time.** The three EDGE workloads never run together: one has runs
+  open 84.6% of the time, none 15.4%. Each list runs up to three jobs at once.
+  - `SPURS_MAXCONT=14=6,15=6,16=6`: the same 8,700 runs a second per list, 16.25 flips/s. Three
+    at once is what the lists offer (three job chains each), not the cap.
+  - Episodes: ~30 a second (two a frame), median 31 ms long. Between two of them is a median
+    3.9 ms with no EDGE run, 15% of the time.
+  - In 63% of those gaps a MeshProc run ended within 0.2 ms before the next episode started
+    (chance: ~4%). MeshProc starts each EDGE episode.
+  - So EDGE uses 2.25 lanes on average, of the three it can use. EDGE jobs take 86 us in the
+    game and 57 us on the replay.
+- **Speculative float in EDGE's loops: not kept.** The experiment covered 13 single-block loops
+  (`EC08`, `A950`, `7BB4`, ...; ~40% of an EDGE run):
+  - the SPU registers in locals and the float ops in the speculative forms;
+  - a range check before each store, branch and exit;
+  - a failed check undoes the current segment and goes on in an exact copy.
+
+  Replay, EDGE w15, 40 jobs, best of 10 runs:
+
+  | Build | us a job |
+  |---|---|
+  | before | 57.3-58.6 |
+  | the loops' registers in locals | 54.1-54.8 (-5.5%) |
+  | locals and speculative float | 61.1-61.4 (+5%) |
+
+  - The checks fail often. `D92C` fails in every call, `BD54` and `A950` in most: EDGE's masks
+    and clamps leave the single range. The exact forms are not what these loops wait on.
+  - A first version forgot to store the registers at the loop's exit. It replayed 35% faster,
+    and 24 of 40 jobs came out different, ending early.
+  - The native-float numbers in 1.1 (EDGE 61 -> 38 us) had 13 of 40 jobs diverge in the same
+    way. They are no bound for what correct float code can gain.
+- Next: the EDGE job itself (86 us in the game against 57 alone), and the MeshProc -> EDGE kick.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -613,6 +670,8 @@ and shorten each link by the shares in section 2.2.
 | null SRV left alone | 2026-10-28 | -4 ms a frame of CPU, +1% | 1.5 (the whole descriptor path) |
 | widening the serial lists (`SPURS_MAXCONT`) | 2026-10-28 | nothing: the jobs come one at a time | ruled out |
 | more frequent SPURS idle probes | 2026-10-28 | hangs | ruled out |
+| speculative float in EDGE's single-block loops | 2026-10-31 | replay +5% (locals alone -5.5%); the range checks fail in most calls | ruled out (2.8) |
+| EDGE lists at six SPUs each (`SPURS_MAXCONT`) | 2026-10-31 | same runs a second, 16.25 flips/s | ruled out: three job chains a list (2.8) |
 
 They were measured while something else set the frame (the texture work on the frame clock
 thread, the main thread's waits). The chain sets it now, so what shortens a chain job counts.
