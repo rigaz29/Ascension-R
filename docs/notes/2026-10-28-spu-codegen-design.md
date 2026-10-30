@@ -144,6 +144,14 @@ resuming stop. Interrupts are taken only at transfer points, which write back al
 `iret` that unwinds handler frames resumes from the context. The prototype (`promote.py`)
 applies these rules to lifted C and compiles.
 
+2026-10-30: done for float-heavy straight-line functions (`spu_lifter.py --float-spec`,
+[performance plan](2026-10-29-performance-plan.md), 2.1).
+- With no barrier inside such a function, the locals need writing back only at its exits.
+- Its float ops can run native with one range check per exit, and the exact body as the
+  fallback.
+- General6: -12% on the replay, -10% in the game. The frame did not move.
+- Locals alone, by the rules above (`promote.py`), had made General6 8% slower.
+
 ## 4. Results of steps 1 and 2
 
 First level, two runs a side alternated, `GOWA_THREADS` + `SPURS_WID_PROF`; flips/s from 185 s

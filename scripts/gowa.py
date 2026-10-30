@@ -301,6 +301,12 @@ WWS_PM_FNV = 0xC8D774963A96DCF2
 WWS_PM_BASE = 0xA00          # policy modules load and enter at LS 0xA00
 WWS_PM_IMAGE_ID = 0x57575350
 WWS_PM_DIR = os.path.join(ROOT, "spu", "wwspm")
+# spu_lifter.py --float-spec for every SPU image: a function with no store, channel op, call
+# or internal branch and at least this many single-precision float ops gets a speculative body
+# (registers in locals, native float ops checked once at each exit, the exact body as the
+# fallback). General6's hot leaf (jobmod a67e549fa0ab, 0x4F00, ~1,200 calls a job) is one: its
+# jobs -12% on the replay, -10% in the game. Needs SPU_FLOAT_RZ_ONLY, which the port builds with.
+SPU_FLOAT_SPEC = 4
 # Entries the function finder doesn't reach: indirect branch targets that
 # missed the lifted set in the first boots. 0xA2C is the interrupt vector.
 WWS_PM_EXTRA_FUNCS = [0xA2C, 0x2D98, 0x3368]
@@ -329,7 +335,8 @@ def lift_wws_pm(elf):
     os.makedirs(WWS_PM_DIR)
     if run([sys.executable, os.path.join(TOOLS, "spu_lifter.py"), wrapped,
             "--auto-functions", wrapped, "--symbol-prefix", "wwspm_", "-o", WWS_PM_DIR,
-            "--extra-funcs", ",".join("0x%X" % a for a in WWS_PM_EXTRA_FUNCS)]):
+            "--extra-funcs", ",".join("0x%X" % a for a in WWS_PM_EXTRA_FUNCS),
+            "--float-spec", str(SPU_FLOAT_SPEC)]):
         die("spu_lifter failed on the Wws_Job policy module")
     sys.path.insert(0, TOOLS)
     from build_spu_workloads import debase_includes
@@ -447,8 +454,8 @@ def lift_jobmods(elf):
     for name, addrs in sorted(jobmod_extra_funcs().items()):
         extra += ["--extra-funcs", name + "=" + ",".join("0x%X" % a for a in addrs)]
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
-            "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c")]
-           + extra):
+            "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c"),
+            "--float-spec", str(SPU_FLOAT_SPEC)] + extra):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
@@ -466,7 +473,7 @@ PIC_LIST = os.path.join(ROOT, "scripts", "spu_pic_pieces.json")
 def lift_pic(elf):
     shutil.rmtree(PIC_DIR, ignore_errors=True)
     if run([sys.executable, os.path.join(TOOLS, "lift_spu_pic.py"), "--elf", elf,
-            "--list", PIC_LIST, "--out", PIC_DIR]):
+            "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC)]):
         die("lift_spu_pic failed")
     n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
     say("%d position-independent SPU pieces lifted to %s" % (n, os.path.relpath(PIC_DIR, ROOT)))

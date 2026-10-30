@@ -369,6 +369,37 @@ Each item is small and is measured on its own.
   - Judge it by replay cycles. Static instruction counts (2026-10-28) said it grows the code;
     they cannot see the store-to-load chains it removes.
   - General6 `4F00`, ~450 instructions in one block, is the case where RPCS3's SSA pays most.
+  - **Done 2026-10-30 for float-heavy straight-line functions** (fork `39bbe622`,
+    `spu_lifter.py --float-spec 4`, `SPU_FLOAT_SPEC` in `gowa.py`). A function with no store,
+    channel op, call or internal branch and at least four single-precision float ops gets a
+    second body:
+    - the SPU registers in locals, loaded at entry where the body reads one before writing it;
+    - the float ops in speculative native forms (`spu_fa_sp` & co.: the RZ result with the +0
+      rule, its magnitude folded into an accumulator);
+    - at each exit one range check: if a result left the single range, the exact copy (the
+      ordinary body) runs from the entry state, which nothing has changed; else the registers
+      written so far are stored and the exit runs.
+
+    154 functions in 23 images, `4F00` among them.
+    - Replay: General6 1,007 -> 885 us a job (-12%). RenderJobs, EDGE, RenJobSet and MeshProc
+      unchanged. Outputs identical in every captured job (`logs/jobcap2`, and `logs/jobcap3`
+      with w8-w11 and w13). Batch (w6) jobs do not finish in the replay with either build.
+    - Checks: `test_spu_float_exact` (where the range check passes, the speculative forms equal
+      the exact ones in all 446.8M lanes) and `tools/test_spu_lifter_float_spec.py`.
+    - In the game, one run each with `SPURS_WID_PROF`: General6 1,240 -> 1,112 us a run (-10%),
+      59.5% -> 54.5% of a core. No `_exact` copy among its sampled functions (`4F00` 37% of its
+      time, `4AB0` 21%).
+    - Level, three runs each: 14.39 -> 14.31 flips/s, unchanged. General6 no longer bounds the
+      frame; its runs per second did not change either. Kept for when it does again: at RPCS3's
+      22.9 flips/s (a 44 ms frame), its single lane, ~38 ms a frame now, has little slack.
+    - Measured on the way, on General6:
+      - the speculative forms with the registers left in `ctx`: -3.6%;
+      - locals without them (`promote.py`, 2026-10-28): +8%;
+      - the two together: -12%. With no call left in the body (the exact forms redo out of
+        line), clang can keep the registers in host registers.
+    - Not kept: locals for every function without calls or channel ops, stores and loops
+      included. They took General6 to the same -12% but made RenderJobs and RenJobSet 2-6%
+      slower.
 - **2.2 Cheaper transfers between lifted functions:** the checks in `SPU_DIRECT`, function
   entries, drain calls; `preserve_none` and `--merge-chunks` measured again on the replay. These
   are RenderJobs' 13% and 9%.
