@@ -192,6 +192,19 @@ before General6 ended.
 - So next: the critical workloads' runtime share. That means the lock-line lock (shorter
   critical sections, or a lock per line), dispatch (2.2) and RenJobSet w8's interpreted code.
   Then their lifted code: EDGE is 2.1 cores of SPU time a frame, 64% of it lifted code.
+- **The lock-line lock. Done 2026-10-30** (fork `54bdd0eb`).
+  - What held it: `SPU_COH_STATS=1` showed every notify (an atomic commit, or a write to a
+    reserved line) walking ~99 listed contexts. That is ~400,000 notifies a second, all under
+    the lock, to find 0.13 contexts on average holding the written line. The hottest lines
+    were the PPU's GCM context (0x009B5100), 0x7001AD00, the MLAA barrier and EDGE's lists.
+  - Now each listed context has a slot in an array that holds the line it reserved last. The
+    notifiers scan the array and ask only the contexts whose line matches.
+  - A context stores its line before it takes a reservation: under the lock on the slow
+    GETLLAR path, and before the fast path's fence. That is the store-buffering argument that
+    already covers `resv_valid`, so the array never misses a reservation.
+  - The slot sits in `spu_context`'s tail padding (12 bytes on Windows), so job captures keep
+    their size.
+  - Level, three runs each: 14.50 -> 15.49 flips/s (+6.8%); the runs do not overlap.
 
 ## 3. The budget for 33 ms
 

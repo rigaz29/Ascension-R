@@ -48,7 +48,9 @@ wait with MWAITX: 12.70 -> 12.92; lifted SPU code without the LS diagnostic gate
 Phase 2 (code generation) has started. Speculative float bodies for General6's float-heavy
 functions made its jobs 10% shorter in the game but left the level as it was (14.39 / 14.31):
 General6 no longer bounds the frame. A fresh trace and a probe that slows one workload at a
-time found the three that do: RenJobSet, EDGE and RenderJobs (performance plan, 2.7). Next:
-their runtime share (the lock-line lock, dispatch), then their lifted code; no full GPU drain
-per batch, descriptors, MLAA on the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
+time found the three that do: RenJobSet, EDGE and RenderJobs (performance plan, 2.7). Their
+runtime share came first: the SPU coherency notifiers now scan an array of reserved lines
+instead of walking ~99 contexts under the lock-line lock, 14.50 -> 15.49. Next: dispatch, the
+rest of their runtime share, then their lifted code; no full GPU drain per batch,
+descriptors, MLAA on the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.
