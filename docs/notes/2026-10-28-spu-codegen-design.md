@@ -112,7 +112,9 @@ Static counts are not run time; each step below is kept only if the level's per-
   drops only the +0 rule, off by default; the exact forms were made leaner instead (General6 jobs
   -20%, EDGE -14%, bit-identical).
 
-**Step 4. LS accesses without the diagnostic gate in release builds.**
+**Step 4. LS accesses without the diagnostic gate in release builds.** Done 2026-10-30
+(`SPU_LS_NO_DIAG`, the port's `PORT_SPU_LS_DIAG` off): RenderJobs jobs -7.7%, EDGE -10.5% on the
+replay, the first level +3.6%.
 - `spu_ls_read128`/`write128` check `g_spu_ls_watch_n` and keep a cold call to the diagnostic
   path at every access (35 such call sites in `EC08` as compiled, with what clang inlines into
   it). A compile-time switch for

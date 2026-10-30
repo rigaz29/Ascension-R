@@ -297,14 +297,23 @@ add_executable(${PROJECT_NAME}
 #                          operations that make it +0. The extended-range checks
 #                          stay: this title's EDGE jobs depend on them. Off, the
 #                          lifted SPU code is bit-exact.
+#   PORT_SPU_LS_DIAG    -- the local-store diagnostics (SPU_LS_WATCH,
+#                          SPU_LS_LOWREAD, SPU_SMC_WATCH, SPU_WWS_PROBE) see the
+#                          lifted SPU code's quadword loads and stores. Off
+#                          (SPU_LS_NO_DIAG), those have no gate: a load and a
+#                          branch less at every lqd/stqd.
 option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
 option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling)" OFF)
 option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float forms only" ON)
 option(PORT_SPU_FLOAT_APPROX "Lifted SPU code: a zero float result may be -0 (SPU_FLOAT_APPROX)" OFF)
+option(PORT_SPU_LS_DIAG "Local-store diagnostics in the lifted SPU code (a gate per lqd/stqd)" OFF)
 if(SPU_SOURCES)
     set(spu_defs SPU_USE_DISPATCH_MT)
     if(PORT_SPU_JOBCAP)
         list(APPEND spu_defs PS3_SPU_JOBCAP)
+    endif()
+    if(NOT PORT_SPU_LS_DIAG)
+        list(APPEND spu_defs SPU_LS_NO_DIAG)
     endif()
     if(PORT_SPU_AVX2 AND PORT_SPU_FLOAT_RZ_ONLY)
         list(APPEND spu_defs SPU_FLOAT_RZ_ONLY)

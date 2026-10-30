@@ -298,6 +298,13 @@ Each item is small and is measured on its own.
       call site in the lifted code would skip them.
     - Profiling the replay with `PS3_SAMPLE_MAIN` deadlocked (the sampler suspends the thread
       that runs the jobs, which can hold a heap lock); profile the jobs in the game instead.
+  - **LS diagnostic gates. Done 2026-10-30** (fork `c0925006`, `PORT_SPU_LS_DIAG` off; design
+    note step 4).
+    - Every lqd/stqd of lifted code tested a diagnostics gate, a load and a branch the compiler
+      cannot hoist. Lifted code is now built without it (`SPU_LS_NO_DIAG`);
+      `gowa.py build -D PORT_SPU_LS_DIAG=ON` brings it back for `SPU_LS_WATCH` and the like.
+    - Replay: RenderJobs 610 -> 563 us per job (-7.7%), EDGE 64.8 -> 58.0 (-10.5%), General6 the
+      same; every output identical. Level, three runs each: 13.05 -> 13.52 flips/s (+3.6%).
   - **DMA:** a fast path for the common sizes, and list DMA without channel emulation per
     element.
   - **coherency:** notify only lines with a live reservation; stripe the lock-line lock by line.

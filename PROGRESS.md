@@ -43,7 +43,8 @@ bit-identical); native float breaks this title's EDGE masks, so no approximate m
 The level moved only 1-2%: its critical path is a serial chain of two one-lane job lists
 (RenderJobs, then General6) and the main thread between frames. Dispatch is done (misses cached,
 reloads of the same code stay verified): 12.0 -> 12.6 flips/s; the main thread's polling loops
-wait with MWAITX: 12.70 -> 12.92. Next: those two lists' own time (General6's lifted float
+wait with MWAITX: 12.70 -> 12.92; lifted SPU code without the LS diagnostic gates: 13.05 ->
+13.52. Next: those two lists' own time (General6's lifted float
 code, RenderJobs' share of the SPU runtime), no full GPU drain per batch, descriptors, MLAA on
 the GPU. Still open from the [rendering accuracy plan](docs/notes/2026-10-28-rendering-accuracy-plan.md):
 the rectangular seams (an RPCS3 reference), the menu's one-frame flash.
