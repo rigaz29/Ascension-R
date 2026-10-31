@@ -288,7 +288,40 @@ before General6 ended.
     and 24 of 40 jobs came out different, ending early.
   - The native-float numbers in 1.1 (EDGE 61 -> 38 us) had 13 of 40 jobs diverge in the same
     way. They are no bound for what correct float code can gain.
-- Next: the EDGE job itself (86 us in the game against 57 alone), and the MeshProc -> EDGE kick.
+- **Where an EDGE run goes in the game.** Fork `d71918df` adds `SPU_JOB_TIME=<s>` (measurement
+  build). It times each job call to its return, the span the replay times. It also tags the
+  worker's samples while a job runs (`--wid <wid + 64>`). One run, ~15.4 flips/s:
+
+  | | us a job | us a policy-module run | replay, us a job |
+  |---|---|---|---|
+  | EDGE w14-w16 | 67 | 91 (1% empty) | 57-61 |
+  | RenJobSet w8 | 75 | 91 (10% empty) | - |
+  | RenJobSet w10 | 98.5 | 108 (12% empty) | - |
+  | RenderJobs w12 | 614 | 579 (11% empty) | ~450 |
+
+  - An EDGE run is ~74% job. The other ~26%, ~24 us, is the policy module's work around it.
+  - The job itself runs 10-17% slower than alone. Inside the job, lifted code is 83% of the
+    samples.
+  - Outside the job, the samples go to:
+
+    | | share |
+    |---|---|
+    | the `memcpy` under `mfc_do_transfer_body` | 17.6% |
+    | `spu_overlay_note_get` (half of it `memcmp`) | 12.3% |
+    | the MFC queue (`mfc_for`, `mfc_submit`, `mfc_run_list`, the channel writes) | ~10% |
+    | the policy module's own lifted code | ~10% |
+    | lock-line atomics | ~9% |
+    | kernel services (`spu_indirect_branch_full`) | 8.2% |
+- **The policy module loads the EDGE job module before every job.** That is 52 KB from EA
+  `0x737580` (16 + 16 + 16 + 4 KB), ~14,000 times a second: 1.5 GB/s of GETs on the EDGE
+  workers. Each load is copied, and its code bytes are compared with the lifted image
+  (`spu_overlay_get_kept_code`).
+  - On the SPU, that DMA runs beside the code. Here it is a `memcpy` and a `memcmp` on the
+    worker, ~6-7 us a job.
+  - Every GET of 512 bytes or more also compares 16 bytes against each registered job module's
+    signature, one `memcmp` call each.
+- Next: the per-job load of an unchanged module, and the rest of the policy module's 24 us. Then
+  the MeshProc -> EDGE kick.
 
 ## 3. The budget for 33 ms
 
