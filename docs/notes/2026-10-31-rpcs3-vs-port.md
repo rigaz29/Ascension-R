@@ -246,6 +246,9 @@ SPUs:
   - `lift_spu_pic.py` registers only the instructions; the lifted code reads the pool from local
     store, as the SPU does.
 - After: 0.2M interpreted steps a second; Batch 264 us a run, 5.7% of a core.
+- `guestscope.py jobs` on the new build (30 s, 17.8 flips/s): Batch takes 14.7 jobs a frame, its
+  lists busy 1.4 ms a frame at 2.2 SPUs, so ~210 us of SPU time a job. Before: ~0.9 ms; RPCS3
+  ~110 us. The 8x is now ~1.9x, like the other lists' runtime share.
 - Level, ABBA, two runs each: 18.51 -> 18.59 flips/s, within the spread (runs 18.49/18.59
   against 18.82/18.39). The SPU workers use 520% of a core instead of 554%; the frame
   clock thread stays at 72%.
