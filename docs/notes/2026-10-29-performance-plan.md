@@ -370,7 +370,30 @@ before General6 ended.
   - Indirect calls: `ps3_indirect_call_impl` itself is 1.0% (its lookup is cached per thread).
     The 2.3% shown as waits under it are samples outside the executable, named by the first
     return address the sampler finds on the stack: waits further down, not the call.
-- Next: the EDGE stages, starting with `EC08`.
+- **EDGE's skinning loop as native code. Done 2026-10-31** (`native/spu_edge_skin.c`).
+  - The loop at LS `0xEC08` in job module `e8f44fbc6dbf` does matrix-palette skinning. Each
+    iteration takes two vertices: four bones, three matrix rows each, every row blended with fm
+    and then fma three times. It stores the rows at r49 and the transformed vertex in place at
+    r86. It is software pipelined: an iteration loads the next pair's bone quadword and
+    positions.
+  - The native loop holds the two vertices in one 256-bit register, so each blend or transform
+    is one AVX2 op for both. The shuffles are written for the loop's sixteen invariant registers
+    (masks, 1.0, 1/255), which are checked at entry; they were the same in every call.
+  - The float ops are native under the SPU code's MXCSR with the +0 rule, as the speculative
+    forms. Once an iteration, before it stores anything, every result is checked to be below
+    FLT_MAX. One that is not, and always the last iteration, runs in the lifted loop from the
+    registers as the lifted loop has them, so the job ends with the lifted registers exactly.
+  - `gowa.py lift` puts the call at the lifted function's entry, from
+    `scripts/spu_native_hooks.json`. `GOWA_EDGE_NATIVE=0` turns it off;
+    `GOWA_EDGE_NATIVE_STATS=1` counts calls, iterations and fallbacks.
+  - Replay, `GOWA_EDGE_NATIVE` on against off on one build, three pairs: 53.6-53.9 against
+    56.6-56.8 us an EDGE job (-5.1%). The outputs are identical in all 40 jobs.
+  - Level: 7.6M calls, 366M native iterations, 0.05% of them fall back; no call fails the entry
+    check. ABBA, two runs each: 15.88 -> 16.06 flips/s, both native runs above both off.
+- Next: the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
+  `7BB4` (5.1%), `30600` (4.3%) and `D92C` + `D4DC` (5.8%); `A950`, `D92C` and `BD54` fail the
+  range check in most calls, so their native forms need a per-lane path, not a fallback per
+  iteration.
 
 ## 3. The budget for 33 ms
 

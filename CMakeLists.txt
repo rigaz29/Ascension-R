@@ -226,6 +226,14 @@ if(PIC_SOURCES)
     list(APPEND SPU_SOURCES ${PIC_SOURCES})
 endif()
 
+# Native code that lifted SPU functions call at their entry (scripts/
+# spu_native_hooks.json; `gowa.py lift` puts the calls in). Built as lifted SPU
+# code is, with the same float mode and instruction set.
+if(JOBMOD_SOURCES)
+    file(GLOB NATIVE_SPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/spu_*.c")
+    list(APPEND SPU_SOURCES ${NATIVE_SPU_SOURCES})
+endif()
+
 # ---------------------------------------------------------------------------
 # Lifted libsre (optional)
 # ---------------------------------------------------------------------------

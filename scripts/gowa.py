@@ -459,6 +459,32 @@ def lift_jobmods(elf):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
+    native_hooks(JOBMODS_DIR)
+
+
+# Native code for chosen lifted SPU functions (native/, built with the lifted SPU
+# code's options): scripts/spu_native_hooks.json names, per lifted module, the
+# function and the native routine called at its entry. A routine does what work
+# it can and leaves the registers as the lifted code expects them, which then
+# goes on (native/spu_edge_skin.c).
+NATIVE_HOOKS_FILE = os.path.join(ROOT, "scripts", "spu_native_hooks.json")
+
+
+def native_hooks(lift_dir):
+    if not os.path.exists(NATIVE_HOOKS_FILE):
+        return
+    for module, funcs in sorted(json.load(open(NATIVE_HOOKS_FILE)).items()):
+        path = os.path.join(lift_dir, module, "spu_recomp.c")
+        if not os.path.exists(path):
+            die("native hook: no lifted module %s" % module)
+        src = open(path, encoding="utf-8").read()
+        for func, native in sorted(funcs.items()):
+            head = "void %s(spu_context* ctx) {\n" % func
+            if src.count(head) != 1:
+                die("native hook: %s not found once in %s" % (func, module))
+            src = src.replace(head, "void %s(spu_context* ctx);\n%s    %s(ctx);\n" % (native, head, native))
+            say("native hook: %s -> %s" % (func, native))
+        open(path, "w", encoding="utf-8", newline="\n").write(src)
 
 
 # The position-independent code pieces the EDGE geometry jobs stream out of the
