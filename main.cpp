@@ -178,9 +178,12 @@ extern "C" unsigned ppu_boot_frames_presented(void)
     return (unsigned)g_frames_presented;
 }
 
+extern "C" void (*g_gcm_walker_hook)(void);
 static void present_guest_frame(void)
 {
     rsx_backend_present();
+    /* a probe's slice for the present's own work (poll_wait.cpp, RSX_SLOW) */
+    if (g_gcm_walker_hook) g_gcm_walker_hook();
     /* This thread increments and guest threads read, so interlocked rather
      * than a volatile ++, which on arm64 is neither atomic nor a fence. */
     InterlockedIncrement(&g_frames_presented);

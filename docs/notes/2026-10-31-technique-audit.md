@@ -164,8 +164,9 @@ Expected gain: small, 0-1%. It is cheap to try: one PPU rebuild (~8 min).
   batch. That wait was 20-25 ms a frame when it was measured on 2026-10-29 (plan 2.4).
 - CPU plus that wait is roughly the whole frame. The walker stands still during the wait, and
   the reports, labels and parks the SPU jobs wait for stand still with it.
-- Plan 1.4 (rings instead of the full drain) and 1.5 (descriptors) are still open. No slowdown
-  probe has been run on this thread, so it is not known whether it sets the frame.
+- Plan 1.4 (rings instead of the full drain) and 1.5 (descriptors) are still open.
+- **Probed 2026-10-31** (`RSX_SLOW`, plan 2.9): the thread's CPU work +25% changes nothing, +50%
+  costs 3.2%. It does not set the frame now, but the slack is small.
 - The ZPASS reports (fork `5c906fb2`) are read in `rf_open` after that drain (`zq_read`).
   Removing the drain means delivering them when their batch's fence completes.
 
@@ -290,6 +291,9 @@ on the charger.
      on hitches now).
    - If +25% costs more than the main thread's -2.2%: plan 1.4, then 1.5, comes before the
      next EDGE stage.
+   - **Done 2026-10-31** (`RSX_SLOW`): +25% of its CPU work gave nothing (16.47/16.37 against
+     16.47/16.34), +50% gave -3.2%. Not on the frame's path now; its slack is ~9-18 ms a frame.
+     Plan 1.4/1.5 move to before ~19-20 flips/s.
 3. **`__restrict` on the lifted context** (F2).
    - SPU first: lifter flag, replay of `logs/jobcap2` (EDGE) and `logs/jobcap3` (RenJobSet,
      MeshProc), outputs must stay identical, then the level.

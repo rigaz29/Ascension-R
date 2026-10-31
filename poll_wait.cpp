@@ -156,6 +156,71 @@ static const int s_main_slow_init = [] {
     fprintf(stderr, "[main-slow] the main thread's own work +%d%%\n", s_slow.pct);
     return 1;
 }();
+
+/* RSX_SLOW=<percent>: the same probe for the frame clock thread, the FIFO
+ * walker and the D3D12 backend. It runs at each FIFO command (cellGcmSys.c's
+ * g_gcm_walker_hook) and after each present (main.cpp). At most every 100 us it
+ * reads the thread's CPU cycles -- a wait for the GPU, for a kick or in a
+ * present costs none -- and spins for <percent> of the cycles since the last
+ * reading, its own spin left out. Every 5 s it prints the CPU time charged and
+ * spun. */
+namespace {
+struct RsxSlow {
+    int pct = 0;
+    double tsc_per_us = 0;
+    unsigned long long every = 0, last_tsc = 0, last_cyc = 0, owed = 0;
+    unsigned long long charged = 0, spun = 0, reads = 0, t_report = 0;
+    DWORD tid = 0;
+};
+RsxSlow s_rslow;
+}
+static void rsx_slow(void)
+{
+    RsxSlow& s = s_rslow;
+    if (!s.tid) s.tid = GetCurrentThreadId();
+    if (GetCurrentThreadId() != s.tid) return;
+    const unsigned long long now = __rdtsc();
+    if (now - s.last_tsc < s.every) return;
+    s.last_tsc = now;
+    ULONG64 cyc = 0;
+    QueryThreadCycleTime(GetCurrentThread(), &cyc);
+    s.reads++;
+    if (s.last_cyc) {
+        /* the cycles since the last reading hold the spin that followed it */
+        const unsigned long long d = cyc - s.last_cyc, own = d > s.owed ? d - s.owed : 0;
+        const unsigned long long spin = own * (unsigned)s.pct / 100;
+        while (__rdtsc() - now < spin) _mm_pause();
+        s.owed = spin;
+        s.charged += own;
+        s.spun += spin;
+    }
+    s.last_cyc = cyc;
+    if (!s.t_report) s.t_report = now;
+    if (now - s.t_report > (unsigned long long)(s.tsc_per_us * 5e6)) {
+        const double secs = (double)(now - s.t_report) / (s.tsc_per_us * 1e6);
+        fprintf(stderr, "[rsx-slow] +%d%%: own work charged %.0f ms/s, spun %.0f ms/s, %.0f readings/s\n",
+                s.pct, (double)s.charged / (s.tsc_per_us * 1e3) / secs,
+                (double)s.spun / (s.tsc_per_us * 1e3) / secs, (double)s.reads / secs);
+        s.charged = s.spun = s.reads = 0;
+        s.t_report = now;
+    }
+}
+extern "C" void (*g_gcm_walker_hook)(void);
+static const int s_rsx_slow_init = [] {
+    const char* e = getenv("RSX_SLOW");
+    if (!e || atoi(e) <= 0) return 0;
+    LARGE_INTEGER f, a, b;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&a);
+    const unsigned long long t0 = __rdtsc();
+    do QueryPerformanceCounter(&b); while ((b.QuadPart - a.QuadPart) * 100 < f.QuadPart);
+    s_rslow.tsc_per_us = (double)(__rdtsc() - t0) * (double)f.QuadPart / ((double)(b.QuadPart - a.QuadPart) * 1e6);
+    s_rslow.every = (unsigned long long)(s_rslow.tsc_per_us * 100);
+    s_rslow.pct = atoi(e);
+    g_gcm_walker_hook = rsx_slow;
+    fprintf(stderr, "[rsx-slow] the frame clock thread's own work +%d%%\n", s_rslow.pct);
+    return 1;
+}();
 #endif
 
 extern "C" void gowa_poll_wait(ppu_context* ctx, uint32_t addr)

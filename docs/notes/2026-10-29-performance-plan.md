@@ -481,6 +481,17 @@ not, and what is worth trying. Its new findings, and the order they go in:
 2. **Probe the frame clock thread** (`RSX_SLOW`). It is 60.5% of a core at 16.3 flips/s, and
    `rf_open` still drains the GPU at every batch: CPU plus wait is about the whole frame.
    If it sets the frame, 1.4 and 1.5 come next.
+   - **Done 2026-10-31** (fork `8dcd4671` `g_gcm_walker_hook`; port `poll_wait.cpp`, `main.cpp`).
+     `RSX_SLOW=<pct>` reads the thread's CPU cycles (`QueryThreadCycleTime`, so the waits for the
+     GPU, a kick or a present count nothing) at each FIFO command and after each present, at most
+     every 100 us, and spins for <pct> of the cycles since the last reading.
+   - Calibration: 608 ms/s charged + 6 spun against 62.0% of a core in the bench's thread table;
+     ~37 ms of CPU a frame.
+   - One executable, ABBA, two runs each: +1% (the control) 16.47/16.34, +25% 16.52/16.42 (the
+     thread at 75% of a core). One run at +50% (85%): 15.87, -3.2%.
+   - So the thread does not set the frame now, but its slack is only 25-50% of its work, ~9-18
+     ms a frame. 1.4 and 1.5 are not first. They come before ~19-20 flips/s, where this thread
+     binds.
 3. **`__restrict` on the lifted context**, SPU first on the replay. Guest registers are
    reloaded from `ctx` after every guest store. The PPU needs `ppu_stwcx32`/`ppu_stdcx64` to
    take `ctx` first.
