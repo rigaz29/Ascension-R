@@ -202,6 +202,27 @@ SPUs:
    - the policy module's cost per job (its interrupts from the DMA lists, the module compare).
 5. **The frame clock thread** (plan 1.4 rings, 1.5 descriptors), before ~19-20 flips/s.
 
+## 4.1 Result of steps 1 and 2 (2026-10-31, fork `1a1aa4f9`)
+
+- Level, ABBA, two runs each: 16.19 -> 18.92 flips/s (+16.9%). The port is at ~79% of RPCS3's
+  24.0 (68% before).
+- A finding on the way: the poll intercept answered every policy module with workload 0. The
+  module's `cellSpursModulePollStatus` (LS 0x3750 in the Wws module) compares the answer with
+  `wklCurrentId` (LS 0x1DC) and ends its run when they differ.
+  - So every workload but 0 ran about one job a run (EDGE ~1.3) and paid the module's entry for
+    each.
+  - With the kernel's answer an EDGE run takes ~45 jobs (3.7-4.1 ms).
+- On the new build, by `guestscope.py`:
+
+  | | RPCS3 | port before | port now |
+  |---|---|---|---|
+  | EDGE phase, ms a frame | 27.6 | 52.8 | 36.5 |
+  | EDGE time at four SPUs | 86% | 0% (max 3) | 79% |
+  | EDGE job per SPU at four SPUs | 68 us | - | 85 us |
+  | General6 / RenderJobs SPUs while busy | 2.1 / 1.8 | 1 / 1 | 1.8 / 2.0 |
+
+- The frame clock thread went from 60% to 72% of a core. It is now the likely limit (plan 2.9).
+
 ## 5. How to measure again
 
 ```

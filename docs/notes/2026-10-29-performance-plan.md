@@ -544,6 +544,20 @@ So the order becomes:
 
 The audit's `__restrict` and `-march` steps move behind these.
 
+**Steps 1 and 2 done 2026-10-31** (fork `1a1aa4f9`, port `main.cpp` without the `SPURS_MAXCONT` default):
+- the ninth argument read from SP + 0x70;
+- `spurs_claim` / `spurs_pick` choose as SPURS does, and `spurs_kernel_poll` answers a polling
+  policy module. The old answer, workload 0, ended every other workload's run at its first poll:
+  EDGE ran ~1.3 jobs a run, now ~45 (`SPURS_WID_PROF`: ~210 runs/s a list, 3.7-4.1 ms a run);
+- `SPURS_SELECT=rr` restores the old scheduler; `tests/test_spurs_select.c` covers the new one.
+- Level, ABBA, two runs each: **16.19 -> 18.92 flips/s (+16.9%)**, every new window above every
+  old one.
+- `guestscope.py` on the new build: the EDGE lists hold four SPUs 79% of their time (RPCS3 86%).
+  The EDGE phase is 52.8 -> 36.5 ms a frame, and an EDGE job takes 85 us per SPU at four SPUs
+  (RPCS3 68). General6, RenderJobs, RenJobSet and Batch now run on 2-3.4 SPUs.
+- The frame clock thread is at 72% of a core (60%): it is the next limit, as `RSX_SLOW` said (2.9).
+  Next: Batch's 8x, then the frame clock thread (1.4, 1.5) and the EDGE job.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

@@ -907,14 +907,11 @@ static void title_environment(void)
      * while the lifted tasks were still on batch N, and its signal ended their
      * barrier waits instead. A report waits while those tasks are in a round. */
     env_default("GCM_REPORT_SPU_HOLD_MS", "3000");
-    /* The title gives every SPURS workload a maximum contention of 1, and the
-     * three EDGE job lists (14-16) then ran one after another on SPU 0 while
-     * four SPUs idled: 85% of SPU 0, the whole of a level frame's critical
-     * path. Three SPUs each: menu 2.0 -> 3.6 flips/s, first level 1-3 -> 2.4-4.4
-     * (docs/PERF.md). Ref A runs its EDGE lists the same way. To be checked
-     * again once the level's 3D scene draws: geometry order is the risk.
-     * SPURS_MAXCONT=14=1,15=1,16=1 goes back to the title's value. */
-    env_default("SPURS_MAXCONT", "14=3,15=3,16=3");
+    /* No SPURS_MAXCONT default any more. It set the EDGE lists (14-16) to three
+     * SPUs because every workload arrived with a maximum contention of 1: the
+     * HLE dropped _cellSpursWorkloadAttributeInitialize's ninth argument. The
+     * title's own maxima (5, 6 or 8; docs/notes/2026-10-31-rpcs3-vs-port.md)
+     * now reach the instance, and SPURS_MAXCONT stays an override for tests. */
     /* The title mixes its audio in SPURS workload 7, and a block that
      * workload has not filled when cellAudio takes it plays as a short gap.
      * Its worker at above-normal priority, with the paced mixer: 27-35 gaps

@@ -35,9 +35,9 @@ Current status and milestones. The plan is in [PLAN.md](PLAN.md).
 
 ## Next
 
-Speed, toward RPCS3's on this machine or better (first level at 16.3 flips/s on 2026-10-31; RPCS3
-24.0 FPS in the same fight and windows that day, so the port is at 68% of it; 12.3 against 22.9 on
-2026-10-29): the [performance plan](docs/notes/2026-10-29-performance-plan.md). Phase 0 is
+Speed, toward RPCS3's on this machine or better (first level at 18.9 flips/s on 2026-10-31 after
+the SPURS fixes, from 16.2; RPCS3 24.0 FPS in the same fight, so the port is at ~79% of it; 12.3
+against 22.9 on 2026-10-29): the [performance plan](docs/notes/2026-10-29-performance-plan.md). Phase 0 is
 done (`gowa.py bench`, `gowa.py frames`, SPU job capture and `gowa.py replay`, RPCS3 measured at
 the same scene). Phase 1.1 is done: leaner exact SPU float forms (General6 jobs -20%, EDGE -14%,
 bit-identical); native float breaks this title's EDGE masks, so no approximate mode by default.
