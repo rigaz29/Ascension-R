@@ -223,6 +223,36 @@ SPUs:
 
 - The frame clock thread went from 60% to 72% of a core. It is now the likely limit (plan 2.9).
 
+## 4.2 Result of step 3, Batch (2026-10-31, fork `0ff31a6b`)
+
+- On the build after 4.1, a worker running w6 (`PS3_SAMPLE_THREAD`) spent 52% of Batch's
+  samples in the SPU interpreter and 38.6% resolving where to go next (`spu_lifted_lookup`);
+  7.3% in lifted code. `SPU_INTERP_STATS`: 4.3M interpreted steps a second, Batch 43.7% of a
+  core (2226 us a run).
+- The interpreted code was position-independent pieces that Batch's module (image 230) runs.
+  - Four were not in `scripts/spu_pic_pieces.json`: EA `0x6EEE30`, `0x6F1730`, `0x718C30`
+    and `0x7529B0`. With them lifted: 2.1M steps a second, Batch 1056 us a run.
+  - The rest was the 2.9 KB piece at `0x718C30`, placed at LS `0x35380`. It never comes from
+    its EA: the job GETs 16 KB blocks from PPU heap buffers (`0x720E6DE0` -> LS `0x31DA0`,
+    `SPU_DMA_LSA`), and the piece is inside one. So it was never marked resident.
+  - It also stores into its own constant pool (`stqr` at +0x834 to +0xB70). The registered
+    bytes included the pool, so even a piece found in place failed the compare once it had run.
+- The fix (fork `0ff31a6b`):
+  - Where dispatch finds nothing and no resident span decides, the 16 bytes there are looked up
+    among the starts of the pieces' lifted functions. The piece's instructions are compared
+    where that start places them, and on a match the placement is resident, as after a GET
+    from its EA. A miss the dispatch cache kept is looked at again, since a block with a piece
+    inside changes no resident span. Each SPU adopts the piece once (6 adoptions in a run).
+  - `lift_spu_pic.py` registers only the instructions; the lifted code reads the pool from local
+    store, as the SPU does.
+- After: 0.2M interpreted steps a second; Batch 264 us a run, 5.7% of a core.
+- Level, ABBA, two runs each: 18.51 -> 18.59 flips/s, within the spread (runs 18.49/18.59
+  against 18.82/18.39). The SPU workers use 520% of a core instead of 554%; the frame
+  clock thread stays at 72%.
+- So Batch did not set the frame rate. Its priority (2) is above EDGE's, but the 0.38 of a core
+  it gave back did not move the frame. The frame clock thread is next (plan 1.4, 1.5), then the
+  EDGE job.
+
 ## 5. How to measure again
 
 ```

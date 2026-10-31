@@ -558,6 +558,18 @@ The audit's `__restrict` and `-march` steps move behind these.
 - The frame clock thread is at 72% of a core (60%): it is the next limit, as `RSX_SLOW` said (2.9).
   Next: Batch's 8x, then the frame clock thread (1.4, 1.5) and the EDGE job.
 
+**Step 3 done 2026-10-31** (fork `0ff31a6b`, port `scripts/spu_pic_pieces.json`): Batch's SPU code
+runs lifted.
+- It was 52% in the SPU interpreter: four position-independent pieces were not in the list, and
+  the biggest comes inside 16 KB blocks from PPU heap buffers, never from its EA, and stores into
+  its own constant pool.
+- The pieces are added; a piece is now found by its bytes where dispatch finds nothing, and
+  verified on its instructions only (comparison note, 4.2).
+- Interpreted SPU steps 4.3M -> 0.2M a second; Batch 2226 -> 264 us a run.
+- Level, ABBA, two runs each: 18.51 -> 18.59 flips/s, within the spread. The SPU workers use 0.35
+  of a core less. Kept: it only removes work.
+- Batch did not set the frame. Next: the frame clock thread (1.4, 1.5), then the EDGE job.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
