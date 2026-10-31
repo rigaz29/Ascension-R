@@ -407,6 +407,33 @@ before General6 ended.
     work is on the frame's path: it releases the EDGE batches, but mostly ahead of time.
   - So the main thread's lifted PPU code (registers in locals, 2.3) is worth ~1.5% for a 25%
     faster thread, not first. EDGE (-7 to -10% for +25%) stays the larger lever.
+- **The job manager's work around an EDGE job, 2026-10-31** (a counting probe, not kept). Per
+  EDGE policy-module run, outside the job:
+
+  | | per run |
+  |---|---|
+  | full-path indirect branches | 26.7: `0x3FEC0` 7.9, `0xA2C` (the interrupt vector) 4.0, `0x1BA4`/`0x1BE8`/`0x1CC0` 3.0 each |
+  | interrupts | 4.0: stall-and-notify (event `0x2`) of its DMA lists, and tag updates |
+  | full drains | 19.8: `0xA84`/`0xA90`/`0xAD0` 4.0 each, all with a transfer pending |
+  | channel reads | 33: `MFC_RdTagStat` 18.9, `MFC_RdAtomicStat` 4.2, the decrementer 4.0, event status 4.0 |
+  | channel writes | 41: `MFC_WrTagUpdate` 18.9, `MFC_Cmd` 14.1, event ack 4.0 |
+  | DMA transfers | 19.7, three of them the module's 16 KB pieces |
+  | atomics | 4.2 |
+
+  - The Wws job manager loads a job's commands through DMA lists that stall and notify. Every
+    stall is an interrupt to its handler at `0xA2C`, which on the SPU runs beside the transfer.
+    Here each one saves and restores the register file (2 KB each way), and returns through the
+    drain loop: the full drains are where `SPU_DIRECT` hands a pending interrupt to it. That is
+    how interrupts are delivered, not waste to cut.
+  - Done, fork `df08790d`: while a handler's registers are saved, only the branch to the resume
+    point (the iret) takes the full path. Every other branch the handler made took it too, though
+    the full path's interrupt work is only for the iret. Full-path branches per run 26.7 -> 14.9
+    (~1 us a run). It only removes work.
+  - Not done: skipping the compare of the module's unchanged code (~1.5 us a run). That needs
+    every writer of the module's source in guest memory tracked, e.g. as lines marked in the
+    coherency bitmap, whose stores already take the notify path.
+  - The rest is the emulation's per-operation cost spread over ~140 channel, DMA and dispatch
+    operations a run, none above ~1 us. Left as is.
 - Next: the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
   `7BB4` (5.1%), `30600` (4.3%) and `D92C` + `D4DC` (5.8%); `A950`, `D92C` and `BD54` fail the
   range check in most calls, so their native forms need a per-lane path, not a fallback per
