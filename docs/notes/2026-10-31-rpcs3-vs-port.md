@@ -283,6 +283,30 @@ SPUs:
   taking about one logical CPU with nothing else running: a likely source of the spread
   between runs.
 
+## 4.5 EDGE: where its workload's time goes, and the indirect branches (2026-11-01)
+
+- The sampler on the workers, EDGE's workload (w14): ~70% lifted and native SPU code (the
+  most: the pieces' `304A0` 4.8% and `30600` 3.9%, the module's `7BB4` 4.5% and `D92C` 3.3%);
+  ~28% the runtime: indirect dispatch ~6%, DMA copies ~5%, lock-line locks 2.5%, `note_get`
+  and `wrch` 1.6% each, drains 2%.
+- `SPU_IBFULL=<s>` (fork `ecfe6586`, the indirect branches the full path takes): ~800K a second
+  across the workers.
+  - Misses: return points a few instructions before entries already lifted (the EDGE module's
+    `0x4B14`, `0x7030`, `0xC44C`, `0xC5E0`; others in modules 203, 216, 219, 220, 222), and three
+    EDGE pieces entered at their start where their lifted entry is further in. Added to
+    `scripts/jobmods_extra.json` and `scripts/spu_pic_pieces.json`: 16M -> 9.7M full-path
+    branches in 20 s after the first half, interpreted steps 0.2M -> 0.1M a second.
+  - The level: A/B, two runs each, 20.12 -> 20.23 flips/s, within the spread. Kept: less work.
+  - What is left by design: the Wws job manager's interrupt vector (`0xA2C`, ~83K a second, below
+    the fast path's bound), the register save/restore stub its handler writes at `0x3FEC0` and
+    runs per interrupt (~165K a second, run by the micro-interpreter), and the interrupt returns.
+    Together ~3% of the workers' time; a lifted copy of the stub would need the stub's bytes
+    checked at every run, as SPU stores write it.
+- The FIFO self-jump park froze two of ~30 runs on 2026-10-31/11-01, both 31-40 s after the
+  start (the menu's first frames): the walker on a jump to itself at IO `0x648BE0` and
+  `0x748BE0`, after the same two words (`0x00041778`, `0x0004177C`), no SPU halt in the log. The
+  bench reports it and runs again; the cause is open.
+
 ## 5. How to measure again
 
 ```
