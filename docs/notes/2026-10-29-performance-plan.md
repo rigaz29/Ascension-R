@@ -516,6 +516,34 @@ not, and what is worth trying. Its new findings, and the order they go in:
 4. **`-march=x86-64-v3 -mtune=znver2`** for the lifted code. The PPU code has FMA/AVX only.
 5. The EDGE stages and the module-compare skip (2.8), then the PPU indirect-call short path.
 
+### 2.10 Update, 2026-10-31: why RPCS3 is 1.5 times faster, at the job level
+
+[The comparison](2026-10-31-rpcs3-vs-port.md) reads the title's SPURS instance and Wws ticket
+rows from outside RPCS3 and the port alike (`scripts/guestscope.py`).
+
+- Both run the same jobs a frame: 534 an EDGE list, 26 General6, 40 RenderJobs.
+- RPCS3's EDGE phase is 27.6 ms a frame, the port's 52.8: about the whole difference.
+- **The title asks for 5-8 SPUs a workload, and the port gives it one.**
+  - The maximum contention is the ninth argument of `_cellSpursWorkloadAttributeInitialize`.
+    It is on the stack, and the HLE adapter writes 1 in its place.
+  - EDGE runs on three only by the `SPURS_MAXCONT` default.
+- **The port's kernel ignores SPURS priorities.** It picks round robin, takes one from the ready
+  count at each pick, and never makes a polling policy module yield.
+  - RPCS3's kernel keeps EDGE (priority 3) on four SPUs for 86% of its time.
+  - With only the maxima raised, General6 and RenderJobs take those SPUs: General6 39.6 -> 11.1 ms
+    a frame, RenderJobs 26.4 -> 7.7, but EDGE starved and the frame rate stayed (15.56 -> 15.59).
+- An EDGE job takes ~1.4 times RPCS3's at any contention; a Batch job ~8 times.
+
+So the order becomes:
+1. the ninth argument (the title's maxima);
+2. the kernel's choice as SPURS makes it (admission by ready count, priority weights, yield on
+   poll). Expected ~19 flips/s from EDGE at four SPUs;
+3. Batch's 8x;
+4. the EDGE job (native stages, `__restrict`, the policy module's cost);
+5. the frame clock thread (1.4, 1.5), which binds near 19-20 flips/s.
+
+The audit's `__restrict` and `-march` steps move behind these.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -894,10 +922,10 @@ and shorten each link by the shares in section 2.2.
 | coherency holder counts | 2026-10-28 | coherency 5.5% -> 4.5% of an EDGE run; frame unchanged | 1.2 |
 | job modules with `--merge-chunks` | 2026-10-28 | 1-6% off some workloads, frame unchanged, +13 MB of C | 2.2 |
 | null SRV left alone | 2026-10-28 | -4 ms a frame of CPU, +1% | 1.5 (the whole descriptor path) |
-| widening the serial lists (`SPURS_MAXCONT`) | 2026-10-28 | nothing: the jobs come one at a time | ruled out |
+| widening the serial lists (`SPURS_MAXCONT`) | 2026-10-28 | nothing: the jobs come one at a time | **overturned 2026-10-31 (2.10)**: General6 and RenderJobs do run on 4 SPUs; the frame needs SPURS priorities with it |
 | more frequent SPURS idle probes | 2026-10-28 | hangs | ruled out |
 | speculative float in EDGE's single-block loops | 2026-10-31 | replay +5% (locals alone -5.5%); the range checks fail in most calls | ruled out (2.8) |
-| EDGE lists at six SPUs each (`SPURS_MAXCONT`) | 2026-10-31 | same runs a second, 16.25 flips/s | ruled out: three job chains a list (2.8) |
+| EDGE lists at six SPUs each (`SPURS_MAXCONT`) | 2026-10-31 | same runs a second, 16.25 flips/s | **overturned (2.10)**: EDGE is eligible on SPUs 0-3 and gets the fourth only with priority-aware picks (+34% jobs/s when it has it) |
 
 They were measured while something else set the frame (the texture work on the frame clock
 thread, the main thread's waits). The chain sets it now, so what shortens a chain job counts.

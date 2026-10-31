@@ -271,6 +271,9 @@ Expected gain: small, 0-1%. It is cheap to try: one PPU rebuild (~8 min).
 
 ## 3. The work, in order
 
+Reordered the same day by [the RPCS3 comparison](2026-10-31-rpcs3-vs-port.md) (plan 2.10): the
+SPURS maximum contention and the kernel's priorities come first, then Batch, then the steps below.
+
 Each step has its own measurement, under the plan's rules (plan section 8): ABBA, two runs a side,
 on the charger.
 
