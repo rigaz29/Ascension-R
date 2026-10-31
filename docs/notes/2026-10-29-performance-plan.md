@@ -434,6 +434,27 @@ before General6 ended.
     coherency bitmap, whose stores already take the notify path.
   - The rest is the emulation's per-operation cost spread over ~140 channel, DMA and dispatch
     operations a run, none above ~1 us. Left as is.
+- **EDGE's normal loop as native code. Done 2026-10-31** (`native/spu_edge_normals.c`).
+  - The loop at LS `0xA950` takes eight elements an iteration, each a pair of quadwords a and b.
+    It computes the cross product `b*a.yzxx - a*b.yzxx`, scaled by b.w, with lanes 0-2 kept.
+    Its squared length L goes through frsqest, fi and one Newton step, and the vector is
+    normalised when L > 1.0e-30. Nothing but the pointers passes between iterations.
+  - Two elements share a 256-bit register for the vector part. L and everything from it to the
+    scale factor is one value an element (the SPU code keeps it in all four lanes): the eight
+    elements' values share one register, so frsqest, fi and the Newton step run once for all
+    eight.
+  - The float ops are native, with the range check and the +0 rule on every op. A half with a
+    lane out of range is done again by the exact forms; that never happened on the level.
+    frsqest and fi are the runtime's. fcgt is the float compare while L is in range (DAZ, no
+    NaN).
+  - The first version, which ran frsqest/fi/fcgt per element in all four lanes, saved 0.5 us a
+    job. Regrouped this way it saves 2.1 us.
+  - `GOWA_EDGE_NATIVE` is now a mask: 1 is the skinning loop, 2 the normal loop; unset is both,
+    0 neither.
+  - Replay (one build, three pairs): 54.0-54.2 us an EDGE job with the skinning loop alone,
+    52.0-52.1 with both. The outputs are identical.
+  - Level: 1.79M calls, 56.6M native iterations. ABBA, two runs each: 16.04 (both off) -> 16.26
+    flips/s (both on), both on-runs above both off-runs.
 - Next: the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
   `7BB4` (5.1%), `30600` (4.3%) and `D92C` + `D4DC` (5.8%); `A950`, `D92C` and `BD54` fail the
   range check in most calls, so their native forms need a per-lane path, not a fallback per

@@ -91,7 +91,7 @@ static void stats(void)
 void gowa_edge_skin_ec08(spu_context* ctx)
 {
     static int on = -1;
-    if (on < 0) { const char* e = getenv("GOWA_EDGE_NATIVE"); on = !e || atoi(e) != 0; }
+    if (on < 0) { const char* e = getenv("GOWA_EDGE_NATIVE"); on = !e || (atoi(e) & 1) != 0; }
     if (!on) return;
     const uint32_t n0 = ctx->gpr[48]._u32[0];
     int ok = n0 >= 4 && !(n0 & 1);
