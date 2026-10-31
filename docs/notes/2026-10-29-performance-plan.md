@@ -360,7 +360,17 @@ before General6 ended.
     Clang. 41,506 `vmaddfp` call sites in the lift.
   - Level, ABBA, two runs each: 15.68 -> 16.14 flips/s (every window's median), both new runs
     above both old.
-- Next: the rest of the main thread's own work (its lifted code), then the EDGE stages.
+  - `PORT_PPU_FAST_FP` (the scalar PPC float ops without their NaN checks, 1.1 MB less code):
+    ABBA, two runs each, 15.98 against 16.09 flips/s (every window's median); the frames look
+    the same. No gain; it stays off.
+  - The coherency of its stores, 3.7% of its samples (the notify 1.7%, waiting for the lock-line
+    lock 1.0%, `ppu_resv_break_line` 0.8%), is not changed. That lock is what keeps a PPU store
+    out of a PUTLLC's compare and commit. A store without it is safe only if no SPU can be in a
+    PUTLLC on that line, and the hint array cannot promise that without a new handshake.
+  - Indirect calls: `ps3_indirect_call_impl` itself is 1.0% (its lookup is cached per thread).
+    The 2.3% shown as waits under it are samples outside the executable, named by the first
+    return address the sampler finds on the stack: waits further down, not the call.
+- Next: the EDGE stages, starting with `EC08`.
 
 ## 3. The budget for 33 ms
 
