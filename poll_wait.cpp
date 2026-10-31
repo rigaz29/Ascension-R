@@ -100,8 +100,69 @@ static void poll_trace(ppu_context* ctx, uint32_t addr)
     t1 = t;
 }
 
+/* GOWA_MAIN_SLOW=<percent>: a probe of how much the main thread's own work sets
+ * the frame. At each indirect call (ppu_loader.cpp's g_ppu_icall_hook, every
+ * microsecond or so of its code) the main thread spins for <percent> of the time
+ * since the previous one -- unless a wait came in between: a gap of 50 us or
+ * more, or a pass of one of the polling loops above in the last 50 us. Its
+ * waits are left as they were. Every 5 s it prints the time spun, against the
+ * time it was charged for. */
+static volatile unsigned long long s_main_poll_tsc;
+#if POLL_X86 && defined(_WIN32)
+namespace {
+struct MainSlow {
+    int pct = 0;
+    double tsc_per_us = 0;
+    unsigned long long lim = 0, spun = 0, charged = 0, calls = 0, t_report = 0;
+};
+MainSlow s_slow;
+}
+static void main_slow(ppu_context* ctx)
+{
+    if (ctx->thread_id != 1) return;
+    static unsigned long long last;
+    const unsigned long long now = __rdtsc(), gap = now - last;
+    if (last && gap < s_slow.lim && now - s_main_poll_tsc > s_slow.lim) {
+        const unsigned long long until = now + gap * (unsigned)s_slow.pct / 100;
+        while (__rdtsc() < until) _mm_pause();
+        s_slow.spun += until - now;
+        s_slow.charged += gap;
+        s_slow.calls++;
+    }
+    last = __rdtsc();
+    if (!s_slow.t_report) s_slow.t_report = last;
+    if (last - s_slow.t_report > (unsigned long long)(s_slow.tsc_per_us * 5e6)) {
+        const double secs = (double)(last - s_slow.t_report) / (s_slow.tsc_per_us * 1e6);
+        fprintf(stderr, "[main-slow] +%d%%: own work charged %.0f ms/s, spun %.0f ms/s, %.0f calls/s\n",
+                s_slow.pct, (double)s_slow.charged / (s_slow.tsc_per_us * 1e3) / secs,
+                (double)s_slow.spun / (s_slow.tsc_per_us * 1e3) / secs, (double)s_slow.calls / secs);
+        s_slow.spun = s_slow.charged = s_slow.calls = 0;
+        s_slow.t_report = last;
+    }
+}
+extern "C" void (*g_ppu_icall_hook)(ppu_context*);
+static const int s_main_slow_init = [] {
+    const char* e = getenv("GOWA_MAIN_SLOW");
+    if (!e || atoi(e) <= 0) return 0;
+    LARGE_INTEGER f, a, b;
+    QueryPerformanceFrequency(&f);
+    QueryPerformanceCounter(&a);
+    const unsigned long long t0 = __rdtsc();
+    do QueryPerformanceCounter(&b); while ((b.QuadPart - a.QuadPart) * 100 < f.QuadPart);
+    s_slow.tsc_per_us = (double)(__rdtsc() - t0) * (double)f.QuadPart / ((double)(b.QuadPart - a.QuadPart) * 1e6);
+    s_slow.lim = (unsigned long long)(s_slow.tsc_per_us * 50);
+    s_slow.pct = atoi(e);
+    g_ppu_icall_hook = main_slow;
+    fprintf(stderr, "[main-slow] the main thread's own work +%d%%\n", s_slow.pct);
+    return 1;
+}();
+#endif
+
 extern "C" void gowa_poll_wait(ppu_context* ctx, uint32_t addr)
 {
+#if POLL_X86
+    if (ctx->thread_id == 1) s_main_poll_tsc = __rdtsc();
+#endif
     if (s_poll.us < 0) s_poll.init();
     if (PS3_FT_ON()) poll_trace(ctx, addr);
     if (s_poll.us <= 0) return;

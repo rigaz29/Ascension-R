@@ -390,6 +390,23 @@ before General6 ended.
     56.6-56.8 us an EDGE job (-5.1%). The outputs are identical in all 40 jobs.
   - Level: 7.6M calls, 366M native iterations, 0.05% of them fall back; no call fails the entry
     check. ABBA, two runs each: 15.88 -> 16.06 flips/s, both native runs above both off.
+- **How much the main thread's own work sets the frame, 2026-10-31** (`GOWA_MAIN_SLOW=<percent>`,
+  `poll_wait.cpp`, with fork `g_ppu_icall_hook`).
+  - At every indirect call the main thread spins for that share of the time since the previous
+    call, unless a wait came in between: a gap of 50 us or more, or a polling-loop pass in the
+    last 50 us. It charges ~210 ms of its own work a second, about 60% of it, at ~340,000 calls
+    a second.
+  - One run each:
+
+    | | spun | flips/s |
+    |---|---|---|
+    | base | - | 16.34 |
+    | +25% | 56 ms/s | 15.98 (-2.2%) |
+    | +100% | 196 ms/s (~12 ms a frame) | 15.44 (-5.5%) |
+  - ~12 ms more of its work a frame makes the frame ~3.6 ms longer. Only about 30% of its own
+    work is on the frame's path: it releases the EDGE batches, but mostly ahead of time.
+  - So the main thread's lifted PPU code (registers in locals, 2.3) is worth ~1.5% for a 25%
+    faster thread, not first. EDGE (-7 to -10% for +25%) stays the larger lever.
 - Next: the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
   `7BB4` (5.1%), `30600` (4.3%) and `D92C` + `D4DC` (5.8%); `A950`, `D92C` and `BD54` fail the
   range check in most calls, so their native forms need a per-lane path, not a fallback per
