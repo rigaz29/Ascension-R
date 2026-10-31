@@ -89,6 +89,11 @@ Why this ranks high:
 - The last VMX step proved the lever. `vaddfp`, `vsubfp`, `vmaddfp` and `vnmsubfp` as vector
   code (fork `b5a91584`) took the level from 15.68 to 16.14 flips/s (+2.9%).
 
+**Result, 2026-10-31** (fork `a015ff00`): the main thread's own work went from 11.58 to 10.73 ms
+a frame (-7.3%). The level went from 16.42 to 16.57 flips/s, within the spread. The +1-3%
+estimate was too high: these sites are less hot than `vmaddfp`'s were, and the main thread
+moves the frame by ~0.09% per 1% of its work. See `docs/PERF.md`.
+
 ### F2. Guest registers are reloaded after every guest store
 
 - Lifted functions keep every guest register in `ctx` (`ctx->gpr`, `cr`, `xer`, `vr`), and
@@ -276,6 +281,8 @@ on the charger.
      cases (NJ, NaN, every `sh`), in the style of `tools/test_ppu_vmx_float_vec.py`.
    - Measure: level ABBA. Expected +1-3%. Cost: lifter and header work, one PPU rebuild a
      round.
+   - **Done 2026-10-31**: own work -7.3%, level 16.42 -> 16.57 (within the spread). `vslw` and
+     `vslb` wait for step 4's AVX2.
 2. **Probe the frame clock thread** (F4).
    - What: `RSX_SLOW=<pct>`, the same idea as `GOWA_MAIN_SLOW`: spin at each batch for <pct> of
      the thread's own time since the last one.

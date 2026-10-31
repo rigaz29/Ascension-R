@@ -470,6 +470,14 @@ not, and what is worth trying. Its new findings, and the order they go in:
    lift to byte loops that clang unrolls to 85-119 instructions without `pshufb`. The
    remaining VMX helpers (`vcfsx`, the float compares, `vrefp`/`vrsqrtefp`, ...) run lane by
    lane. The previous VMX step gave +2.9%.
+   - **Done 2026-10-31** (fork `a015ff00`): the five as `ppu_vmx.h` helpers (`pshufb`), and the word
+     compares, `vmaxfp`/`vminfp`, the estimates, the roundings, `vcfsx` and `vctsxs` as vector
+     forms. Each equals its scalar form in 55.5M operations.
+   - The main thread's own work: 11.58 -> 10.73 ms a frame (-7.3%), by `GOWA_MAIN_SLOW=1`'s
+     report (one run each, the same 18.4K indirect calls a frame).
+   - Level, ABBA, two runs each: 16.42 -> 16.57 flips/s, within the spread (runs 16.84/16.34
+     against 16.73/16.38). That is what the main thread's ~0.09% per 1% predicts. Kept: it only
+     removes work.
 2. **Probe the frame clock thread** (`RSX_SLOW`). It is 60.5% of a core at 16.3 flips/s, and
    `rf_open` still drains the GPU at every batch: CPU plus wait is about the whole frame.
    If it sets the frame, 1.4 and 1.5 come next.
