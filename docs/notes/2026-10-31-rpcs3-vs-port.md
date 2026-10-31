@@ -248,13 +248,21 @@ SPUs:
 - After: 0.2M interpreted steps a second; Batch 264 us a run, 5.7% of a core.
 - `guestscope.py jobs` on the new build (30 s, 17.8 flips/s): Batch takes 14.7 jobs a frame, its
   lists busy 1.4 ms a frame at 2.2 SPUs, so ~210 us of SPU time a job. Before: ~0.9 ms; RPCS3
-  ~110 us. The 8x is now ~1.9x, like the other lists' runtime share.
+  ~110 us. The 8x is now ~1.9x (an EDGE job: 85 us against 68, 1.25x).
 - Level, ABBA, two runs each: 18.51 -> 18.59 flips/s, within the spread (runs 18.49/18.59
   against 18.82/18.39). The SPU workers use 520% of a core instead of 554%; the frame
   clock thread stays at 72%.
 - So Batch did not set the frame rate. Its priority (2) is above EDGE's, but the 0.38 of a core
   it gave back did not move the frame. The frame clock thread is next (plan 1.4, 1.5), then the
   EDGE job.
+
+## 4.3 The frame clock thread, first lever (2026-10-31, fork `d1e368c7`)
+
+- `PERF=1` on the build after 4.2: the thread's `render_frame` took 19.5 ms a frame, 14.1 of
+  it making the draws' texture views (16 `CreateShaderResourceView` calls a draw).
+- Views copied from a cache and equal windows shared (plan 1.5): the view work 7.4 ms,
+  `render_frame` 10.8 ms.
+- Level A/B: 18.69 -> 20.27 flips/s (+8.5%). The port is at ~84% of RPCS3's 24.0.
 
 ## 5. How to measure again
 

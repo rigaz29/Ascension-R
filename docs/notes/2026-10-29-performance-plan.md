@@ -796,6 +796,18 @@ Each item is small and is measured on its own.
     (`CopyDescriptorsSimple`), or reused when it equals the last draw's.
   - Expected: ~14 ms down to ~2-3 ms a frame of the frame clock thread.
   - The null-SRV skip (-4 ms) gave +1% when that thread did not limit; this is for when it does.
+  - **First part done 2026-10-31** (fork `d1e368c7`). `PERF=1` in the level first: the views
+    were 14.1 ms of the frame clock thread's ~55 ms frame (~1,800 windows a frame, 16
+    `CreateShaderResourceView` calls each, ~0.5 us a call).
+    - The prepass collects a draw's 16 views; a draw whose views equal an earlier draw's in
+      the batch binds that window (~18% of them). The others copy their views (one
+      `CopyDescriptors`) from a CPU-only heap with the null view and each texture slot's
+      views, made once.
+    - The view work 14.1 -> 7.4 ms a frame (3.3 of it the texture lookups); `render_frame`
+      19.5 -> 10.8 ms.
+    - Level A/B: **18.69 -> 20.27 flips/s (+8.5%)**, every window of the new build above every
+      window of the old (one round: `--early-stop`). The frame clock thread binds now.
+    - Next: windows kept across frames (most of a frame's 1,800 tables recur), then 1.4.
 - **1.6 MLAA on the GPU.**
   - Answer the five tasks at their signal: the label, the counter and the kick, without the work.
     Ref A does the same; check it with our own probe.
