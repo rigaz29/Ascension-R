@@ -263,6 +263,8 @@ SPUs:
 - Views copied from a cache and equal windows shared (plan 1.5): the view work 7.4 ms,
   `render_frame` 10.8 ms.
 - Level A/B: 18.69 -> 20.27 flips/s (+8.5%). The port is at ~84% of RPCS3's 24.0.
+- The GPU wait in `rf_open` (plan 1.4) was ~10 ms a frame, but after the batch before had
+  finished: removing it changed nothing (plan 1.4 for the details and the thread's profile).
 
 ## 5. How to measure again
 

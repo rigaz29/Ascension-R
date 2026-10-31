@@ -279,8 +279,12 @@ def run_once(exe, env_extra, a, out, tag):
                 last = t()
             time.sleep(0.25)
         if anchor is None:
-            rec["failed"] = "the menu route did not reach Continue Game" if p.poll() is None \
-                else "exited at %.0f s" % t()
+            if p.poll() is not None:
+                rec["failed"] = "exited at %.0f s" % t()
+            else:
+                last = [f for _, f in windows(log_err)][-2:]
+                rec["failed"] = ("frozen in the menus (no flips)" if len(last) == 2 and max(last) < 0.5
+                                 else "the menu route did not reach Continue Game")
             stop(p)
             return rec
         rec["load_s"] = round(anchor, 1)

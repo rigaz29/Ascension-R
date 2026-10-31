@@ -791,6 +791,21 @@ Each item is small and is measured on its own.
   - Expected: the walker stops standing still for 20-25 ms a frame, and the reports, labels and
     parks the SPU jobs wait for move earlier.
   - Risk: the torn geometry the drain was added for. Check it with the capture tools.
+  - **Looked at 2026-10-31, after 1.5's first part** (fork `8dab3f5a`). The rings are not needed
+    now:
+    - `PERF=1` (waits by the line that asks): 9-12 ms a frame, all in `rf_open`, one a frame,
+      nearly all from record-ahead, which opens only once the batch before has finished.
+      `RF_WAITLOG=1` showed it had: the wait was the drain signalling anew and waiting 3-17 ms
+      for that signal.
+    - `rf_open` now waits only while the last value signalled is not done. The waits go to ~0 and
+      the drain no longer stops, but the level is unchanged (env-only A/B, `RF_IDLE_WAIT=1` waits
+      as before: 20.09/19.66 against 19.88). Not on the frame's path.
+    - The GPU: 3D engine 29% busy at 720 MHz (P5), `nvidia-smi` 34%.
+    - The frame clock thread by the sampler (`PS3_SAMPLE_THREAD=frame clock`): idle 31% (the
+      message pump's wait), the FIFO walk ~16%, the prepass ~18% (views 6.5, texture lookups 4.2,
+      the fragment program hash 3.3, pipelines 2), vertex uploads 6.5, recording ~7%, blits 3%.
+      What is left is many items of 1-3 ms a frame; a second thread for the D3D12 work (RPCS3's
+      multithreaded RSX) is the structural step if this thread binds again.
 - **1.5 Descriptors.**
   - One SRV per cached texture, made at upload. A draw's 16-entry table is copied
     (`CopyDescriptorsSimple`), or reused when it equals the last draw's.
