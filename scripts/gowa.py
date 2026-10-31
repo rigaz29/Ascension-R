@@ -479,7 +479,9 @@ def native_hooks(lift_dir):
             die("native hook: no lifted module %s" % module)
         src = open(path, encoding="utf-8").read()
         for func, native in sorted(funcs.items()):
-            head = "void %s(spu_context* ctx) {\n" % func
+            head = "void %s(spu_context* SPU_RESTRICT ctx) {\n" % func
+            if src.count(head) != 1:
+                head = "void %s(spu_context* ctx) {\n" % func   # lifted before SPU_RESTRICT
             if src.count(head) != 1:
                 die("native hook: %s not found once in %s" % (func, module))
             src = src.replace(head, "void %s(spu_context* ctx);\n%s    %s(ctx);\n" % (native, head, native))

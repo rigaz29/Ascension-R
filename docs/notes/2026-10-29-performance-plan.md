@@ -513,6 +513,14 @@ not, and what is worth trying. Its new findings, and the order they go in:
 3. **`__restrict` on the lifted context**, SPU first on the replay. Guest registers are
    reloaded from `ctx` after every guest store. The PPU needs `ppu_stwcx32`/`ppu_stdcx64` to
    take `ctx` first.
+   - **Tried 2026-11-01 for the SPU** (`PORT_SPU_RESTRICT`, the lifter writes `SPU_RESTRICT`
+     on the context; off by default). The replay, best of ten a job, outputs identical: General6
+     871.5 -> 860.4 us, RenderJobs 466.7 -> 457.6, EDGE 52.7 -> 52.0. -1 to -2%, about the
+     replay's own spread (the same build twice differs by up to 1.5%). Left off.
+   - On the way: the replay restores a captured context with its resident code slots, so the
+     position-independent pieces' image ids must stay as they were. The four Batch pieces had
+     been put first in `scripts/spu_pic_pieces.json`; the EDGE pieces' ids moved by four, their
+     slots no longer verified, and EDGE replayed 10x slower (interpreted). New pieces go last.
 4. **`-march=x86-64-v3 -mtune=znver2`** for the lifted code. The PPU code has FMA/AVX only.
 5. The EDGE stages and the module-compare skip (2.8), then the PPU indirect-call short path.
 

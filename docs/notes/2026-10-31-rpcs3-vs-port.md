@@ -266,6 +266,23 @@ SPUs:
 - The GPU wait in `rf_open` (plan 1.4) was ~10 ms a frame, but after the batch before had
   finished: removing it changed nothing (plan 1.4 for the details and the thread's profile).
 
+## 4.4 What sets the frame after 4.3 (2026-11-01)
+
+- The +25% probes again, one run each, in two orders (the first round's base run was low,
+  18.66, against 20.2-20.5 for the same build otherwise):
+
+  | +25% on | round 1 | round 2 | against ~20.3 |
+  |---|---|---|---|
+  | EDGE (`SPURS_WID_SLOW=14:25,15:25,16:25`) | 18.86 | 19.06 | -6.5% |
+  | the frame clock thread (`RSX_SLOW=25`) | 19.85 | 19.63 | -2.8% |
+  | the main thread (`GOWA_MAIN_SLOW=25`) | 20.29 | 20.33 | ~0 |
+
+- EDGE sets the frame now, the frame clock thread a little; the main thread has slack. So the
+  EDGE job (step 4 above) is next.
+- Between the runs `PresentMon_x64` (NVIDIA FrameView SDK, running since 2026-10-17) was seen
+  taking about one logical CPU with nothing else running: a likely source of the spread
+  between runs.
+
 ## 5. How to measure again
 
 ```

@@ -306,6 +306,13 @@ add_executable(${PROJECT_NAME}
 #                          operations that make it +0. The extended-range checks
 #                          stay: this title's EDGE jobs depend on them. Off, the
 #                          lifted SPU code is bit-exact.
+#   PORT_SPU_RESTRICT   -- the lifted SPU functions take their context as
+#                          __restrict (SPU_RESTRICT): a local-store store no
+#                          longer makes the compiler reload guest registers, or
+#                          the local-store pointer, from the context. Only the
+#                          context pointer reaches the context while lifted code
+#                          runs (the runtime's thread-local context pointers are
+#                          compared, never read through).
 #   PORT_SPU_LS_DIAG    -- the local-store diagnostics (SPU_LS_WATCH,
 #                          SPU_LS_LOWREAD, SPU_SMC_WATCH, SPU_WWS_PROBE) see the
 #                          lifted SPU code's quadword loads and stores. Off
@@ -316,6 +323,7 @@ option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling
 option(PORT_SPU_FLOAT_RZ_ONLY "Lifted SPU code with the round-toward-zero float forms only" ON)
 option(PORT_SPU_FLOAT_APPROX "Lifted SPU code: a zero float result may be -0 (SPU_FLOAT_APPROX)" OFF)
 option(PORT_SPU_LS_DIAG "Local-store diagnostics in the lifted SPU code (a gate per lqd/stqd)" OFF)
+option(PORT_SPU_RESTRICT "Lifted SPU functions take their context as __restrict" OFF)
 # PORT_SPU_PGO: profile-guided optimization of the lifted SPU code (clang).
 #   gen          -- instrument it; main.cpp writes the profile to LLVM_PROFILE_FILE every 15 s
 #   <.profdata>  -- optimize it with that profile (llvm-profdata merge of the runs')
@@ -328,6 +336,9 @@ if(SPU_SOURCES)
     endif()
     if(NOT PORT_SPU_LS_DIAG)
         list(APPEND spu_defs SPU_LS_NO_DIAG)
+    endif()
+    if(PORT_SPU_RESTRICT)
+        list(APPEND spu_defs SPU_RESTRICT=__restrict)
     endif()
     if(PORT_SPU_AVX2 AND PORT_SPU_FLOAT_RZ_ONLY)
         list(APPEND spu_defs SPU_FLOAT_RZ_ONLY)
