@@ -320,8 +320,47 @@ before General6 ended.
     worker, ~6-7 us a job.
   - Every GET of 512 bytes or more also compares 16 bytes against each registered job module's
     signature, one `memcmp` call each.
-- Next: the per-job load of an unchanged module, and the rest of the policy module's 24 us. Then
-  the MeshProc -> EDGE kick.
+- **The policy module's GETs, 2026-10-31.**
+  - Done, fork `586de054`: a GET of 512 bytes or more skips the signature scan unless its first
+    8 bytes head a registered signature (a set of them, as the EA set), and compares inline. It
+    only removes work and was not measured on its own.
+  - Not done: skipping the module's copy and the compare of its unchanged code. Per EDGE job
+    that is ~1.9 us of `memcpy` and ~1.5 us of `memcmp` out of 91 us (the GETs outside a job
+    are ~113 KB, the module 52 KB of it). Both need page protection, the copy also on every
+    context's local store.
+- **`EC08` alone, replay** (40 jobs, best of 10): before 57.0-60.6 us a job; its registers in
+  locals 56.6; locals with speculative float 57.4. The loop is bound by its instruction count
+  (~650 x86 instructions an iteration), not by `ctx` traffic. A gain there needs it rewritten
+  (two iterations to an AVX2 register, the shuffles' controls hoisted), estimated ~3 us a job.
+- **What starts an EDGE episode: the main thread.**
+  - The run that ends a gap is a 30 us MeshProc run at the gap's end, a median 7.4 ms in.
+  - MeshProc's list (`0x719E4780`) begins with a type-2 entry on `0x009B504C`. Its 4-6 jobs wait
+    behind that entry 34% of the time, and 62% of MeshProc's runs find nothing to do.
+  - Probing it more often does not help. A cap on its idle back-off (`SPURS_IDLE_MAX=13=0`,
+    experiment, not kept) gave 82,000 empty runs a second, 0.59 of a core, and 14.59 flips/s.
+  - Its empty runs read last its list line, the entry, and 16 bytes at `0x009B5040`.
+  - `PPU_WWATCH`: only the main thread writes `0x009B504C`, and the SPUs only read it.
+    - `0x0041CFBC` and `0x003A1C30` (called from `0x003A2234`) clear it.
+    - `0x003E13E0` (from `0x003E1480`) sets it to `0x00010D08`.
+  - Over the 179 gaps a MeshProc run ends (12 s), the main thread runs its own code for 62% of
+    the gap. In 158 of them, the 0.5 ms before the MeshProc run is its own code too.
+  - So the main thread's own work decides when each EDGE episode can start, and that is why
+    EDGE bounds the frame while it idles 15% of the time.
+- **The main thread's own work.** At HEAD, its own work is ~38% of its samples:
+
+  | | share of the main thread's samples |
+  |---|---|
+  | lifted PPU code | 23.9% |
+  | the VMX float helpers (`vmaddfp` 5.5%) | 6.7% |
+  | coherency notifies of its stores | 2.9% |
+  | indirect calls | 2.3% |
+
+  - **Done, fork `b5a91584`:** `vaddfp`, `vsubfp`, `vmaddfp` and `vnmsubfp` as vector code on
+    FMA3 hosts. Bit-exact against the scalar forms: 12M random ops, both NJ settings, GCC and
+    Clang. 41,506 `vmaddfp` call sites in the lift.
+  - Level, ABBA, two runs each: 15.68 -> 16.14 flips/s (every window's median), both new runs
+    above both old.
+- Next: the rest of the main thread's own work (its lifted code), then the EDGE stages.
 
 ## 3. The budget for 33 ms
 
