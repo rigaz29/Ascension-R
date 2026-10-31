@@ -20,6 +20,10 @@ native and GPU replacements of the hottest SPU jobs:
 [performance plan](notes/2026-10-29-performance-plan.md). It replaces the performance map's
 order of work.
 
+**2026-10-31: the port at 16.3 flips/s, RPCS3 at 24.0 FPS**, measured the same afternoon in the
+same fight and the same windows (RPCS3 with the user's settings, its "Disable MLAA" patch on as
+it was on 2026-10-29). The port is at 68% of RPCS3's speed, from 54%: plan section 1.
+
 | Lever | Done | Menu | Level | Note |
 |---|---|---|---|---|
 | The PPU's `lvlx`/`lvrx`/`lvsl`/`lvsr`/`vperm` as SSSE3 code instead of byte loops; its word compares, `vmaxfp`/`vminfp`, estimates, roundings, `vcfsx` and `vctsxs` as vector code (fork `a015ff00`) | 2026-10-31 | not measured | 16.57 median (16.42 before; ABBA, two runs each, within the spread) | The main thread's own work 11.58 -> 10.73 ms a frame (-7.3%; `GOWA_MAIN_SLOW=1`, the same 18.4K indirect calls a frame either way). 27,023 lifted sites; the executable 123 -> 112 MB; every vector form equals its scalar form in 55.5M operations ([audit](notes/2026-10-31-technique-audit.md), F1) |

@@ -27,6 +27,24 @@ changes what the game shows is an option, never a silent default.
 - **Now:** a frame takes 80.5 ms (median), 12.3 flips/s.
   - RPCS3's speed in the same scene means ~23 flips/s: 1.9 times faster, a 43 ms frame.
   - 30 flips/s means 33 ms, 2.4 times faster. On this laptop that is beyond RPCS3.
+- **Measured again 2026-10-31**, both the same afternoon, on the charger, at 1280x720, one test
+  at a time. RPCS3 is the same build (0.0.43-20415) with the same settings; the port is at
+  fork `8dcd4671`, port `5ce3649`.
+  - RPCS3: New Game, Normal, in the measurement profile of 2026-10-29. The fight started 132 s
+    after Normal.
+    - From 20 to 145 s into the fight (the port bench's windows): **24.0 FPS median** (10 s
+      windows 22.8-25.2).
+    - From 5 to 165 s (step 0.3's span): 23.9, against 22.9 on 2026-10-29.
+    - 7.41 logical CPUs: the six SPU threads at 96-98% each, `rsx::thread` 87%, the PPU main
+      thread 50%. GPU 3D 15-19%, at P0 / 1,050 MHz.
+  - The port: `gowa.py bench`, two runs: 16.06 and 16.47, **16.27 median** over both runs' 10 s
+    windows. 6.96 logical CPUs. GPU 3D 27%, at P5 / 465 MHz.
+  - **The port is at 68% of RPCS3's speed** (a 61.5 ms frame against 41.7), up from 54% on
+    2026-10-29. RPCS3 is 1.47 times faster.
+  - **The same settings, with one difference.** The user's RPCS3 patch config has "Disable MLAA"
+    on for this title. The file dates from 2026-10-28 22:43 UTC, so the patch was on for
+    2026-10-29's 22.9 as well. The port runs the title's MLAA tasks; their work is wasted
+    (section 2.6), and plan 1.6 takes it out.
 
 ## 2. Where a frame goes now
 
