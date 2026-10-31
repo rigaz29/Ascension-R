@@ -260,8 +260,9 @@ SPUs:
 # Route: Start + Cross through the intro, Cross on Profile 1, left stick up twice (W),
 # Cross on New Game, Cross, Cross, Cross on Normal; the fight starts ~132 s later.
 py scripts/guestscope.py capture --proc rpcs3.exe --at <Normal + 152> --seconds 90 --out rp.json
-# the port: `gowa.py bench` in the background, then
-py scripts/guestscope.py capture --proc GowARecomp.exe --at 220 --seconds 90 --out port.json
+# the port: `gowa.py bench` in the background, then (its level windows begin ~120 s after the
+# process starts since the menu route, 2026-10-31; 220 before)
+py scripts/guestscope.py capture --proc GowARecomp.exe --at 125 --seconds 60 --out port.json
 py scripts/guestscope.py report rp.json:<fps> port.json:<fps>
 py scripts/guestscope.py jobs rp.json:<fps> port.json:<fps>
 py scripts/guestscope.py edge rp.json port.json

@@ -2,14 +2,35 @@
 
     gowa.py bench                                   # build/GowARecomp.exe, one run
     gowa.py bench --runs 2 --variant "a|build/ab_a.exe|" --variant "b|build/ab_b.exe|RSX_ZPASS=0"
-    gowa.py bench --baseline logs/bench-<stamp>/result.json --shots 150,250,350 --gpu 250
+    gowa.py bench --baseline logs/bench-<stamp>/result.json --shots 75,140 --gpu 100
 
-A run starts the executable with PAD_FILE input and drives the route the
-notes use: Square every 5 s from 15 s until the opening movie's video decoder
-closes, then Cross at 45, 80, 105 and 130 s after that (main menu, profile,
-New Game, difficulty); the first level loads ~165 s after the movie. Flips/s
-come from GOWA_THREADS' 10 s windows from --from (default 175) to --until
-(default 300) seconds after the movie.
+A run starts the executable with PAD_FILE input: Square every 5 s from 15 s
+until the opening movie's video decoder closes, then Cross on the main menu
+(Single Player), the profiles (Profile 1) and Profile 1's menu, whose cursor
+rests on Continue Game: its checkpoint loads R_MEGAERA03, the opening
+cinematic runs to ~45 s after the choice, and the Megaera fight follows.
+The menu answers at once (screenshots every 4 s: the main menu is up 2 s
+after the movie), so the three presses come 6 s apart from 6 s after it, and
+the choice is confirmed by the thread it starts
+(SaveDataUtil::LoadFileSaveProfile): a press the menu missed is made again,
+6 s later, up to three times. Every later time counts from that thread's
+start (the load): a Cross 24 s after it, as the old route's fourth press
+fell in the cinematic, and flips/s from GOWA_THREADS' 10 s windows from
+--from (default 69) to --until (default --from + 80) seconds after it. That
+is the scene the old fixed route measured (Cross at 45, 80, 105 and 130 s
+after the movie, windows from 175 s), ~85 s sooner: a run takes 3:20 instead
+of ~5:40. The level windows begin ~120 s after the process starts (for
+guestscope.py capture --at). --route T1,T2,... presses
+at fixed times after the movie instead, and counts from the movie.
+
+Why 80 s of level: between two runs of one executable the medians differ by
+~1.3% (median of 123 pairs since 2026-10-30), and that comes from the runs,
+not from how many windows each has: 8 windows give the same spread as 12
+(1v1 1.12% against 1.29%, 2v2 0.92% against 0.95%).
+
+--early-stop: an A/B's first round (a, b) already decides when the two differ
+by at least that much (default 6%: 3 of the 123 same-executable pairs did,
+none by 7%), and the rest of the rounds are skipped.
 
 A run that never reaches the level (fewer than 3 windows, or a median of 30
 flips/s or more: stuck on a menu or loading screen) or freezes in it (median
@@ -37,7 +58,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build")
 
 CROSS, SQUARE = 0x4000, 0x8000
-ROUTE = (45, 80, 105, 130)          # Cross presses, seconds after the movie closed
+MENU = (6, 12, 18)                  # Cross: Single Player, Profile 1, Continue Game (s after the movie)
+LOADING = b"SaveDataUtil::LoadFileSaveProfile"   # the thread Continue Game starts
+CINEMATIC_PRESS = 24                # s after the load: the old route's fourth Cross
 WM_CLOSE, WM_KEYDOWN, VK_F12 = 0x0010, 0x0100, 0x7B
 
 
@@ -47,13 +70,23 @@ def add_args(p):
                         '"base|build/GowARecomp.exe|"); repeat for an A/B')
     p.add_argument("--runs", type=int, default=1, help="runs per variant, alternated (default 1)")
     p.add_argument("--env", action="append", default=[], help="K=V for every variant")
-    p.add_argument("--from", dest="win_from", type=int, default=175,
-                   help="first window, seconds after the movie (default 175)")
-    p.add_argument("--until", type=int, default=300,
-                   help="stop this many seconds after the movie (default 300)")
-    p.add_argument("--shots", default="", help="screenshots at these seconds after the movie, e.g. 150,250")
+    p.add_argument("--route", default=None,
+                   help="Cross at these seconds after the movie (e.g. the old 45,80,105,130), "
+                        "counting every later time from the movie; default: the menu route, "
+                        "counting from the level load")
+    p.add_argument("--from", dest="win_from", type=int, default=None,
+                   help="first window, seconds after the load (default 69), or after the movie "
+                        "with --route (default the last press + 45)")
+    p.add_argument("--until", type=int, default=None,
+                   help="stop this many seconds after the load or the movie (default --from + 80)")
+    p.add_argument("--early-stop", type=float, default=6.0,
+                   help="with two variants, stop after the first round when they differ by at "
+                        "least this many percent (default 6; 0 runs every round)")
+    p.add_argument("--shots", default="",
+                   help="screenshots at these seconds after the load (or the movie with --route), e.g. 75,140")
     p.add_argument("--gpu", type=int, default=0,
-                   help="sample the GPU engine counters for 20 s from this many seconds after the movie")
+                   help="sample the GPU engine counters for 20 s from this many seconds after the load "
+                        "(or the movie with --route)")
     p.add_argument("--baseline", help="a result.json to compare the first variant with")
     p.add_argument("--out", help="output folder (default logs/bench-<stamp>)")
     p.add_argument("--no-retry", action="store_true", help="do not run a failed run again")
@@ -226,14 +259,45 @@ def run_once(exe, env_extra, a, out, tag):
         stop(p)
         return rec
     rec["movie_closed_s"] = round(mc, 1)
-    plan = [(mc + s, "press") for s in ROUTE]
-    plan += [(mc + int(s), "shot %s" % s) for s in a.shots.split(",") if s.strip()]
+    if a.route_s is None:
+        # The menu route: Cross until Continue Game starts loading the level.
+        loading = seen(log_err, LOADING)
+        presses, extra, last, anchor = list(MENU), 0, t(), None
+        while p.poll() is None:
+            if loading():
+                anchor = t()
+                break
+            if presses and t() >= mc + presses[0]:
+                presses.pop(0)
+                press(CROSS)
+                last = t()
+            elif not presses and t() - last >= 6:
+                if extra == 3:
+                    break
+                press(CROSS)
+                extra += 1
+                last = t()
+            time.sleep(0.25)
+        if anchor is None:
+            rec["failed"] = "the menu route did not reach Continue Game" if p.poll() is None \
+                else "exited at %.0f s" % t()
+            stop(p)
+            return rec
+        rec["load_s"] = round(anchor, 1)
+        rec["menu_presses"] = len(MENU) + extra
+        plan = [(anchor + CINEMATIC_PRESS, "press")]
+        level_from = anchor + 20
+    else:
+        anchor = mc
+        plan = [(mc + s, "press") for s in a.route_s]
+        level_from = mc + a.route_s[-1] + 20
+    plan += [(anchor + int(s), "shot %s" % s) for s in a.shots.split(",") if s.strip()]
     if a.gpu:
-        plan.append((mc + a.gpu, "gpu"))
+        plan.append((anchor + a.gpu, "gpu"))
     plan.sort()
     gpu, gpu_thread, peak_priv, least_free, frozen = {}, None, 0, 1 << 30, False
     last_mem = 0.0
-    while p.poll() is None and t() < mc + a.until:
+    while p.poll() is None and t() < anchor + a.until:
         while plan and t() >= plan[0][0]:
             _, what = plan.pop(0)
             if what == "press":
@@ -249,7 +313,7 @@ def run_once(exe, env_extra, a, out, tag):
             least_free = min(least_free, free_ram_mb())
             # Frozen in the level: no flips for a minute.
             w = windows(log_err)
-            late = [f for (s, f) in w if s >= mc + 150]
+            late = [f for (s, f) in w if s >= level_from]
             if len(late) >= 6 and max(late[-6:]) < 0.5:
                 frozen = True
                 break
@@ -258,20 +322,35 @@ def run_once(exe, env_extra, a, out, tag):
     stop(p)
     if gpu_thread:
         gpu_thread.join(timeout=90)
-    w = [(round(s - mc), f) for (s, f) in windows(log_err) if s >= mc + a.win_from]
+    w = [(round(s - anchor), f) for (s, f) in windows(log_err) if s >= anchor + a.win_from]
     vals = sorted(f for _, f in w)
     rec.update({"windows": w, "peak_private_mb": peak_priv, "least_free_mb": least_free,
-                "threads": thread_table(log_err, mc + a.win_from), "gpu": gpu})
+                "threads": thread_table(log_err, anchor + a.win_from), "gpu": gpu})
     if vals:
         rec.update({"median": round(statistics.median(vals), 2), "mean": round(statistics.mean(vals), 2),
                     "min": vals[0], "max": vals[-1]})
     if frozen:
         rec["failed"] = "frozen: no flips for a minute"
-    elif exited and t() < mc + a.until:
+    elif exited and t() < anchor + a.until:
         rec["failed"] = "exited at %.0f s" % t()
     elif len(vals) < 3 or not 3 < statistics.median(vals) < 30:
         rec["failed"] = "never reached the level" if len(vals) < 3 or statistics.median(vals) >= 30 else "frozen"
     return rec
+
+
+def seen(path, pat):
+    """A test for pat in the file at path, reading only what was added since the last call."""
+    state = {"pos": 0, "tail": b""}
+
+    def test():
+        with open(path, "rb") as f:
+            f.seek(state["pos"])
+            new = f.read()
+        state["pos"] += len(new)
+        hit = pat in state["tail"] + new
+        state["tail"] = (state["tail"] + new)[-len(pat):]
+        return hit
+    return test
 
 
 def stop(p):
@@ -365,6 +444,11 @@ def line(rec):
 
 
 def main(a):
+    a.route_s = [float(x) for x in a.route.split(",") if x.strip()] if a.route else None
+    if a.win_from is None:
+        a.win_from = int(a.route_s[-1] + 45) if a.route_s else 69
+    if a.until is None:
+        a.until = a.win_from + 80
     variants = [parse_variant(v) for v in (a.variant or ["base||"])]
     common = dict(kv.split("=", 1) for kv in a.env if "=" in kv)
     for name, exe, _ in variants:
@@ -376,6 +460,7 @@ def main(a):
     os.makedirs(out, exist_ok=True)
     result = {"started": datetime.datetime.now().isoformat(timespec="seconds"),
               "port": git_head(ROOT), "runtime": git_head(os.path.join(ROOT, "ps3recomp")),
+              "route": a.route or "menu", "anchor": "movie" if a.route else "load",
               "from": a.win_from, "until": a.until, "runs": []}
     for name, exe, env in variants:
         result.setdefault("exes", {})[name] = {"path": os.path.relpath(exe, ROOT), "sha256": sha12(exe)}
@@ -394,6 +479,17 @@ def main(a):
                 with open(os.path.join(out, "result.json"), "w") as f:
                     json.dump(result, f, indent=1)
                 if not rec.get("failed"):
+                    break
+        if i == 0 and a.runs > 1 and len(variants) == 2 and a.early_stop > 0:
+            first = [next((r for r in result["runs"] if r["variant"] == n and not r.get("failed")), None)
+                     for n, _, _ in variants]
+            if all(first):
+                m0, m1 = first[0]["median"], first[1]["median"]
+                d = 100.0 * (m1 - m0) / ((m0 + m1) / 2)
+                if abs(d) >= a.early_stop:
+                    print("== the first round differs by %+.1f%% (--early-stop %g): no more rounds"
+                          % (d, a.early_stop), flush=True)
+                    result["early_stop"] = round(d, 2)
                     break
     print("== by variant (medians of all windows of the good runs)")
     summary = {}

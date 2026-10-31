@@ -608,6 +608,22 @@ runs lifted.
     (`--shots`), all in `logs/bench-<stamp>/result.json`.
   - First baseline (`logs/bench-base`): 11.77 flips/s median (12 windows, 10.5-12.2), GPU 3D
     27% at 765 MHz.
+  - **Faster, 2026-10-31.** A run takes 3:20 instead of ~5:40, an A/B that is clear after one
+    round stops there.
+    - The route was not what the notes said: the third Cross picks Continue Game (Profile 1's
+      cursor rests there), whose checkpoint loads R_MEGAERA03; the fourth falls in the opening
+      cinematic. Screenshots every 4 s showed the menus answer at once, and the bench waited
+      25-35 s at each.
+    - Now Cross 6, 12 and 18 s after the movie, the choice confirmed by the thread it starts
+      (`SaveDataUtil::LoadFileSaveProfile`, a missed press made again), and every later time
+      counted from that load: windows from 69 to 149 s after it, the same Dodge scene as 175 s
+      after the movie before (one run: 18.89, against 18.39-18.82 on the old route).
+    - 80 s of windows instead of 125: over 123 same-executable pairs since 2026-10-30 the
+      spread comes from the runs, not the windows (one run a side 1.12% median difference
+      against 1.29% with 12 windows; two a side 0.92% against 0.95%).
+    - `--early-stop 6` (default): an A/B's first round decides when the two differ by 6% or
+      more (3 of the 123 pairs did, none by 7%).
+    - `--route 45,80,105,130` runs the old fixed route, counting from the movie.
 - **0.2 SPU job replay. Done 2026-10-29** (fork `runtime/spu/spu_jobcap.c`; ref A built the
   same for its EDGE work, we took the idea, not the code).
   - Only in a build with `gowa.py build --jobcap` (`PORT_SPU_JOBCAP`).
