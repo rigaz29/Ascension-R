@@ -455,10 +455,29 @@ before General6 ended.
     52.0-52.1 with both. The outputs are identical.
   - Level: 1.79M calls, 56.6M native iterations. ABBA, two runs each: 16.04 (both off) -> 16.26
     flips/s (both on), both on-runs above both off-runs.
-- Next: the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
+- Next (after 2.9's first steps): the other EDGE stages by their share of a job. These are `304A0` (5.6%), `A950` (5.1%),
   `7BB4` (5.1%), `30600` (4.3%) and `D92C` + `D4DC` (5.8%); `A950`, `D92C` and `BD54` fail the
   range check in most calls, so their native forms need a per-lane path, not a fallback per
   iteration.
+
+### 2.9 Update, 2026-10-31: the optimization checklist against the code
+
+[The audit](2026-10-31-technique-audit.md) checks a list of the usual PS3 recompilation
+techniques (PPU, SPU, LV2, RSX, static-only, Zen 2) against the code: what is done, what is
+not, and what is worth trying. Its new findings, and the order they go in:
+
+1. **PPU vector loads and VMX, phase 2.** `lvlx` (13,610 sites), `vperm` (12,711) and `lvrx`
+   lift to byte loops that clang unrolls to 85-119 instructions without `pshufb`. The
+   remaining VMX helpers (`vcfsx`, the float compares, `vrefp`/`vrsqrtefp`, ...) run lane by
+   lane. The previous VMX step gave +2.9%.
+2. **Probe the frame clock thread** (`RSX_SLOW`). It is 60.5% of a core at 16.3 flips/s, and
+   `rf_open` still drains the GPU at every batch: CPU plus wait is about the whole frame.
+   If it sets the frame, 1.4 and 1.5 come next.
+3. **`__restrict` on the lifted context**, SPU first on the replay. Guest registers are
+   reloaded from `ctx` after every guest store. The PPU needs `ppu_stwcx32`/`ppu_stdcx64` to
+   take `ctx` first.
+4. **`-march=x86-64-v3 -mtune=znver2`** for the lifted code. The PPU code has FMA/AVX only.
+5. The EDGE stages and the module-compare skip (2.8), then the PPU indirect-call short path.
 
 ## 3. The budget for 33 ms
 
