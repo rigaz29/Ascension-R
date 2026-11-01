@@ -26,6 +26,10 @@ extern "C" const char* ps3_pad_key_name(int vk);   /* libs/input/cellPad.c */
 
 extern "C" void gowa_port_defaults(void);
 extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
+/* patches.cpp: the title patches this build has (scripts/title_patches.json). */
+extern "C" int  gowa_title_patch_count(void);
+extern "C" const char* gowa_title_patch_id(int i);
+extern "C" const char* gowa_title_patch_name(int i);
 
 /* ---------------------------------------------------------------------------
  * What the window offers
@@ -99,6 +103,25 @@ static Opt s_opt[] = {
 #undef LIST
 enum { N_OPT = sizeof s_opt / sizeof s_opt[0] };
 
+/* The Game patches group: a checkbox per patch, [patches] <id> = on/off, all
+ * off by default. Built from the patches the build has, so a patch added to
+ * scripts/title_patches.json shows up here with the next lift. */
+enum { MAX_POPT = 32 };
+static Opt s_popt[MAX_POPT];
+static int s_npopt;
+
+static void popt_init(void)
+{
+    s_npopt = 0;
+    const int n = gowa_title_patch_count();
+    for (int i = 0; i < n && s_npopt < MAX_POPT; i++) {
+        Opt& o = s_popt[s_npopt++];
+        o = Opt();
+        o.group = 4; o.section = "patches"; o.key = gowa_title_patch_id(i); o.def = "off";
+        o.label = gowa_title_patch_name(i); o.check = 1; o.values = k_onoff; o.n = 2;
+    }
+}
+
 /* The keyboard: [keyboard] keys, their labels, this port's layout. */
 static const char* const k_kb[][3] = {
     { "up", "D-pad up", "1" },             { "lstick_up", "Left stick up", "W" },
@@ -165,7 +188,12 @@ static int opt_index(const Opt& o, const char* v)
 static void opt_show(Opt& o, const char* v)
 {
     if (o.check) {
-        SendMessageA(o.ctl, BM_SETCHECK, ps3_settings_ieq(v, o.values[1]) ? BST_CHECKED : BST_UNCHECKED, 0);
+        /* An on/off box takes what ps3_settings_bool takes for on, so that a
+         * "1" written by hand is not shown off and then saved so. */
+        const int on = ps3_settings_ieq(v, o.values[1]) ||
+                       (o.values == k_onoff && (ps3_settings_ieq(v, "1") || ps3_settings_ieq(v, "true") ||
+                                                ps3_settings_ieq(v, "yes")));
+        SendMessageA(o.ctl, BM_SETCHECK, on ? BST_CHECKED : BST_UNCHECKED, 0);
         return;
     }
     int i = opt_index(o, v);
@@ -191,6 +219,7 @@ static const char* opt_value(const Opt& o)
 static int save_all(void)
 {
     for (int i = 0; i < N_OPT; i++) ps3_settings_set(s_opt[i].section, s_opt[i].key, opt_value(s_opt[i]));
+    for (int i = 0; i < s_npopt; i++) ps3_settings_set(s_popt[i].section, s_popt[i].key, opt_value(s_popt[i]));
     if (ps3_settings_save(NULL) != 0) {
         char m[1200];
         snprintf(m, sizeof m, "Could not write %s.", ps3_settings_path());
@@ -335,6 +364,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         case ID_SAVES:    open_saves(); return 0;
         case ID_DEFAULTS:
             for (int i = 0; i < N_OPT; i++) opt_show(s_opt[i], s_opt[i].def);
+            for (int i = 0; i < s_npopt; i++) opt_show(s_popt[i], s_popt[i].def);
             return 0;
         }
         break;
@@ -372,7 +402,9 @@ extern "C" int gowa_launcher(void)
     wc.lpszClassName = "gowa_keys";
     RegisterClassExA(&wc);
 
-    RECT r = { 0, 0, S(660), S(420) };
+    popt_init();
+    const int prows = (s_npopt + 1) / 2, pgh = s_npopt ? 26 + prows * 30 : 0;
+    RECT r = { 0, 0, S(660), S(420 + (pgh ? pgh + 8 : 0)) };
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     s_main = CreateWindowExA(WS_EX_CONTROLPARENT, "gowa_launcher", "God of War: Ascension (GowARecomp)",
                              WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
@@ -406,7 +438,18 @@ extern "C" int gowa_launcher(void)
         if (g == 2) add(s_main, "BUTTON", "Keyboard keys...", WS_TABSTOP | BS_PUSHBUTTON, x + 12, y, 160, 26, ID_KEYS);
         y_next[col] = y0 + gh + 8;
     }
-    const int yb = y_next[0] > y_next[1] ? y_next[0] : y_next[1];
+    int yb = y_next[0] > y_next[1] ? y_next[0] : y_next[1];
+    /* Game patches, under both columns, two checkboxes a row. */
+    if (s_npopt) {
+        add(s_main, "BUTTON", "Game patches (off: as the game was made)", BS_GROUPBOX, 12, yb, 636, pgh, -1);
+        for (int i = 0; i < s_npopt; i++) {
+            Opt& o = s_popt[i];
+            o.ctl = add(s_main, "BUTTON", o.label, WS_TABSTOP | BS_AUTOCHECKBOX,
+                        24 + (i % 2) * 318, yb + 22 + (i / 2) * 30, 300, 24, -1);
+            opt_show(o, ps3_settings_str(o.section, o.key, NULL, o.def));
+        }
+        yb += pgh + 8;
+    }
     char where[1200];
     snprintf(where, sizeof where, "Settings: %s", ps3_settings_path());
     add(s_main, "STATIC", where, SS_PATHELLIPSIS, 12, yb, 636, 20, -1);

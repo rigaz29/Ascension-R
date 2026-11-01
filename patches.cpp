@@ -37,7 +37,8 @@ struct gowa_title_patch {
     const char* id;         /* the [patches] key; NULL ends the table */
     const char* name;
     int* guard;
-    int ppu_edits;
+    int ppu_edits;          /* instructions lifted both ways: PPU ones, */
+    int spu_edits;          /* and SPU ones in job modules */
 };
 
 #define GOWA_TITLE_GUARD(g) extern "C" { int g = 0; }
@@ -47,7 +48,7 @@ struct gowa_title_patch {
 /* recompiled/ from a lift older than this file: no patches. `gowa.py lift`
  * writes the header. */
 static const gowa_title_data k_title_data[] = { { -1, 0, 0, { 0 }, { 0 } } };
-static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0 } };
+static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0, 0 } };
 #endif
 
 extern "C" void gowa_title_patches_apply(void)
@@ -79,7 +80,18 @@ extern "C" void gowa_title_patches_apply(void)
             for (uint32_t i = 0; d->patch == self && i < d->n; i++, bytes++)
                 vm_write8(d->addr + i, d->val[i]);
         *p->guard = 1;
-        fprintf(stderr, "[patches] %s: on (%d instruction edit%s, %u data byte%s)\n", p->name,
-                p->ppu_edits, p->ppu_edits == 1 ? "" : "s", bytes, bytes == 1 ? "" : "s");
+        fprintf(stderr, "[patches] %s: on (%d PPU and %d SPU instruction edit%s, %u data byte%s)\n",
+                p->name, p->ppu_edits, p->spu_edits, p->ppu_edits + p->spu_edits == 1 ? "" : "s",
+                bytes, bytes == 1 ? "" : "s");
     }
 }
+
+/* For the launcher: the patches this build has, in the catalog's order. */
+extern "C" int gowa_title_patch_count(void)
+{
+    int n = 0;
+    while (k_title_patches[n].id) n++;
+    return n;
+}
+extern "C" const char* gowa_title_patch_id(int i)   { return k_title_patches[i].id; }
+extern "C" const char* gowa_title_patch_name(int i) { return k_title_patches[i].name; }

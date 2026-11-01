@@ -781,6 +781,21 @@ new runs above both old ones (20.82 / 20.49 against 20.01 / 19.98). That is ~86%
   the shufb hoist.
 - The next stages by share as native code: `7BB4`, `30600` (a piece, its hook ready), `D92C`.
 
+### 2.13 Update, 2026-11-01: one shader per fragment program, built from the program as drawn
+
+Found switching MLAA off ([note](2026-11-01-title-patches.md), section 5): every run compiled
+hundreds of fragment shaders the cache had never seen and skipped ~80,000 draws while they built.
+
+- A buffered program had its units' sRGB decode compiled in, and which units are cubes, so it
+  became a shader for each combination of its bindings. Now the decode is chosen when it runs
+  (`_rsx_gamma_dyn`, the lanes in `fp_tcscale[u].z`), every unit takes its coordinate scale from
+  b1, and the key leaves both out: MLAA on, 1624 -> 305 pipelines a run.
+- The pipelines of a batch are looked up at its end, and with MLAA off the title had by then
+  written over 0.2% of the programs (bursts of ~2,000). Now each draw keeps its program as
+  recorded (`fp_snapshot`). MLAA off: 0 shaders compiled from its second run, 2082 -> 372
+  pipelines, ~80,000 -> 5 draws skipped.
+- Level, ABBA, two runs each: MLAA on 20.03 -> 20.20 flips/s (within the spread); MLAA off 21.94 -> 22.33, without the compile dips (lowest window 18.9 -> 21.6). With MLAA off the frame clock thread (77-79% of a core) now presents ~0.8 a second fewer frames than the title flips: the next limit there.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -1170,13 +1185,15 @@ Each item is small and is measured on its own.
   ([note](2026-11-01-title-patches.md)): `scripts/title_patches.json`, each instruction edit
   lifted both ways behind a guard, `[patches]` in gowa.ini (or `--set`, or `GOWA_PATCH_<ID>=1`).
   - Disable MLAA: 20.61 -> 21.63 flips/s (+5.0%, ABBA). The title stops its MLAA work; its
-    tasks wait unsignalled. Until the backend's per-binding program variants go (note, 4), it
-    makes the shader cache compile new variants for some runs;
+    tasks wait unsignalled. It no longer makes the backend compile (2.13);
   - Depth of Field, Motion Blur: one run each, 20.76 and 22.16 against 20.33;
-  - left: Mesh Trimming (SPU edits in two EDGE modules: an SPU counterpart of
-    `--insn-patches`), later the 60 FPS patch.
+  - Mesh Trimming: SPU edits in the EDGE modules (`spu_lifter --insn-patches`); more geometry,
+    19.88 against 20.54. For drawing above 720p, not for speed;
+  - the launcher's Game patches group, a checkbox for each patch the build has;
+  - left: the 60 FPS patch.
 - **4.4 Hitches:** first-play pipeline and texture stalls, and pipeline cache warm-up from the
-  disk cache.
+  disk cache. Fewer since 2.13: a program is one shader whatever is bound (MLAA on, 305
+  pipelines a run instead of 1624), and a draw's pipeline is built from the program it drew.
 
 ## 6. What the phases should add up to
 

@@ -1,5 +1,5 @@
 {
- "note": "Switchable patches of GOWA.SELF 1.12. Each is off unless switched on: [patches] <id> = on in gowa.ini, --set patches.<id>=on, or GOWA_PATCH_<ID>=1. `gowa.py lift` lifts every ppu edit in both forms behind the patch's guard (ppu_lifter --insn-patches) and writes recompiled/gowa_title_patches.h; patches.cpp writes the data edits and sets the guard once the ELF is in guest memory, before the title runs. Every orig is checked against the ELF at the lift, and the data again in guest memory: a patch for another build of the title is refused. The sites were found with RPCS3's patch list for this build as a map, and each one read back from this ELF (docs/notes/2026-11-01-title-patches.md). `gowa.py patches` lists them and checks them against the ELF.",
+ "note": "Switchable patches of GOWA.SELF 1.12 (ppu, data and spu edits). Each is off unless switched on: [patches] <id> = on in gowa.ini, --set patches.<id>=on, or GOWA_PATCH_<ID>=1. `gowa.py lift` lifts every ppu edit in both forms behind the patch's guard (ppu_lifter --insn-patches), every spu edit the same way in its job module (spu_lifter --insn-patches), and writes recompiled/gowa_title_patches.h; patches.cpp writes the data edits and sets the guard once the ELF is in guest memory, before the title runs. Every orig is checked against the ELF at the lift, and the data again in guest memory: a patch for another build of the title is refused. The sites were found with RPCS3's patch list for this build as a map, and each one read back from this ELF (docs/notes/2026-11-01-title-patches.md). `gowa.py patches` lists them and checks them against the ELF.",
  "patches": [
   {
    "id": "disable_mlaa",
@@ -35,6 +35,19 @@
    "ppu": [
     {"addr": "0x0043F210", "orig": "0x80BF0020", "new": "0x38A00000",
      "note": "func_0043F0D0: lwz r5,0x20(r31) -> li r5,0"}
+   ]
+  },
+  {
+   "id": "disable_mesh_trimming",
+   "name": "Disable Mesh Trimming",
+   "guard": "g_gowa_patch_disable_mesh_trimming",
+   "note": "In EDGE's SPU geometry code, the same instruction of both EDGE job modules. RPCS3's note: it lets the title draw correctly above the PS3's resolutions, and keeps the signed-area, back-face and later culling stages. For drawing above 720p, not for speed: it can only add geometry. The modules' bytes in guest memory stay as they are; the lifted code takes the replacement (an SPU interpreted there would not).",
+   "spu": [
+    {"module": "jobmod_e8f44fbc6dbf_e6D98", "ls": "0x0000DAF4", "orig": "0x18264284", "new": "0x40800004",
+     "note": "and $4,$5,$25 -> il $4,0"},
+    {"module": "jobmod_9b03908f93a9_e77C8", "ls": "0x0000E524", "orig": "0x18264284", "new": "0x40800004",
+     "optional": true,
+     "note": "the same in the other EDGE module, a second build of it the level does not run. Its lift ends at 0xB90C (no entry found reaches the function, 0xE35C, the same code as the first module's 0xD92C), so this is applied once that code is lifted (gowa.py jobmods-entries); until then the lift reports it"}
    ]
   }
  ]
