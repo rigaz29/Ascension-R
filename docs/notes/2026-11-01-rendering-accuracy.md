@@ -138,7 +138,7 @@ Same menu, regions of the still parts (luma):
   full-width band of random coloured pixels across the middle of the picture, with patterns like
   raw memory shown as an image; the window then reports 20 draws. The same frames in a run with
   the queries as they are: so not the queries' doing. A texture or target is shown before it
-  has contents, and what was in its memory is drawn (P7).
+  has contents, and what was in its memory is drawn (P7: fixed, section 8).
 - The same recordings, 105 s each from the start: frames with dropped objects 415 with the
   queries as they are, 1 (the loading screen's own black frame) with every query answered
   visible.
@@ -221,7 +221,7 @@ In order of value for effort. Each step is verified with the same captures and n
   Replaces special cases (blit snapshots, screen copies) with one rule. Larger; after P1-P5 show
   what is still wrong.
 
-**P7. The band at the loading screen's end (2.5).**
+**P7. The band at the loading screen's end (2.5). Done: section 8.**
 - Capture that moment (`RSX_CAP_SHOT=1` / `RSX_CAP=t<s>` at the transition) and find which
   texture or target the band comes from; then why it is shown before it is drawn or cleared
   (a target sampled before its first draw read from guest memory, or a video frame shown
@@ -362,3 +362,24 @@ first part's count carried into the next batch.
 
 The level benches of sections 5 and 6 ran with the build's settings file, which has the title
 patch Disable MLAA on (the same for every variant of each bench).
+
+## 8. P7 done (2026-11-02): a new render target starts empty
+
+- When: right after the studio logo, the first ~33 frames of the loading screen (presents
+  1352-1385 of a menu run, 10-25 draws each; the movie's `cellVdec` only opens after present
+  1475). Captured by frame number (`RSX_CAP=1348:14:3`).
+- What those frames draw: the clears of the frame (the shadow mask, then depth and stencil with
+  0x011B0000 and 0x00E10000 as colour targets) and one full-screen pass that composites the
+  scene target 0x00E10000 into the display buffer. No scene is drawn into 0x00E10000 yet, so
+  the pass shows what that target holds.
+- The backend had just made that target, and fills every new target with what guest memory
+  holds at its offset (for a sample that CPU-initialises its targets): at 0xE10000, rows 281-487
+  held ~1 MB of old data, the band.
+- RPCS3's reference setup for the title has Read Color Buffers off: a new target starts empty
+  there. Fix (fork `RSX_RT_READ`, port default 0): the same here; the committed resource starts
+  zeroed and its state handling is unchanged.
+- Measured: the band frames captured again are black (0 non-black pixels of 57,600 samples in
+  each); a 75 s screen recording from the start has no flash frame (its 7 dark frames are the
+  "Sony Computer Entertainment presents" fade and the menu's fade-in, as before). Cinematic and
+  level screenshots unchanged by eye; level 21.27 against 21.04 flips/s with the old fill (one
+  run each).

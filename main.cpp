@@ -1110,6 +1110,12 @@ static void title_environment(void)
      * its post chain into a third within one frame, and with a single
      * backbuffer each overwrote the frame on screen. */
     env_default("RSX_DISPLAY_RT", "1");
+    /* A new render target starts empty rather than with what guest memory
+     * holds there, as RPCS3's reference setup for the title has it (Read
+     * Color Buffers off): the first loading frames composite the scene target
+     * before any scene is drawn into it, and ~1 MB of old data in that memory
+     * showed as a band of noise. */
+    env_default("RSX_RT_READ", "0");
     /* SPU single precision on the host's own float ops: SPU code runs with
      * MXCSR at round toward zero with FTZ and DAZ, which is how the SPU
      * rounds, so fa/fm/fma need no exact emulation (bit-identical results,
