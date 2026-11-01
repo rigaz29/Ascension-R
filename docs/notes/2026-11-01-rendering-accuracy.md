@@ -180,7 +180,7 @@ In order of value for effort. Each step is verified with the same captures and n
 - Measure what culling saves: level frame rate with `RSX_ZPASS=0` against the fix.
 - Verify: 0 of 30 menu screenshots with dropped objects, with culling on.
 
-**P2. The dark picture: prove the exposure path first (2.4).**
+**P2. The dark picture: prove the exposure path first (2.4). In progress: section 9.**
 - Experiment: after each frame, write the 1x1 luminance target back to its guest address
   (a copy to a readback buffer, read one frame later: no stall). If the menu's luma moves toward
   RPCS3's (75.5 overall, 32 in the shadowed cloth), the reader is the PPU, and P5 generalises it.
@@ -383,3 +383,40 @@ patch Disable MLAA on (the same for every variant of each bench).
   "Sony Computer Entertainment presents" fade and the menu's fade-in, as before). Cinematic and
   level screenshots unchanged by eye; level 21.27 against 21.04 flips/s with the old fill (one
   run each).
+
+## 9. P2 so far (2026-11-02): the menu is still 20% darker
+
+Measured with `menu_luma` (the regions of 2.4 against the same RPCS3 shot, 8 captured frames):
+-20% overall, -15% sky, -7% amber, -13% rock, -37% shadowed cloth, after P1, P3 and P7 alike.
+
+**The luminance chain was broken; fixed, but it does not set the exposure.**
+- The chain (the scene of the frame before, 0x02114000, down to 640x360, 160x180, 40x45, 8x9 and
+  1x1 at 0x00B20000) draws each step as A8R8G8B8 and reads it in the next draw as
+  Y16_X16_FLOAT, through a converted copy refreshed before each draw. The refresh was skipped
+  when its source was the target bound, a check made before the draw's own retarget: so against
+  the previous draw's target, the step just drawn. Every step after the first read zeros and the
+  1x1 luminance was 0.
+- Fix (fork): the check compares with the targets and depth surface the draw itself binds (the
+  same for the depth-to-colour copy). The chain now ends in 0.097 (both halves), its steps
+  non-zero; level and screenshots unchanged (ABBA 21.02 / 20.98).
+- But no draw, RSX copy or SPU transfer reads 0x00B20000, and writing it back to guest memory
+  every frame (`RSX_WB`, an experiment not kept) changed nothing: 59.8 against 60.7.
+
+**What the final composite does** (fp 0x01BB8202, 47 instructions; constants with `FPK_PICK`): the
+scene (0x00E10000) decoded as rgb x (alpha x 7 + 1); a depth fog whose colour is a white LUT with
+an alpha ramp (256x1, main memory, remap 0xAA1B: right) times a 64x32 half-float screen table
+(main memory, two buffers a frame apart); x0.944 (constant over the menu: no adaptive exposure);
+a filmic curve; sRGB out. 90% of the scene's pixels have alpha ~0 (no boost).
+
+**Open leads:**
+- The 64x32 table is all zero in both buffers. An SPU job (pc 0x0834C) PUTs zeros over it
+  (the same local-store buffer to every row, twice in 20 s), the PPU zeroed it once; no
+  other writer, and no 64x32 surface anywhere: the fog/glow term it scales is never there.
+- Next to RPCS3's shot the menu's amber is dimmer and less glowing inside, and the rock's left
+  edge has a dark red stain RPCS3 does not show (a decode error, P4?).
+- RPCS3's frames as ground truth (what the table and the scene target hold there) would settle
+  it; RenderDoc is not installed (installing it is for the user to allow).
+
+Tools added: `RSX_CAP_MEM=<ea>:<bytes>` (guest memory in a capture), `FPK_PICK=<fp>[:<every>]` (a
+program's inline constants per draw), `SPU_DMA_RANGE` now shows a PUT's first bytes;
+`scripts`-side in the session's scratchpad: `menu_luma.py`.
