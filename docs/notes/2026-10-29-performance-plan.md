@@ -695,6 +695,92 @@ falls in:
 - The next stages by share: `7BB4` (4.6%), `30600` (3.9%, a piece, so its hook is ready),
   `D92C` (3.4%).
 
+### 2.12 Update, 2026-11-01: the broad levers, each measured alone
+
+**What they act on.** The `--spu-lines` profile again, by operation, as a share of each
+workload's samples:
+
+| workload | crossings | LS reads + writes | shufb |
+|---|---|---|---|
+| EDGE (w14-16) | 10.6% (`SPU_DIRECT` 5.2, prologues 3.3, `spu_link` 2.1) | 6.9 + 3.1% | 8.8% |
+| RenderJobs (w12) | ~20% | 19.3% | 5.2% |
+| RenJobSet (w8-11) | ~17% | 10.5% | 2.8% |
+| General6 (w2) | small | 14% (reads) | 13.7% |
+
+- 60% of EDGE's shufb samples are in a shufb whose control the loop around it never writes.
+- 60% of EDGE's `SPU_DIRECT` samples are a chunk tail-calling the next one: the lifter starts a
+  function at every branch target.
+- Each lever below was measured alone, by replay: `logs/jobcap2` (w2, w12, w15) four alternate
+  runs, `logs/jobcap3` (w8-11) two; per job the best of 10, summed per workload. Every job's
+  output was identical to the capture.
+
+**Tried, slower: `preserve_none` on every lifted function.**
+- Under the Win64 ABI a lifted function saves and restores the xmm6-15 and rbx/rsi/rdi it uses,
+  and a tail call pays the caller's epilogue and then the callee's prologue (3.3% of EDGE).
+- clang's `preserve_none` on the lifted functions, their pointer types and the indirect-branch
+  entry points removes those saves. But a caller then keeps nothing in a register across a
+  `brsl` into such a function: it spills whatever is live around every call.
+- Replay: General6 +44.9%, RenderJobs +2.7%, EDGE +2.7%. Not kept.
+
+**Done: job modules lifted as merged runs of chunks, but General6's** (`gowa.py lift`;
+`GOWA_JOBMOD_MERGE=0` turns it off).
+- With `--merge-chunks` a run of chunks between call targets is one C function with gotos,
+  instead of chunks that tail-call each other.
+- Every module merged: EDGE -3.1%, RenderJobs -6.1%, General6 +12.3%. A merged run has
+  internal branches, and only a function without any gets a `--float-spec` body, which is where
+  General6's time is.
+- `lift_jobmods.py --merge-skip` leaves General6's two modules as they were. Replay, against
+  nothing merged:
+
+  | w2 (General6) | w8 | w9 | w10 | w11 | w12 (RenderJobs) | w15 (EDGE) |
+  |---|---|---|---|---|---|---|
+  | +0.5% | -7.8% | -2.5% | -7.8% | -1.1% | -3.6% | -2.7% |
+
+- Level, ABBA, two runs each: 19.62 -> 20.12 flips/s (runs 19.62 / 19.54 against 20.25 / 19.48).
+- A native hook's loop is then also inside the merged run that leads to it, entered there by a
+  goto. The hook's call goes right after the loop's label too.
+- The exe: 112.8 -> 117.2 MB.
+
+**Done: a shufb control a loop doesn't change, prepared before it** (`spu_lifter.py`, on by
+default; `--no-shufb-hoist`).
+- On x86 `spu_shufb` is ten ops, six of them on the control alone: the source index, the a/b
+  select, the special selectors.
+- The loops: a backward branch to a label, with no other label in between and no way in but
+  falling into it, and no call, indirect branch or channel op in the body. A shufb there whose
+  control register nothing in the body writes gets the control prepared once before the loop
+  (`spu_shufc_prep`). In the loop it is then two pshufb and two blendv (`spu_shufb_pre`).
+- 2047 of the 30330 shufb sites; 626 of the EDGE module's 1881.
+- Checked:
+  - `runtime/spu/tests/test_spu_shufb.c`: 200000 random cases against the byte-loop reference;
+  - `tools/test_spu_lifter_shufb_hoist.py`: the lifted shape, and a run against the lift
+    without it on 2000 random register sets.
+- Replay, against the merged lift: EDGE -4.0%, w9 -3.1%, General6 -0.6%. The rest is within
+  its run-to-run spread (w10 +1.7%, its runs +-5%).
+- w13 can't be measured this way: with either build, many of its jobs sometimes take 1-1.5 ms
+  instead of 4 us.
+
+**Tried, slower: `ctx->ls` read once a function.**
+- The SPU code is built with `-fno-strict-aliasing`, so any store may change `ctx->ls`, and each
+  LS access reads it again: 12 times in `7BB4`, most of them in its loop.
+- Read once, at the function's top, and passed to the accessors: 6.1 -> 1.05 loads of it a
+  function (weighted by samples), and 0.6% fewer instructions. But the pointer then holds a
+  register through the whole function, calls included. The prologue's pushes change in 77 of
+  the EDGE module's 1093 functions, 2.54 -> 2.63 a function weighted by samples, and the piece
+  `30600` (3.9% of EDGE) saves one more register and spills once more.
+- Replay: EDGE +3.2% in all four runs, the rest within noise. Not kept.
+
+**Speed, against 38c9d6b:** level, ABBA, two runs each: 19.98 -> 20.66 flips/s (+3.4%), both
+new runs above both old ones (20.82 / 20.49 against 20.01 / 19.98). That is ~86% of RPCS3's
+24.0.
+
+**Next:**
+- In each EDGE iteration, `ctx->gpr` is still written to memory and read back around the LS
+  stores, for the same aliasing reason. The loops' registers in locals, without the speculative
+  float, were -5.5% in replay as a prototype on EDGE's single-block loops (2.8). As a lifter
+  option, written back at each exit, that is the next broad lever; part of it may now be taken by
+  the shufb hoist.
+- The next stages by share as native code: `7BB4`, `30600` (a piece, its hook ready), `D92C`.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -1112,14 +1198,15 @@ and shorten each link by the shares in section 2.2.
 | lever | when | result | now |
 |---|---|---|---|
 | `/GS-` on lifted SPU code | 2026-10-28, 7.3 flips/s | no change | with 2.2, on the replay |
-| `preserve_none` for lifted SPU code | 2026-10-28 | EDGE function entries 5.1% -> 2.7% of its lifted samples; frame unchanged | 2.2 |
+| `preserve_none` for lifted SPU code | 2026-10-28 | EDGE function entries 5.1% -> 2.7% of its lifted samples; frame unchanged | **ruled out 2026-11-01 (2.12)**: on every lifted function, replay General6 +44.9%, EDGE +2.7%; the callers spill around each call |
 | coherency holder counts | 2026-10-28 | coherency 5.5% -> 4.5% of an EDGE run; frame unchanged | 1.2 |
-| job modules with `--merge-chunks` | 2026-10-28 | 1-6% off some workloads, frame unchanged, +13 MB of C | 2.2 |
+| job modules with `--merge-chunks` | 2026-10-28 | 1-6% off some workloads, frame unchanged, +13 MB of C | **kept 2026-11-01 (2.12)**, but General6's modules: 1-8% off the other workloads in replay |
 | null SRV left alone | 2026-10-28 | -4 ms a frame of CPU, +1% | 1.5 (the whole descriptor path) |
 | widening the serial lists (`SPURS_MAXCONT`) | 2026-10-28 | nothing: the jobs come one at a time | **overturned 2026-10-31 (2.10)**: General6 and RenderJobs do run on 4 SPUs; the frame needs SPURS priorities with it |
 | more frequent SPURS idle probes | 2026-10-28 | hangs | ruled out |
 | speculative float in EDGE's single-block loops | 2026-10-31 | replay +5% (locals alone -5.5%); the range checks fail in most calls | ruled out (2.8) |
 | EDGE lists at six SPUs each (`SPURS_MAXCONT`) | 2026-10-31 | same runs a second, 16.25 flips/s | **overturned (2.10)**: EDGE is eligible on SPUs 0-3 and gets the fourth only with priority-aware picks (+34% jobs/s when it has it) |
+| `ctx->ls` read once a lifted function | 2026-11-01 | replay EDGE +3.2%: 0.6% fewer instructions, but the pointer holds a register through calls | ruled out (2.12) |
 
 They were measured while something else set the frame (the texture work on the frame clock
 thread, the main thread's waits). The chain sets it now, so what shortens a chain job counts.

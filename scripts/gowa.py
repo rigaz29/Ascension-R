@@ -446,6 +446,13 @@ def jobmod_extra_funcs():
 
 # Modules left in the interpreter because their lift misbehaves, by header EA.
 JOBMOD_SKIP = {}
+# Job modules are lifted with --merge-chunks (GOWA_JOBMOD_MERGE=0: without): a
+# run of chunks is one C function with gotos, not chunks that tail-call each
+# other. In replay that was 1-8% faster for every workload but General6, whose
+# modules are left out here: their time is in --float-spec bodies, which only a
+# function without internal branches gets, so merged they were 12% slower
+# (2026-11-01).
+JOBMOD_MERGE_SKIP = {"jobmod_a67e549fa0ab_e41E8", "jobmod_1bdd67b54c3b_e7F60"}
 
 
 def lift_jobmods(elf):
@@ -453,6 +460,9 @@ def lift_jobmods(elf):
     extra = ["--skip-ea", ",".join("%X" % ea for ea in sorted(JOBMOD_SKIP))] if JOBMOD_SKIP else []
     for name, addrs in sorted(jobmod_extra_funcs().items()):
         extra += ["--extra-funcs", name + "=" + ",".join("0x%X" % a for a in addrs)]
+    if os.environ.get("GOWA_JOBMOD_MERGE") != "0":
+        extra += ["--merge-chunks", "--merge-skip", ",".join(sorted(JOBMOD_MERGE_SKIP))]
+        say("job modules: --merge-chunks, but not %s" % ", ".join(sorted(JOBMOD_MERGE_SKIP)))
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
             "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c"),
             "--float-spec", str(SPU_FLOAT_SPEC)] + extra):
@@ -487,8 +497,31 @@ def native_hooks(lift_dir, pic=False):
                 head = "void %s(spu_context* ctx) {\n" % func   # lifted before SPU_RESTRICT
             if src.count(head) != 1:
                 die("native hook: %s not found once in %s" % (func, module))
-            src = src.replace(head, "void %s(spu_context* ctx);\n%s    %s(ctx);\n" % (native, head, native))
+            src = src.replace(head, "%s    %s(ctx);\n" % (head, native))
             say("native hook: %s -> %s" % (func, native))
+            # --merge-chunks: the loop is also inside the merged run of chunks
+            # that leads to it, entered there by a goto rather than through the
+            # function above. There the call goes right after the loop's label,
+            # so it runs on every way in; a routine takes the loop wherever it
+            # finds it and returns at once with one iteration or none left.
+            label = "\nloc_%s:\n" % func[-8:]
+            pos, extra = 0, 0
+            while True:
+                pos = src.find(label, pos)
+                if pos < 0:
+                    break
+                fn_start = src.rfind("\nvoid ", 0, pos)
+                if src.find(head, fn_start) != fn_start + 1:     # not the function above
+                    at = pos + len(label)
+                    src = src[:at] + "    %s(ctx);\n" % native + src[at:]
+                    extra += 1
+                pos += len(label)
+            if extra:
+                say("native hook: %s also in %d merged function(s)" % (native, extra))
+        # the routines' declarations ahead of every function that calls them
+        first = min(i for i in (src.find("\nvoid "), src.find("\nstatic void ")) if i >= 0)
+        decls = "".join("void %s(spu_context* ctx);\n" % n for n in sorted(set(funcs.values())))
+        src = src[:first + 1] + decls + src[first + 1:]
         open(path, "w", encoding="utf-8", newline="\n").write(src)
 
 
