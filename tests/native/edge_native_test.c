@@ -42,13 +42,37 @@ static void setup_30310(spu_context* c)
 {
     const uint32_t n = 1 + rnd() % 64;
     c->gpr[19]._u32[0] = 0u - 32u * n;
+    if (rnd() % 2) c->gpr[18] = c->gpr[19];   /* as the piece sets it: the paired form's case */
     if (rnd() % 3 == 0) {
         const uint32_t a27 = c->gpr[27]._u32[0], a18 = c->gpr[18]._u32[0];
         c->gpr[36]._u32[0] = a27 - a18 + rnd() % 96 - 48;
         c->gpr[29]._u32[0] = a27 - a18 + rnd() % 96 - 48;
     }
 }
-static long long iters_30310(void) { return s_dec_iters; }
+static long long iters_30310(void) { return s_d1_iters; }
+static long long paired_30310(void) { return 2 * s_d1_pairs; }
+
+/* 304A0: r35 = -32 * the iterations (1-48). One case in four puts the two
+ * attribute outputs on the records, one in four a merged output on the first
+ * table entry the loop reads and another on the records. */
+static void setup_304a0(spu_context* c)
+{
+    const uint32_t n = 1 + rnd() % 48;
+    c->gpr[35]._u32[0] = 0u - 32u * n;
+    const uint32_t a44 = c->gpr[44]._u32[0], o35 = c->gpr[35]._u32[0], o6 = c->gpr[6]._u32[0];
+    switch (rnd() % 4) {
+    case 0:
+        c->gpr[78]._u32[0] = a44 - o35 + rnd() % 96 - 48;
+        c->gpr[74]._u32[0] = a44 - o35 + rnd() % 96 - 48;
+        break;
+    case 1:
+        c->gpr[65]._u32[0] = c->gpr[49]._u32[0] + c->gpr[47]._u32[0] - o6 + rnd() % 64 - 32;
+        c->gpr[75]._u32[0] = a44 - o6 + rnd() % 96 - 48;
+        break;
+    }
+}
+static long long iters_304a0(void) { return s_d2_iters; }
+static long long none(void) { return 0; }
 
 typedef struct {
     const char* name;
@@ -56,9 +80,11 @@ typedef struct {
     void (*native)(spu_context*);
     void (*setup)(spu_context*);
     long long (*iters)(void);
+    long long (*paired)(void);
 } edge_test;
 static const edge_test s_tests[] = {
-    { "decode 30310", ref_30310, gowa_edge_decode_30310, setup_30310, iters_30310 },
+    { "decode 30310", ref_30310, gowa_edge_decode_30310, setup_30310, iters_30310, paired_30310 },
+    { "decode 304A0", ref_304A0, gowa_edge_decode_304a0, setup_304a0, iters_304a0, none },
 };
 
 static int compare(const spu_context* a, const spu_context* b, const char* name, int k)
@@ -92,7 +118,7 @@ int main(int argc, char** argv)
     for (size_t t = 0; t < sizeof s_tests / sizeof s_tests[0]; t++) {
         const edge_test* T = &s_tests[t];
         int bad = 0;
-        const long long it0 = T->iters();
+        const long long it0 = T->iters(), pr0 = T->paired();
         for (int k = 0; k < cases && bad < 4; k++) {
             a->ls = la;
             fill(a);
@@ -106,8 +132,8 @@ int main(int argc, char** argv)
             T->ref(b);
             bad += compare(a, b, T->name, k);
         }
-        const long long it = T->iters() - it0;
-        printf("[%s] %d cases, %lld native iterations: %s\n", T->name, cases, it,
+        const long long it = T->iters() - it0, pr = T->paired() - pr0;
+        printf("[%s] %d cases, %lld native iterations (%lld in pairs): %s\n", T->name, cases, it, pr,
                bad ? "FAIL" : it ? "PASS" : "FAIL (the native routine did nothing)");
         fails += bad || !it;
     }

@@ -20,6 +20,7 @@ SPU = os.path.join(ROOT, "ps3recomp", "runtime", "spu")
 # name -> (lifted source, lifted function)
 LOOPS = {
     "30310": ("spu/picfrags/pic_0075EB40/spu_recomp.c", "pic_0075EB40_spu_func_00030310"),
+    "304A0": ("spu/picfrags/pic_00758590/spu_recomp.c", "pic_00758590_spu_func_000304A0"),
 }
 
 # The lifted SPU code's definitions and options (CMakeLists.txt: spu_defs, spu_opts).

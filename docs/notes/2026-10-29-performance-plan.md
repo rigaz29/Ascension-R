@@ -640,17 +640,60 @@ falls in:
   - Level, ABBA, two runs each: 19.42 -> 20.09 flips/s, both on-runs above both off-runs. The
     bench's first run is often low: without it, 19.73 against 19.83 and 20.21.
   - In the level: ~1.9M calls and ~200M native iterations a run, no fallback.
-- Next:
-  - `304A0`: the same decoder, plus a lookup (four LS reads by decoded indices) and a third
-    component rebuilt as sqrt(1 - x^2 - y^2) with frsqest/fi.
-    - It is pipelined four deep with 23 registers carried, float ones among them, so frsqest/fi
-      stay the exact forms in all four lanes.
-    - About 1.7-2x on the loop is expected, ~2% of EDGE.
-  - `30310` with two vertices to a 256-bit register (behind a check that the outputs miss the
-    input): about twice again, ~1% of EDGE.
-  - The broader levers: shufb, the LS accessors and the crossings are about a third of EDGE's
-    lifted time, in every function. A cheaper form of any of them helps all of EDGE, and the
-    other workloads too.
+
+**Done: the decoder loop `304A0` as native code** (piece `0x758590`, `GOWA_EDGE_NATIVE` bit 8).
+- The same decoder with more after it, pipelined four deep, 23 registers carried:
+  - an iteration fetches record t+1;
+  - it decodes record t: two attributes, and four values that are table indices and, scaled
+    (fma), two coordinate pairs whose squares it keeps;
+  - for vertex t-1 it converts and stores the attributes, reads four table quadwords by the
+    indices, and rebuilds two third coordinates as sqrt(1 - x^2 - y^2) (frsqest, fi, fm);
+  - for vertex t-2 it merges those into four quadwords by shufb controls taken from the table
+    entries, and stores them.
+- Native, statement for statement. The 13 local store accesses of an iteration keep the lifted
+  order, so a table or record under an output reads the same bytes.
+- The first form, one op for each lifted statement, was only 1.27x.
+  - Making one part trivial at a time (timing only) showed where the time went: frsqest/fi 37%,
+    selb ~23%, the float checks 9%.
+  - Nearly all of the work comes in pairs: the two attributes, the gathers that share their
+    sources and shift counts, the two coordinate pairs and their third coordinates, the two
+    merges of a table entry. Each pair is now one 256-bit op, kept paired from one iteration to
+    the next.
+  - frsqest and fi are 256-bit ports of the runtime's x86 forms, lane for lane.
+  - A selb with one operand fixed for the call keeps that operand's part prepared.
+- The loop alone: 83.2 -> 46.4 ns an iteration (1.79x; gcc, 44 iterations a call).
+
+**Done: `30310`, two vertices to a 256-bit op** (bit 16).
+- The next two records are read before the two vertices are stored. It runs only where every
+  store of the call misses every quadword the call's fetches read, none of it wrapping the end of
+  local store: conservative spans, checked once a call. Elsewhere the one-vertex form runs.
+- In the replay and the level, 99% of the loop's iterations take it.
+- The loop alone: 14.2 -> 12.3 ns an iteration (3.16x -> 3.67x of the lifted loop).
+
+**Checked, both:**
+- `tests/native/test_edge_native.py`, 3000 cases each, identical.
+  - `30310`: half the cases with r18 = r19, as the piece sets it, so the paired form runs: 48% of
+    the native iterations.
+  - `304A0`: one case in four puts the attribute outputs on the records, one in four a merged
+    output on the first table entry read.
+- 21 mutants caught, among them: the paired form's second store offset, its lanes swapped, its
+  span check skipped; a lookup by the new index instead of the old; the store moved after the
+  table read; a frsqest table row dropped; fi's product as `mul_epu32`.
+- Replay (`logs/jobcap2`, w15): 0 differ, no exact float op, no call left to the lifted loop.
+
+**Speed, against the previous step (`GOWA_EDGE_NATIVE=7`):**
+- Replay, four alternate runs: the 40 EDGE jobs 2026 -> 1930 us (-4.7%). The jobs that use
+  `304A0` save up to 11 us each.
+- Level, ABBA, two runs each: 20.03 -> 20.17 flips/s, within the spread (runs 20.07 / 19.98
+  against 20.07 / 20.57). What EDGE's share predicts is ~+1%.
+- In the level: `30310` ~201M native iterations a run, `304A0` ~115M; no exact float op.
+
+**Next:**
+- The broader levers. shufb, the LS accessors and the crossings are about a third of EDGE's
+  lifted time, in every function. A cheaper form of any of them helps all of EDGE, and the other
+  workloads too.
+- The next stages by share: `7BB4` (4.6%), `30600` (3.9%, a piece, so its hook is ready),
+  `D92C` (3.4%).
 
 ## 3. The budget for 33 ms
 
