@@ -305,7 +305,8 @@ SPUs:
 - The FIFO self-jump park froze two of ~30 runs on 2026-10-31/11-01, both 31-40 s after the
   start (the menu's first frames): the walker on a jump to itself at IO `0x648BE0` and
   `0x748BE0`, after the same two words (`0x00041778`, `0x0004177C`), no SPU halt in the log. The
-  bench reports it and runs again; the cause is open.
+  bench reports it and runs again. Found on 2026-11-01: an EDGE job list nobody kicked again,
+  now re-kicked ([notes](2026-11-01-menu-freeze.md)).
 
 ## 5. How to measure again
 

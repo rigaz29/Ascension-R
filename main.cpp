@@ -683,26 +683,200 @@ static DWORD WINAPI wws_watch(LPVOID arg)
  * which does not know these lists. Per list: its ticket row (published and
  * consumed counts) and the first words of the list. */
 extern "C" void (*gcm_park_dump_hook)(void);
-static void wws_rows_dump(void)
+/* GCM_PARK_DUMP_MS's SPU PUT trace: the SPURS workload the writing worker runs
+ * (-1 off a policy-module worker: an SPU thread or task). */
+extern "C" int (*gcm_spu_put_who_hook)(void);
+extern "C" int spurs_pm_current_wid(unsigned long tid);
+static int port_spu_put_who(void) { return spurs_pm_current_wid(GetCurrentThreadId()); }
+extern "C" void ppu_threads_dump(const char* why);   /* runtime/syscalls/sys_ppu_thread.c */
+extern "C" void spu_taskset_rounds_dump(void);         /* runtime/spu/spu_workload.c */
+extern "C" void spu_sig_ring_dump(int last);           /* runtime/spu/spu_workload.c */
+extern "C" void gcm_sem_ring_dump(void);               /* libs/video/cellGcmSys.c */
+extern "C" void spurs_debug_dump(const char* why);     /* libs/spurs/cellSpurs.c */
+extern "C" void spurs_signal_workload(uint32_t spurs_ea, uint32_t wid);   /* libs/spurs/cellSpurs.c */
+extern "C" int spurs_workload_unkicked(uint32_t spurs_ea, uint32_t wid);
+extern "C" void (*gcm_park_stall_hook)(uint32_t park_io, unsigned long long stood_ms);
+
+/* GCM_PARK_STALL_MS's hook (title_environment sets it): an EDGE job list
+ * (wids 14-16) whose next entry is a wait already met -- its halfword is 0 --
+ * on a workload that nothing runs and nothing has kicked, is signalled.
+ *
+ * The title kicks an EDGE list when the MeshProc batch counter at 0xA0B724
+ * reaches 0; the counter names the list ((count << 16) | (wid << 8) | flags),
+ * and the list's first entry waits on it. The main thread re-arms that same
+ * counter for the next frame -- the next list -- as soon as the batch is done.
+ * When it did so before the kicked list's policy module had looked at its
+ * wait, the wait read the re-armed count, the module went idle, and the next
+ * zero kicked the next list: the first was never kicked again, and the RSX
+ * stood at its first hole for good (the menu-start freeze, about one run in
+ * fifteen: the opening movie's frames are trivial, so the main thread set up
+ * two frames back to back). On the real machine the main thread takes a frame's
+ * time between the two. The wait being met now is the very condition the
+ * module waits for, so the signal only lets it see that. */
+static void wws_rekick(uint32_t park_io, unsigned long long stood_ms)
 {
     const uint32_t sp = 0x7001AD00;
-    if (!(pipe_r8(sp + 0x74) & 0x40)) { fprintf(stderr, "[park-dump] job lists not set up yet\n"); return; }
+    if (!(pipe_r8(sp + 0x74) & 0x40)) return;
+    for (uint32_t w = 14; w <= 16; w++) {
+        const uint32_t info = sp + (w >= 16 ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+        const uint32_t data = pipe_r32(info + 0xC);
+        for (uint32_t l = 0; data && l < 4; l++) {
+            const uint32_t list = pipe_r32(data + 0x30 + 4 * l);
+            if (!list) continue;
+            const uint32_t done = pipe_r32(data + 0x40 + 0x10 * l) & 0xFFFF;
+            if (done >= 0x400) continue;
+            const uint32_t cmd = pipe_r32(list + 8 * done), arg = pipe_r32(list + 8 * done + 4);
+            if ((cmd & 0xFF) != 2 && (cmd & 0xFF) != 5) continue;
+            if (arg < 0x10000 || arg >= 0xF0000000u) continue;
+            const uint32_t word = pipe_r32(arg & ~3u);
+            if (((arg & 2) ? (word & 0xFFFF) : (word >> 16)) != 0) continue;
+            if (spurs_workload_unkicked(sp, w) != 1) continue;
+            spurs_signal_workload(sp, w);
+            static int n = 0;
+            if (n++ < 16)
+                fprintf(stderr, "[wws-rekick] RSX at park 0x%08X for %llu ms; w%u %s L%u entry %u waits on "
+                                "0x%08X, which is met, and nothing runs it: signalled\n",
+                        park_io, stood_ms, w, s_pipe_wkl[w], l, done, arg);
+        }
+    }
+}
+/* The job descriptors (cmd 1 entries) of the job lists of workloads 12-17:
+ * each distinct one once, its first 0xB0 bytes, and the gate word 0x9B504C. */
+static void wws_jobs_dump(const char* why)
+{
+    const uint32_t sp = 0x7001AD00;
+    if (!(pipe_r8(sp + 0x74) & 0x40)) return;
+    fprintf(stderr, "[jobs-dump] %s: gate 0x9B504C = %08X; frame label [0x%08X + f(0x%X)] base words:",
+            why, pipe_r32(0x9B504C), pipe_r32(0xA23514), pipe_r32(0xA23518));
+    /* The label the main thread waits for at the top of its frame (func_003A4854:
+     * [base + 79 * idx] == 1, then cleared), and its neighbours. */
+    { const uint32_t base = pipe_r32(0xA23514), idx = pipe_r32(0xA23518), at = base + 79u * idx;
+      if (base >= 0x10000 && base < 0xF0000000u)
+          for (uint32_t a = (at & ~15u) - 0x10; a < (at & ~15u) + 0x20; a += 4)
+              fprintf(stderr, " %08X:%08X%s", a, pipe_r32(a), a == at ? "*" : ""); }
+    fprintf(stderr, "\n");
+    uint32_t seen[64]; int nseen = 0;
     for (uint32_t w = 12; w <= 17; w++) {
         const uint32_t info = sp + (w >= 16 ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
         const uint32_t data = pipe_r32(info + 0xC);
         for (uint32_t l = 0; data && l < 4; l++) {
             const uint32_t list = pipe_r32(data + 0x30 + 4 * l);
             if (!list) continue;
+            for (uint32_t e = 0; e < 32; e++) {
+                const uint32_t cmd = pipe_r32(list + 8 * e), arg = pipe_r32(list + 8 * e + 4);
+                if ((cmd & 0xFF) == 4 || (!cmd && !arg)) break;
+                if ((cmd & 0xFF) != 1 || arg < 0x10000 || arg >= 0xF0000000u) continue;
+                int dup = 0;
+                for (int k = 0; k < nseen; k++) dup |= seen[k] == arg;
+                if (dup || nseen >= 64) continue;
+                seen[nseen++] = arg;
+                fprintf(stderr, "[jobs-dump] w%u L%u [%u] job 0x%08X size 0x%X:", w, l, e, arg, cmd >> 16);
+                for (uint32_t o = 0; o < 0xB0 && o < (cmd >> 16); o += 4) fprintf(stderr, " %08X", pipe_r32(arg + o));
+                fprintf(stderr, "\n");
+            }
+        }
+    }
+    fflush(stderr);
+}
+
+static void wws_rows_dump(void)
+{
+    const uint32_t sp = 0x7001AD00;
+    if (!(pipe_r8(sp + 0x74) & 0x40)) { fprintf(stderr, "[park-dump] job lists not set up yet\n"); return; }
+    /* Workloads 12-17, and any other whose policy module is RsxSync's (the
+     * same job-list layout). */
+    const uint32_t wws_pm = pipe_r32(sp + 0x1020 + 4);
+    fprintf(stderr, "[park-dump] policy module/data per workload:");
+    for (uint32_t w = 0; w <= 17; w++) {
+        const uint32_t info = sp + (w >= 16 ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+        fprintf(stderr, " w%u %X/%X", w, pipe_r32(info + 4), pipe_r32(info + 0xC));
+    }
+    fprintf(stderr, "\n");
+    for (uint32_t w = 0; w <= 17; w++) {
+        const uint32_t info = sp + (w >= 16 ? 0x1000 + 0x20 * (w - 16) : 0xB00 + 0x20 * w);
+        if (w < 12 && pipe_r32(info + 4) != wws_pm) continue;
+        const uint32_t data = pipe_r32(info + 0xC);
+        for (uint32_t l = 0; data && l < 4; l++) {
+            const uint32_t list = pipe_r32(data + 0x30 + 4 * l);
+            if (!list) continue;
             const uint32_t row = data + 0x40 + 0x10 * l;
             const uint32_t t = pipe_r32(row);
-            fprintf(stderr, "[park-dump] w%-2u %-12s L%u: published %u consumed %u%s; row %08X %08X %08X %08X; "
+            /* What the main thread's wait for a list (func_0049D688) waits for:
+             * every policy-module slot's count (row halfwords 1-7, 0xFFFF for
+             * an unused slot) up to the first empty entry at or after the
+             * published count. */
+            uint32_t end = t >> 16, lo = 0xFFFF;
+            while (end < 0x400 && (pipe_r32(list + 8 * end) & 0xFFFF)) end++;
+            for (uint32_t h = 2; h < 16; h += 2) lo = pipe_r16(row + h) < lo ? pipe_r16(row + h) : lo;
+            char inc[64] = "";
+            if (lo < end) snprintf(inc, sizeof inc, " (INCOMPLETE: entries to %u, slots done to %u)", end, lo);
+            fprintf(stderr, "[park-dump] w%-2u %-12s L%u: data 0x%08X published %u consumed %u%s%s; row %08X %08X %08X %08X; "
                             "list 0x%08X: %08X %08X %08X %08X %08X %08X %08X %08X\n",
-                    w, s_pipe_wkl[w], l, t >> 16, t & 0xFFFF, (t >> 16) != (t & 0xFFFF) ? " (pending)" : "",
+                    w, s_pipe_wkl[w], l, data, t >> 16, t & 0xFFFF, (t >> 16) != (t & 0xFFFF) ? " (pending)" : "", inc,
                     t, pipe_r32(row + 4), pipe_r32(row + 8), pipe_r32(row + 12), list,
                     pipe_r32(list), pipe_r32(list + 4), pipe_r32(list + 8), pipe_r32(list + 12),
                     pipe_r32(list + 16), pipe_r32(list + 20), pipe_r32(list + 24), pipe_r32(list + 28));
+            /* Every entry up to the first end (cmd 4) or 32: {cmd, arg}, 1 a job, 3 a nop,
+             * 2 and 5 a wait on the halfword at arg (shown as it reads now). */
+            fprintf(stderr, "[park-list] w%u L%u:", w, l);
+            for (uint32_t e = 0; e < 32; e++) {
+                const uint32_t cmd = pipe_r32(list + 8 * e), arg = pipe_r32(list + 8 * e + 4);
+                const uint32_t ty = cmd & 0xFF;
+                if (ty == 2 || ty == 5) {
+                    const uint32_t wd = pipe_r32(arg & ~3u);
+                    fprintf(stderr, " [%u]wait%u(%08X)=%04X", e, ty, arg, (arg & 2) ? wd & 0xFFFF : wd >> 16);
+                } else if (ty == 1) fprintf(stderr, " [%u]job(%08X,%X)", e, arg, cmd >> 16);
+                else fprintf(stderr, " [%u]%08X:%08X", e, cmd, arg);
+                if (ty == 4 || (!cmd && !arg)) break;
+            }
+            fprintf(stderr, "\n");
         }
     }
+    /* The main thread's batch counters ((count << 16) | (wid << 8) | flags, waited to
+     * zero per frame slot) and the MLAA control block (batch, label EA, counter EA,
+     * buffer), this build's addresses (docs/notes/2026-10-27-frame-pipeline.md). */
+    fprintf(stderr, "[park-dump] batch counters 0xA0B6C0:");
+    for (uint32_t a = 0xA0B6C0; a < 0xA0B780; a += 4) fprintf(stderr, "%s%08X", (a & 0xF) ? " " : " | ", pipe_r32(a));
+    fprintf(stderr, "\n[park-dump] MLAA block 0xA1FDB0:");
+    for (uint32_t a = 0xA1FDB0; a < 0xA1FDE0; a += 4) fprintf(stderr, " %08X", pipe_r32(a));
+    const uint32_t lab = pipe_r32(0xA1FDB4), cnt = pipe_r32(0xA1FDB8);
+    if (lab >= 0x10000 && lab < 0xF0000000u) fprintf(stderr, "; label now %08X", pipe_r32(lab));
+    if (cnt >= 0x10000 && cnt < 0xF0000000u) fprintf(stderr, "; counter now %08X", pipe_r32(cnt));
+    fprintf(stderr, "\n");
+    /* The MLAA barriers (count at +0, waiter mask at +0x10; 0xA1FE00, 0xA1FE80). */
+    for (uint32_t b = 0xA1FE00; b <= 0xA1FE80; b += 0x80) {
+        fprintf(stderr, "[park-dump] barrier 0x%08X:", b);
+        for (uint32_t a = b; a < b + 0x20; a += 4) fprintf(stderr, " %08X", pipe_r32(a));
+        fprintf(stderr, "\n");
+    }
+    wws_jobs_dump("park");
+    /* What each guest thread is waiting in, the signal-driven tasks, and the
+     * SPU_SIG_TRACE ring (SPU_SIG_RING=1). */
+    ppu_threads_dump("park");
+    spu_taskset_rounds_dump();
+    spu_sig_ring_dump(8192);
+}
+
+/* SPU_SIG_RING_DUMP_S=<s>[,<s>...]: what a park dump shows (the job lists,
+ * counters, guest threads, SPURS slots, the SPU_SIG_TRACE ring with
+ * SPU_SIG_RING=1) at these seconds after start, for a run that stalls without
+ * a park, or does not stall at all. */
+static DWORD WINAPI sig_ring_dumper(LPVOID arg)
+{
+    const char* e = (const char*)arg;
+    const ULONGLONG t0 = GetTickCount64();
+    while (e && *e) {
+        const double s = atof(e);
+        const ULONGLONG at = t0 + (ULONGLONG)(s * 1000.0);
+        while (GetTickCount64() < at) Sleep(50);
+        fprintf(stderr, "[sig-ring] dump at %.1f s\n", s);
+        spurs_debug_dump("timed");
+        wws_rows_dump();
+        gcm_sem_ring_dump();
+        while (*e && *e != ',') e++;
+        if (*e == ',') e++;
+    }
+    return 0;
 }
 
 static DWORD WINAPI pipe_probe(LPVOID arg)
@@ -907,6 +1081,11 @@ static void title_environment(void)
      * while the lifted tasks were still on batch N, and its signal ended their
      * barrier waits instead. A report waits while those tasks are in a round. */
     env_default("GCM_REPORT_SPU_HOLD_MS", "3000");
+    /* An EDGE job list the title kicked before it had looked at the counter
+     * its first entry waits on could miss its turn and never be kicked again;
+     * the RSX then stood at its first hole for good (the menu-start freeze).
+     * Once a park has stood 100 ms, wws_rekick signals such a list. */
+    env_default("GCM_PARK_STALL_MS", "100");
     /* No SPURS_MAXCONT default any more. It set the EDGE lists (14-16) to three
      * SPUs because every workload arrived with a maximum contention of 1: the
      * HLE dropped _cellSpursWorkloadAttributeInitialize's ninth argument. The
@@ -1115,6 +1294,10 @@ int main(int argc, char** argv)
     if (const char* ww = getenv("GOWA_WWS_WATCH"))
         if (atoi(ww) > 0) CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)atoi(ww), 0, NULL);
     gcm_park_dump_hook = wws_rows_dump;
+    gcm_park_stall_hook = wws_rekick;
+    gcm_spu_put_who_hook = port_spu_put_who;
+    if (const char* rd = getenv("SPU_SIG_RING_DUMP_S"))
+        CreateThread(NULL, 0, sig_ring_dumper, (LPVOID)rd, 0, NULL);
     if (getenv("GOWA_WWS_TRACE") && !getenv("GOWA_WWS_WATCH"))
         CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)10, 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */
