@@ -68,10 +68,15 @@ more than 4 points more near-black pixels than the run's quieter frames:
 - **Rectangles with straight edges** whose contents belong elsewhere, at 14 s and 32 s of other
   runs.
 - With `RSX_ZPASS=0`, one run of 23 screenshots 2 s apart (6-50 s): no band and no rectangle
-  (a long-straight-edge search finds none). The same culling would explain both: a shadow pass or
-  an object dropped on an old count, more often with fast motion, where old counts are further
-  from the truth. One run only: the default runs it was to be compared with were stopped (the
-  machine ran short of memory), so this is to confirm in P1.
+  (a long-straight-edge search finds none). One run only.
+- After P1 (section 5): the band and the black frames are gone in two runs. The rectangles are
+  not: at 8-14 s, in the bottom right, the same lit-floor rectangles over the shadowed floor in
+  every run, with MLAA on, MLAA off and depth of field off alike. Their vertical edges fall on
+  the 160-pixel screen tile grid (x = 800, 960, 1120 at 720p in the shots measured), with lit
+  floor on one side and shadowed floor on the other, and the floor's depth changes with y, so a
+  depth bound shows as a horizontal edge: these are the seams of the October plan (2026-10-28
+  plan, section 5, "Seams"), the screen mask 0x01D90000 built per tile and depth slice with
+  depth bounds the SPU writes (P3).
 - Unchanged: the title's MLAA path takes a copy of the display for its SPUs and later draws
   sample it; the backend binds a GPU snapshot for those, found in the same or the previous batch
   only (frames with no copy, or the read between two, miss it and read the stale copy). Whether
@@ -152,7 +157,7 @@ Same menu, regions of the still parts (luma):
 In order of value for effort. Each step is verified with the same captures and numbers as above
 (`scripts/rsxcap_check.py`, the bench's screenshots at fixed times).
 
-**P1. Occlusion queries answered right (fixes 2.1, likely 2.2).**
+**P1. Occlusion queries answered right (fixes 2.1, likely 2.2). Done: section 5.**
 - First, confirm 2.2: default against `RSX_ZPASS=0` on the cinematic, two runs each, dense
   screenshots.
 - Never answer a query with another object's or an old count: at `GET_REPORT`, a query whose own
@@ -173,14 +178,20 @@ In order of value for effort. Each step is verified with the same captures and n
   RPCS3's (75.5 overall, 32 in the shadowed cloth), the reader is the PPU, and P5 generalises it.
 - If not: find the exposure in the final passes' constants and trace where the PPU takes it from.
 
-**P3. The band in the shadow mask (2.2), if P1 leaves it.**
-- Bisect the 358 mask passes of the captured frame (the mask after each group of passes) to the
-  one that writes the strip; then compare what it is given with what the RSX does: its depth
-  bounds against the depth values under the strip, its stencil state, its scissor, the shadow
-  map region it samples.
-- The title's MLAA copy (2.2, last point) after P1, if anything in the picture still points at
-  it: MLAA off by default (RPCS3's reference setup), or the copy written back before the SPUs
-  read it (P5).
+**P3. The tile seams in the cinematic (2.2): next.**
+- Known so far (October plan, "Seams" and "The seams, continued"): seven depth slices, one quad
+  per 160x90 tile each, with depth bounds the SPU writes and a stencil test; with the depth
+  bounds test off the edges go but the picture darkens; the scissor, the target cache and the
+  occlusion counts were ruled out (the counts again now: the seams outlive P1).
+- Capture a frame that has them (`RSX_CAP_SHOT=1` at ~10 s) and compare, for the tiles on both
+  sides of an edge, each slice's bounds with the depth values in the tile (the depth target
+  and the linear copy 0x02EC0000): a depth range one tile's slices leave uncovered, or cover
+  twice, is the seam. Then where the SPU takes the bounds from (its jobs read nothing the RSX
+  makes but the reports, so the title's own data), and an RPCS3 shot of the same moment (P8)
+  to see whether the PS3 shows them.
+- The title's MLAA copy (2.2, last point) is not behind them (they are there with MLAA off);
+  left until something points at it (then MLAA off by default as RPCS3's reference setup, or
+  the copy written back before the SPUs read it, P5).
 
 **P4. Texture decode audit (2.3).**
 - Find the draws behind the rainbow stripes and the blue patch in captured frames (the
@@ -211,3 +222,56 @@ In order of value for effort. Each step is verified with the same captures and n
 **P8. References.**
 - RPCS3 screenshots at the same points as the bench's (menu, cinematic at fixed times), with its
   current configuration, to compare brightness and detail region by region.
+
+**P1b. Occlusion counts sooner (the frame rate P1 cost).**
+- After P1, 28.5% of the culling jobs' reads (menu trace) find a report "visible" because its
+  count is not back yet, and two thirds of those reports end up counting 0 (19.3% of all reads):
+  objects processed and drawn that a count in time would drop. Such a count arrives 16 ms after
+  the read (median; 47 ms p90). The RSX writes a report when it reaches the GET_REPORT, in step
+  with the command stream.
+- First split that delay: walk to submit, GPU, fence to delivery (the trace has the walker's
+  and the delivery's times; the submit is to add). Then the cheapest of: submitting a batch
+  early when it holds reports; delivering from a thread that waits on the fences instead of
+  polling between walker passes; an SPU GET (ours) that covers a report whose batch is on the
+  GPU waiting, bounded, for that batch's fence (a report of the batch still being walked keeps
+  "visible": no wait that could deadlock the walk).
+
+## 5. P1 done (2026-11-01): occlusion reports as the RSX makes them
+
+**What was wrong** (`GCM_ZPASS_TRACE`: the walker's report writes, the GPU's counts, the SPU reads
+of the reports, the clears and the counter switches, in time order; 40,000 events of the menu):
+- The title's groups: `CLEAR` (ZPASS and ZCULL stats), the counter on, a bounding shape, the
+  counter off, then the count written into eight reports; or `CLEAR`, the counter off at once, and
+  two reports of 0. It moves its reports every frame or two, and zeroes a report before it uses
+  it again.
+- The backend counted only the first report after a clear (and every draw, whatever the
+  switch): of the second and later reports of a group, 16% and 26% ever got a count. The walker
+  wrote each report with the last count its address had had, another object's as often as not.
+  Counts came back when the next batch started; 2,348 came after the title had taken their
+  report again.
+
+**The fix** (fork):
+- a report's count is every query since its clear, and the counting goes on after a report;
+- draws count only while `SET_ZPASS_PIXEL_COUNT_ENABLE` is on (a new observer op);
+- the walker writes "visible" until the report's own count is in, and a count is dropped when a
+  later report has taken its address (report numbers): consecutive counts at one address are
+  another object's often (two of three nonzero pairs differ fourfold or more, one transition in
+  six crosses zero), so an old count is no stand-in;
+- a report that counted nothing reads 0, in a batch with no query too;
+- counts go back when the GPU has them: the fence each batch was submitted with is polled between
+  walker passes;
+- a draw skipped while its pipeline builds leaves the reports up to the next clear "visible".
+
+**Measured:**
+- Menu, a 105 s screen recording from the start scanned frame by frame (`flash_scan.py`): frames
+  with dropped objects 415 before, 0 after (the seven it marks are the intro text's fade and the
+  menu's fade-in). Screenshots once a second: 0 of 30.
+- Counts that reach their reports (menu trace): second reports after a clear 16% -> 73%, later
+  ones 26% -> 71%; counts arriving after their report was taken 2,348 -> 558.
+- Opening cinematic, two runs of 24 screenshots: the black frame of the arena at 8 s and the
+  frieze band gone; the tile seams at 8-14 s remain (P3).
+- Level, ABBA, default builds: 22.49 (22.37 / 23.13) -> 20.66 (20.20 / 21.04) flips/s, -8%;
+  again with `PERF=1`: 22.80 -> 21.13, -7%. The threads' load is the same (the SPU workers 580%,
+  the frame clock 70%); per frame the fixed build draws 4,028 vs 3,806 (+5.8%), looks up 10.5%
+  more textures, and its prepass takes 8.8 vs 8.2 ms. Objects culled before are drawn now: some
+  the old counts dropped while in view, some read "visible" before their count is back (P1b).
