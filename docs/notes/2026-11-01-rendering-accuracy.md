@@ -116,7 +116,21 @@ Same menu, regions of the still parts (luma):
   sees whatever was there; RPCS3's Write Color Buffers serves it. Not proven yet (2.4 is plan
   step P2's first experiment).
 
-### 2.5 Not found
+### 2.5 A band of garbage at the loading screen's end
+
+- What the user saw with the queries answered visible, and took for a new flicker: "yellow and
+  blue, somewhat transparent, over the whole picture, a few times at the start".
+- Recorded (the desktop, 60 frames a second through `ffmpeg` `ddagrab`, scanned frame by frame
+  with `scripts/flash_scan.py`): for ~3 frames as the loading screen gives way to the menu, a
+  full-width band of random coloured pixels across the middle of the picture, with patterns like
+  raw memory shown as an image; the window then reports 20 draws. The same frames in a run with
+  the queries as they are: so not the queries' doing. A texture or target is shown before it
+  has contents, and what was in its memory is drawn (P7).
+- The same recordings, 105 s each from the start: frames with dropped objects 415 with the
+  queries as they are, 1 (the loading screen's own black frame) with every query answered
+  visible.
+
+### 2.6 Not found
 
 - No banding at full resolution (see Method).
 - The depth of field's double-buffered linear depth (0x02EC0000 / 0x03244000, each frame reads
@@ -188,6 +202,12 @@ In order of value for effort. Each step is verified with the same captures and n
   Replaces special cases (blit snapshots, screen copies) with one rule. Larger; after P1-P5 show
   what is still wrong.
 
-**P7. References.**
+**P7. The band at the loading screen's end (2.5).**
+- Capture that moment (`RSX_CAP_SHOT=1` / `RSX_CAP=t<s>` at the transition) and find which
+  texture or target the band comes from; then why it is shown before it is drawn or cleared
+  (a target sampled before its first draw read from guest memory, or a video frame shown
+  before it is decoded).
+
+**P8. References.**
 - RPCS3 screenshots at the same points as the bench's (menu, cinematic at fixed times), with its
   current configuration, to compare brightness and detail region by region.
