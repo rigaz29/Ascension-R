@@ -231,7 +231,7 @@ In order of value for effort. Each step is verified with the same captures and n
 - RPCS3 screenshots at the same points as the bench's (menu, cinematic at fixed times), with its
   current configuration, to compare brightness and detail region by region.
 
-**P1b. Occlusion counts sooner (the frame rate P1 cost).**
+**P1b. Occlusion counts sooner (the frame rate P1 cost). Tried, not kept: section 7.**
 - After P1, 28.5% of the culling jobs' reads (menu trace) find a report "visible" because its
   count is not back yet, and two thirds of those reports end up counting 0 (19.3% of all reads):
   objects processed and drawn that a count in time would drop. Such a count arrives 16 ms after
@@ -333,3 +333,32 @@ of the reports, the clears and the counter switches, in time order; 40,000 event
   (`rsx_fp_apply_wpos_grid`). `RSX_AA_GRID=0` turns it off.
 - Measured: two runs of seven screenshots (8-14 s): the x = 640 edge is gone from every shot;
   the few hits left on the tile grid fall on scene edges (the floor's stone joints, by eye).
+
+## 7. P1b tried (2026-11-02): counts in place at the title's synchronisation, not kept
+
+**What the title orders its report reads on** (`GCM_ZPASS_TRACE` with the semaphore methods, 570
+menu frames): `TEXTURE_READ_SEMAPHORE_RELEASE` (0x1D74, 21.9 a frame, 8.3 of them with reports
+before them since the last one; the value released is the address of an SPU job's data, e.g.
+0x71AA7680), `BACK_END_WRITE_SEMAPHORE_RELEASE` once a frame, `SET_REFERENCE` once a frame. A
+culling job reads its report right after such a release: 96% of the reads that find "visible"
+come after a 0x1D74 release or the reference, in the same millisecond (median). On the RSX the
+count is in the report before the release is.
+
+**Tried** (`GCM_ZPASS_SYNC=1`, reverted): the walker stopped at a release or reference with
+reports before it whose counts were not in, as at a held report; between passes the backend ran
+the batch so far on the GPU without presenting (the frame index stays, so it waits for it),
+handed the counts over, and the walker went on. A query group that a release split had its
+first part's count carried into the next batch.
+- Menu: every report counted (per 5 s, ~2,900 visible and ~470 hidden, none left "visible"),
+  no dropped objects; ~550 batches a second run early for it.
+- But the GPU hung (`DEVICE_HUNG`, then every pipeline refused) in 3 of 5 menu runs and in both
+  level runs, where the game fell to 3 flips/s. The backend's per-batch work (open, targets,
+  copies and snapshots of the frame, the end-of-batch transitions and copies) is not made to
+  run a dozen times a frame; finding which of it hangs the GPU, and paying for the round trips,
+  is not worth it against an 8% the culling could win at best (22.49 before P1, with counts
+  that dropped objects in view, against 20.66 after).
+- So P1 stays as it is: a report reads "visible" until its count is in, and the title culls
+  with the counts that arrive in time.
+
+The level benches of sections 5 and 6 ran with the build's settings file, which has the title
+patch Disable MLAA on (the same for every variant of each bench).
