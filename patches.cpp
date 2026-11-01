@@ -1,0 +1,85 @@
+/*
+ * gowa-recomp -- switchable patches of the title
+ *
+ * scripts/title_patches.json lists them. `gowa.py lift` lifts each patch's
+ * instruction edits in both forms behind the patch's guard (ppu_lifter
+ * --insn-patches: if (guard) { new } else { original }) and writes the guards
+ * and the data edits into recompiled/gowa_title_patches.h. Here, once the ELF
+ * is in guest memory and before the title runs, each patch that is switched on
+ * gets its data edits written and its guard set:
+ *
+ *   [patches] disable_mlaa = on       in gowa.ini (what a launcher row would write)
+ *   --set patches.disable_mlaa=on     on the command line
+ *   GOWA_PATCH_DISABLE_MLAA=1         in the environment
+ *
+ * Every patch is off unless switched on. A data edit whose bytes in guest
+ * memory are not the ones the patch expects refuses the whole patch, guard
+ * included: the patch was made for another build of the title. The lifted code
+ * reads the guards, so they change only here, before the guest starts.
+ */
+#include "ps3emu/ps3_settings.h"
+#include <ctype.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <stdio.h>
+
+extern "C" uint8_t vm_read8(uint64_t addr);
+extern "C" void vm_write8(uint64_t addr, uint8_t val);
+
+struct gowa_title_data {
+    int patch;              /* index into k_title_patches; -1 ends the table */
+    uint32_t addr;
+    uint32_t n;
+    uint8_t orig[16];
+    uint8_t val[16];
+};
+struct gowa_title_patch {
+    const char* id;         /* the [patches] key; NULL ends the table */
+    const char* name;
+    int* guard;
+    int ppu_edits;
+};
+
+#define GOWA_TITLE_GUARD(g) extern "C" { int g = 0; }
+#if __has_include("gowa_title_patches.h")
+#include "gowa_title_patches.h"
+#else
+/* recompiled/ from a lift older than this file: no patches. `gowa.py lift`
+ * writes the header. */
+static const gowa_title_data k_title_data[] = { { -1, 0, 0, { 0 }, { 0 } } };
+static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0 } };
+#endif
+
+extern "C" void gowa_title_patches_apply(void)
+{
+    for (const gowa_title_patch* p = k_title_patches; p->id; p++) {
+        char env[96] = "GOWA_PATCH_";
+        size_t k = 11;
+        for (const char* c = p->id; *c && k + 1 < sizeof env; c++)
+            env[k++] = (char)toupper((unsigned char)*c);
+        env[k] = 0;
+        if (!ps3_settings_bool("patches", p->id, env, 0))
+            continue;
+        const int self = (int)(p - k_title_patches);
+        int refused = 0;
+        for (const gowa_title_data* d = k_title_data; d->patch >= 0 && !refused; d++)
+            for (uint32_t i = 0; d->patch == self && i < d->n && !refused; i++) {
+                const uint8_t held = vm_read8(d->addr + i);
+                if (held != d->orig[i]) {
+                    fprintf(stderr, "[patches] %s: refused, guest 0x%08X holds 0x%02X where the patch "
+                            "expects 0x%02X (another build of the title?)\n",
+                            p->name, d->addr + i, held, d->orig[i]);
+                    refused = 1;
+                }
+            }
+        if (refused)
+            continue;
+        unsigned bytes = 0;
+        for (const gowa_title_data* d = k_title_data; d->patch >= 0; d++)
+            for (uint32_t i = 0; d->patch == self && i < d->n; i++, bytes++)
+                vm_write8(d->addr + i, d->val[i]);
+        *p->guard = 1;
+        fprintf(stderr, "[patches] %s: on (%d instruction edit%s, %u data byte%s)\n", p->name,
+                p->ppu_edits, p->ppu_edits == 1 ? "" : "s", bytes, bytes == 1 ? "" : "s");
+    }
+}

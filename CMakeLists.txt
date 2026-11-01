@@ -260,6 +260,7 @@ add_executable(${PROJECT_NAME}
     launcher.cpp
     stubs.cpp
     poll_wait.cpp
+    patches.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}

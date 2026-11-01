@@ -1029,6 +1029,9 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
 /* launcher.cpp: this port's defaults, and the settings window. */
 extern "C" void gowa_port_defaults(void);
 extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
+/* patches.cpp: the title patches switched on in [patches], applied once the
+ * ELF is in guest memory and before the title runs. */
+extern "C" void gowa_title_patches_apply(void);
 
 /* A variable the title needs, unless the environment already has one. */
 static void env_default(const char* name, const char* value)
@@ -1252,6 +1255,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "ERROR: could not load %s\n", elf);
         return 1;
     }
+    gowa_title_patches_apply();   /* [patches]: the ones switched on (patches.cpp) */
 
     derive_vfs_root(elf);
     printf("[boot] VFS root: %s\n", ppu_vfs_root);

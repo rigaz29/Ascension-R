@@ -803,7 +803,7 @@ new runs above both old ones (20.82 / 20.49 against 20.01 / 19.98). That is ~86%
 | PPU code | LLVM; registers in SSA | registers, CR and XER in `ctx`; VMX float lane by lane | 2.3 |
 | RSX thread | one thread decodes and records; Multithreaded RSX optional | one thread walks, records, and drains the GPU at every batch | 1.4, 1.5 |
 | colour buffers to guest memory | Write Color Buffers on (the SPU MLAA needs it) | not written; the frame stays on the GPU, the SPU MLAA output is unseen | 1.6 |
-| title patches | Disable MLAA / Depth of Field / Motion Blur / Mesh Trimming; a 60 FPS patch (canary) | none | 4.3 |
+| title patches | Disable MLAA / Depth of Field / Motion Blur / Mesh Trimming; a 60 FPS patch (canary) | switches, off unless on: Disable MLAA, Depth of Field, Motion Blur (2026-11-01); Mesh Trimming needs SPU edits | 4.3 |
 | beyond an emulator | - | the title's own code, statically: native replacements for its hottest SPU jobs, GPU passes in their place, profile-guided builds | phase 3, 2.4 |
 
 ## 5. The plan
@@ -1166,11 +1166,15 @@ Each item is small and is measured on its own.
   - FSR 1 output scaling exists (`graphics.scaling = fsr1`, `libs/video/rsx_fsr1.c`).
   - Missing: an internal resolution scale. RPCS3's Disable Mesh Trimming patch is what lets the
     title draw correctly above 720p.
-- **4.3 RPCS3's patches as port options**, applied to the ELF and SPU images before lifting:
-  - Disable MLAA (with 1.6, the title also stops its copies);
-  - Depth of Field, Motion Blur;
-  - Mesh Trimming;
-  - later, the 60 FPS patch.
+- **4.3 RPCS3's patches as port options.** Done 2026-11-01 as switches, off unless switched on
+  ([note](2026-11-01-title-patches.md)): `scripts/title_patches.json`, each instruction edit
+  lifted both ways behind a guard, `[patches]` in gowa.ini (or `--set`, or `GOWA_PATCH_<ID>=1`).
+  - Disable MLAA: 20.61 -> 21.63 flips/s (+5.0%, ABBA). The title stops its MLAA work; its
+    tasks wait unsignalled. Until the backend's per-binding program variants go (note, 4), it
+    makes the shader cache compile new variants for some runs;
+  - Depth of Field, Motion Blur: one run each, 20.76 and 22.16 against 20.33;
+  - left: Mesh Trimming (SPU edits in two EDGE modules: an SPU counterpart of
+    `--insn-patches`), later the 60 FPS patch.
 - **4.4 Hitches:** first-play pipeline and texture stalls, and pipeline cache warm-up from the
   disk cache.
 

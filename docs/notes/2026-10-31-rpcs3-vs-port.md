@@ -356,7 +356,9 @@ What is left, largest first:
 1. The EDGE job: the runtime around and inside it, and its code (registers in memory, the exact
    float forms where RPCS3 runs XFloat Approximate).
 2. The frame outside the EDGE phase: 3.3 ms longer.
-3. The MLAA tasks, which RPCS3 does not run (plan 1.6, 4.3).
+3. The MLAA tasks, which RPCS3 does not run (plan 1.6, 4.3). Now a switch, off unless on
+   ([title patches](2026-11-01-title-patches.md)): with it on, 20.61 -> 21.63 flips/s, ~90% of
+   RPCS3's 24.0.
 
 ## 5. How to measure again
 

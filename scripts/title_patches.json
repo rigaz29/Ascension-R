@@ -1,0 +1,41 @@
+{
+ "note": "Switchable patches of GOWA.SELF 1.12. Each is off unless switched on: [patches] <id> = on in gowa.ini, --set patches.<id>=on, or GOWA_PATCH_<ID>=1. `gowa.py lift` lifts every ppu edit in both forms behind the patch's guard (ppu_lifter --insn-patches) and writes recompiled/gowa_title_patches.h; patches.cpp writes the data edits and sets the guard once the ELF is in guest memory, before the title runs. Every orig is checked against the ELF at the lift, and the data again in guest memory: a patch for another build of the title is refused. The sites were found with RPCS3's patch list for this build as a map, and each one read back from this ELF (docs/notes/2026-11-01-title-patches.md). `gowa.py patches` lists them and checks them against the ELF.",
+ "patches": [
+  {
+   "id": "disable_mlaa",
+   "name": "Disable MLAA",
+   "guard": "g_gowa_patch_disable_mlaa",
+   "note": "The title's SPU anti-aliasing: five taskset tasks a frame over a copy of the frame. This port never shows their output (its frame stays on the GPU), so they only cost time. The word at 0x83D004 is the title's own MLAA switch, read in 18 places from its init to every frame (func_0041C344 arms the MLAA counter with it); at 0 the title takes its own paths without MLAA.",
+   "ppu": [
+    {"addr": "0x00397754", "orig": "0x4BFFFCB5", "new": "0x60000000",
+     "note": "func_003973D0: bl 0x397408, the 64-bit entry it builds with r4 = 4"},
+    {"addr": "0x00397784", "orig": "0x4BFFFC85", "new": "0x60000000",
+     "note": "func_003973D0: bl 0x397408, the entry with r4 = 6 (the one with r4 = 5, between them, stays)"}
+   ],
+   "data": [
+    {"addr": "0x0083D007", "orig": "01", "new": "00",
+     "note": "the low byte of the MLAA word 0x83D004: 1 -> 0"}
+   ]
+  },
+  {
+   "id": "disable_depth_of_field",
+   "name": "Disable Depth of Field",
+   "guard": "g_gowa_patch_disable_depth_of_field",
+   "note": "Reads the effect's enable as 0 in its update. The same code as Motion Blur's: the field at +0x20 of the effect's object, read before cmpwi r5,0.",
+   "ppu": [
+    {"addr": "0x0043BCBC", "orig": "0x80BF0020", "new": "0x38A00000",
+     "note": "func_0043BA48: lwz r5,0x20(r31) -> li r5,0"}
+   ]
+  },
+  {
+   "id": "disable_motion_blur",
+   "name": "Disable Motion Blur",
+   "guard": "g_gowa_patch_disable_motion_blur",
+   "note": "Reads the effect's enable as 0 in its update, as Depth of Field's.",
+   "ppu": [
+    {"addr": "0x0043F210", "orig": "0x80BF0020", "new": "0x38A00000",
+     "note": "func_0043F0D0: lwz r5,0x20(r31) -> li r5,0"}
+   ]
+  }
+ ]
+}
