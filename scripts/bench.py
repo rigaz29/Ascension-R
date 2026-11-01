@@ -201,6 +201,9 @@ def gpu_sample(pid, seconds, result):
 # -- one run ------------------------------------------------------------------
 
 THREADS_RE = re.compile(r"^\[threads\] t=(\d+)s flips=([\d.]+)/s")
+# The same line's presents, and the flips never presented (runtimes that count them).
+PRESENTS_RE = re.compile(r"presents=([\d.]+)/s")
+SKIPPED_RE = re.compile(r"skipped=([\d.]+)/s")
 TABLE_RE = re.compile(r"^\[threads\]\s+([\d.]+)%\s+(.+?)\s+x(\d+)\s*$")
 
 
@@ -328,6 +331,13 @@ def run_once(exe, env_extra, a, out, tag):
         gpu_thread.join(timeout=90)
     w = [(round(s - anchor), f) for (s, f) in windows(log_err) if s >= anchor + a.win_from]
     vals = sorted(f for _, f in w)
+    shown = [(p, k) for (s, p, k) in shown_windows(log_err) if s >= anchor + a.win_from]
+    if shown:
+        rec["presents_windows"] = [p for p, _ in shown]
+        rec["presents"] = round(statistics.median(p for p, _ in shown), 2)
+        if all(k is not None for _, k in shown):
+            rec["skipped_windows"] = [k for _, k in shown]
+            rec["skipped"] = round(statistics.median(k for _, k in shown), 2)
     rec.update({"windows": w, "peak_private_mb": peak_priv, "least_free_mb": least_free,
                 "threads": thread_table(log_err, anchor + a.win_from), "gpu": gpu})
     if vals:
@@ -375,6 +385,19 @@ def windows(log_err):
             m = THREADS_RE.match(line)
             if m:
                 out.append((int(m.group(1)), float(m.group(2))))
+    return out
+
+
+def shown_windows(log_err):
+    """(t, presents/s, skipped flips/s or None) for each window of the thread table."""
+    out = []
+    with open(log_err, "r", errors="replace") as f:
+        for line in f:
+            m = THREADS_RE.match(line)
+            p = m and PRESENTS_RE.search(line)
+            if p:
+                k = SKIPPED_RE.search(line)
+                out.append((int(m.group(1)), float(p.group(1)), float(k.group(1)) if k else None))
     return out
 
 
@@ -442,6 +465,10 @@ def line(rec):
     s = "%s movie=%s median %.2f mean %.2f (%d windows %.2f-%.2f) peak private %d MB" % (
         rec["tag"], rec.get("movie_closed_s"), rec.get("median", 0), rec.get("mean", 0), len(rec["windows"]),
         rec.get("min", 0), rec.get("max", 0), rec.get("peak_private_mb", 0))
+    if "presents" in rec:
+        s += " | presents %.2f" % rec["presents"]
+    if "skipped" in rec:
+        s += ", skipped %.2f" % rec["skipped"]
     if rec.get("failed"):
         s += " FAILED: " + rec["failed"]
     return s
@@ -503,9 +530,18 @@ def main(a):
         if vals:
             summary[name] = {"runs": len(good), "windows": len(vals), "median": round(statistics.median(vals), 2),
                              "run_medians": [r["median"] for r in good]}
-            print("  %-10s %d runs, %3d windows, median %.2f (runs %s)" % (
+            extra = ""
+            pv = [p for r in good for p in r.get("presents_windows", [])]
+            if pv:
+                summary[name]["presents"] = round(statistics.median(pv), 2)
+                extra += " | presents %.2f" % summary[name]["presents"]
+            kv = [k for r in good for k in r.get("skipped_windows", [])]
+            if kv:
+                summary[name]["skipped"] = round(statistics.median(kv), 2)
+                extra += ", skipped %.2f" % summary[name]["skipped"]
+            print("  %-10s %d runs, %3d windows, median %.2f (runs %s)%s" % (
                 name, len(good), len(vals), summary[name]["median"],
-                ", ".join("%.2f" % m for m in summary[name]["run_medians"])))
+                ", ".join("%.2f" % m for m in summary[name]["run_medians"]), extra))
         else:
             print("  %-10s no good run" % name)
     result["summary"] = summary

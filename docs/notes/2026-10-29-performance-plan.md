@@ -796,6 +796,56 @@ hundreds of fragment shaders the cache had never seen and skipped ~80,000 draws 
   pipelines, ~80,000 -> 5 draws skipped.
 - Level, ABBA, two runs each: MLAA on 20.03 -> 20.20 flips/s (within the spread); MLAA off 21.94 -> 22.33, without the compile dips (lowest window 18.9 -> 21.6). With MLAA off the frame clock thread (77-79% of a core) now presents ~0.8 a second fewer frames than the title flips: the next limit there.
 
+### 2.14 Update, 2026-11-01: the frame clock thread with MLAA off
+
+With MLAA off (2.13) the frame clock thread presented ~0.8 a second fewer frames than the title
+flipped.
+
+**Why frames went unseen.** The thread does everything in turn: the FIFO walk with the draws'
+recording, then the render (prepass, command lists, Present), record-ahead and the window's
+messages. At a flip the walk stops so that the frame is presented, unless it is more than
+`GCM_FIFO_CATCHUP_BYTES` (64 KB) behind; then it goes on and the frame is never presented. The
+title also waits for the walk to reach its flip before it builds the next frame.
+
+**Where the thread's time went** (the sampler, MLAA off, 80 s): idle 16%; the FIFO walk and RSX
+methods ~19%; the prepass and pipeline lookups ~13%; the draw pass and the driver ~10%; textures
+~9%; vertex uploads ~9%; the fragment programs' structural hash 4.2%; the draws' recording ~4%.
+No one place; but some of it was done two or three times a draw:
+- each program's structural hash at both of a draw's pipeline lookups, its texture units at the
+  prepass (from guest memory, not the program as recorded), and its inline constants at the
+  record;
+- the units' gamma, cube and scale keys at both lookups, though a buffered program then drops
+  them; and a 16-unit walk for each unit's cube flag in the prepass.
+
+**Done** (fork `rsx_d3d12_backend.c`): the snapshot of a program (2.13) now keeps its structural
+hash, texture units and constants, worked out once a batch for each program; the gamma, cube and
+scale keys are worked out only for a program compiled with them in. And the flips never
+presented are counted (`skipped=` in the thread table), with `GCM_FIFO_CATCHUP_BYTES` an
+environment setting; the bench reports presents and skipped flips per run.
+
+**Measured**, level, ABBA, two runs each, MLAA off:
+
+| | flips/s | presents/s | skipped/s | frame clock thread |
+|---|---|---|---|---|
+| before | 21.50 (22.19 / 20.98) | 20.99 (21.58 / 19.93) | ~0.6 | 76-78% |
+| work once a program | 22.14 (22.04 / 22.47) | 22.04 (21.99 / 22.32) | 0.00 | 68-69% |
+| and catch-up at 4 MB | 22.39 (22.49 / 22.23) | 22.38 (22.44 / 22.06) | 0.00-0.10 | 68-69% |
+
+- The thread dropped from 77% to 68.5% of a core, and every flip is presented again.
+- The catch-up threshold does not matter here: 64 KB and 4 MB measured the same. This title's
+  command buffer is in segments, and the backlog the walk computes at a flip is an IO distance,
+  ~8 MB at every flip, so it goes on past flips with either. A frame goes unpresented only when
+  the walk reaches the next flip before the ticker has taken this one: keeping up is what counts.
+  It stays at 64 KB.
+- MLAA on (the default), the same builds: 20.28 -> 20.77 flips/s (+2.4%), both new runs above
+  both old ones (20.94 / 20.72 against 20.45 / 20.18); presents 20.32 -> 20.77; the thread 71-72%
+  -> 67%.
+
+**So neither of the larger steps is needed now:** with the thread at ~68% of a core and nothing
+skipped, splitting it into a walk thread and a render thread (RPCS3's "Multithreaded RSX") would
+not raise the frame rate, which the SPU side sets (2.12, comparison 4.6). It is the step to take
+when the frame clock is the limit again.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

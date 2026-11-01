@@ -102,6 +102,7 @@ void     cellGcmTickFlip(void);
 int      cellGcm_take_flip_pending(void);
 void     cellGcm_rsx_process_fifo(void);      /* drain get -> put */
 unsigned cellGcm_flip_request_count(void);
+unsigned cellGcm_flip_merged_count(void);     /* flips never presented */
 void     cellGcm_fifo_kick_wait(unsigned ms); /* idle wait, woken by a kick */
 }
 
@@ -922,6 +923,7 @@ static DWORD WINAPI thread_table(LPVOID arg)
     };
     ULONGLONG wall_prev = GetTickCount64(), proc_prev = process_cpu();
     unsigned flips_prev = cellGcm_flip_request_count();
+    unsigned merged_prev = cellGcm_flip_merged_count();
     LONG pres_prev = g_frames_presented;
     LONG vbl_prev = g_vblanks;
     unsigned t = 0;
@@ -966,12 +968,14 @@ static DWORD WINAPI thread_table(LPVOID arg)
         const ULONGLONG wall = GetTickCount64(), proc = process_cpu();
         const double win = (double)(wall - wall_prev) * 1e4;   /* 100 ns units */
         const unsigned flips = cellGcm_flip_request_count();
+        const unsigned merged = cellGcm_flip_merged_count();
         const LONG pres = g_frames_presented;
         const LONG vbl = g_vblanks;
         const double gone = proc - proc_prev > live_delta ? (double)(proc - proc_prev - live_delta) : 0.0;
-        fprintf(stderr, "[threads] t=%us flips=%.2f/s presents=%.2f/s vblanks=%.2f/s process=%.0f%% gone=%.0f%% "
-                        "threads=%d started=%d ended=%d\n",
-                t, (flips - flips_prev) * 1e7 / win, (pres - pres_prev) * 1e7 / win, (vbl - vbl_prev) * 1e7 / win,
+        fprintf(stderr, "[threads] t=%us flips=%.2f/s presents=%.2f/s skipped=%.2f/s vblanks=%.2f/s "
+                        "process=%.0f%% gone=%.0f%% threads=%d started=%d ended=%d\n",
+                t, (flips - flips_prev) * 1e7 / win, (pres - pres_prev) * 1e7 / win,
+                (merged - merged_prev) * 1e7 / win, (vbl - vbl_prev) * 1e7 / win,
                 (proc - proc_prev) * 100.0 / win, gone * 100.0 / win, n, started, ended);
         /* Group by name: "spu job" x12 is one line; numbered helpers too. */
         static char gname[MAXT][48]; static double gcpu[MAXT]; static int gcount[MAXT];
@@ -998,7 +1002,7 @@ static DWORD WINAPI thread_table(LPVOID arg)
         memcpy(tid_prev, tid_now, sizeof(DWORD) * n);
         memcpy(cpu_prev, cpu_now, sizeof(ULONGLONG) * n);
         n_prev = n;
-        wall_prev = wall; proc_prev = proc; flips_prev = flips; pres_prev = pres; vbl_prev = vbl;
+        wall_prev = wall; proc_prev = proc; flips_prev = flips; merged_prev = merged; pres_prev = pres; vbl_prev = vbl;
         fflush(stderr);
     }
     return 0;
