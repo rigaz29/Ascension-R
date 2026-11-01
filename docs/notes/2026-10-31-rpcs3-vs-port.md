@@ -308,6 +308,56 @@ SPUs:
   bench reports it and runs again. Found on 2026-11-01: an EDGE job list nobody kicked again,
   now re-kicked ([notes](2026-11-01-menu-freeze.md)).
 
+## 4.6 Where the gap is after plan 2.12 (2026-11-01)
+
+The port at `8d301e3`: 20.66 flips/s against RPCS3's 24.0 (86%). `guestscope.py` again, 40 s of
+the fight; the port ran 19.2 flips/s under the capture (it takes a host core), RPCS3 24.7 under
+its own (section 2).
+
+| | RPCS3 | port after 4.1 | port now |
+|---|---|---|---|
+| EDGE phase, ms a frame | 27.6 | 36.5 | 35.9 |
+| the frame outside it, ms | 12.9 | - | 16.2 |
+| SPUs in an EDGE list while busy | 3.78 | - | 3.76 |
+| EDGE's busy time at four SPUs | 86% | 79% | 86% |
+| an EDGE job per SPU at four SPUs | 68 us | 85 us | 88 us |
+| SPUs in workloads, of six | 5.8 | - | 5.63 |
+
+SPU time a frame per workload (busy time times SPUs):
+
+| workload | RPCS3 | port now |
+|---|---|---|
+| EDGE, three lists | 104 ms | 135 ms (1.30x) |
+| General6 | 35 | 47 (1.35x) |
+| audio | 29 | 37 (1.26x) |
+| RenderJobs | 31 | 29 (0.94x) |
+| RenJobSet2 | 11 | 12 |
+| MeshProc | 5.1 | 6.1 |
+| Batch | 1.7 | 3.3 |
+
+- The scheduling matches now: the same jobs, and EDGE gets the same SPUs. 8.3 of the 11.6 ms
+  between the two frames is the EDGE phase, and all of that is the time a job takes: 88 against
+  68 us per SPU.
+- The port's EDGE job alone on the replay, one SPU and nothing else running: 45.6 us. RPCS3's
+  whole job with one SPU in the list, its policy module's work included: 40 us in the game.
+- Where an EDGE worker's time goes (the sampler, plan 2.12's `--spu-lines` build): the job's
+  code 62% (lifted 54, native 7.5, the exact float redo 1.3), the policy module 7%, the runtime
+  31%: indirect dispatch 9, DMA and MFC 6, copies and compares in the CRT 6.5, lock-line locks
+  and coherency 5, channels 3.5. The runtime is 30% of RenderJobs' time, 42% of RenJobSet's,
+  4% of General6's.
+- The host: the port's process uses 8.2-8.6 logical CPUs, RPCS3 7.4.
+  - Six SPURS workers at ~92% each, as RPCS3's six SPU threads.
+  - The main thread 81-90% (RPCS3 50-73%) and the frame clock thread 68-71% (`rsx::thread` 87%).
+  - Six task threads (`spu job`) at 73-78% that RPCS3 does not have. There a taskset's tasks run
+    on the SPURS SPUs, and with "Disable MLAA" the MLAA tasks do not run at all. Here their
+    threads mostly wait for a signal, and they sit in the path that kicks an EDGE list (plan 2.6).
+
+What is left, largest first:
+1. The EDGE job: the runtime around and inside it, and its code (registers in memory, the exact
+   float forms where RPCS3 runs XFloat Approximate).
+2. The frame outside the EDGE phase: 3.3 ms longer.
+3. The MLAA tasks, which RPCS3 does not run (plan 1.6, 4.3).
+
 ## 5. How to measure again
 
 ```
