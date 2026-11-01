@@ -846,6 +846,73 @@ skipped, splitting it into a walk thread and a render thread (RPCS3's "Multithre
 not raise the frame rate, which the SPU side sets (2.12, comparison 4.6). It is the step to take
 when the frame clock is the limit again.
 
+### 2.15 Update, 2026-11-01: the runtime's work inside an EDGE job
+
+The EDGE workers set the frame (2.12, comparison 4.6: EDGE phase 35.9 against RPCS3's 27.6 ms,
+the same SPUs, a job 88 against 68 us). The question was how much of an EDGE job is the runtime
+rather than the job's own code, and what of it can go.
+
+**Where an EDGE worker's time goes** (HEAD with `--jobcap`, the sampler on the `spurs pm` threads,
+`SPU_JOB_TIME` tagging the samples taken inside a job; level, ~80 s):
+
+- 92.5% inside the jobs, 7.5% between them. The job manager no longer loads the 52 KB job module
+  before every job (2.8): the GETs into code inside a job are ~3 KB, the position-independent
+  pieces below.
+- Inside a job: the job's lifted code 55.0%, its native stages 8.0%, float redo 1.3%; the job
+  manager's own code (its interrupt handler) 4.0%; dispatch 9.9%; DMA ~11% (the `memcpy` of the
+  data alone 3.7%); lock-line and coherency 4.2%; channels and events ~3%; the rest ~3%.
+
+**What the runtime does for one EDGE job** (new: `SPU_JOB_TIME` in a `--jobcap` build prints
+these per workload, per job):
+
+| | per job (79.4 us) |
+|---|---|
+| lifted calls / indirect branches / lookups | 103 / 63 / 70 |
+| branches on the full path | 8.7: the generated register save/restore stub at 0x3FEC0 5.4, the interrupt handler's entry 0xA2C ~2, kernel polls 0.4, irets 1.0 |
+| lookups missing the dispatch cache | 21 |
+| GET / PUT | 15.7 (9.7 KB) / 2.9 (6.9 KB), and 2 lists (23.5 elements) |
+| GETLLAR / PUTLLC / PUTLLUC | 3.1 / 1.1 / 1.0 |
+| lock-line lock | 4.4, 0.7 of them waiting |
+| interrupts (DMA list stall-and-notify) | 2.0 |
+| rdch / rchcnt / wrch | 27 / 3.9 / 22 |
+
+No one item is large: each mechanism costs 1-2 us of the 79.
+
+**Done** (fork, runtime):
+1. **The dispatch cache keyed per 4 KB page.** An EDGE job loads ~2 KB position-independent pieces
+   at 0x11xxx and 0x1Dxxx in turn, ~1.8 span changes a job (96% of the spans a GET ends are these
+   pieces), and each change dropped every cached resolution of the context. Each change now bumps
+   only the pages its spans cover; a resolution keeps its page's count. Misses 21 -> 6 a job.
+   Checked with `SPU_DISPATCH_CACHE=shadow` over a level run: 1.28 billion hits compared with the
+   full resolver, no mismatch.
+2. **The interrupt handler's entry on the fast path.** The fast path started at 0xA80 to stay
+   above every special address; the special ones are 0x9C0, 0x9D0, 0xA00 and 0xA70, and the
+   handler's entry 0xA2C is a plain lifted function. Full-path branches 8.7 -> 6.7 a job.
+3. **`WrEventAck` without the lock-line lock.** It took the lock against a lost update of the LR
+   bit; `event_status` is updated with atomic OR and AND (fork `81344af1`), which closes that
+   without it. Lock acquisitions 4.4 -> 2.45 a job, waits 0.70 -> 0.38.
+
+**Measured:**
+
+| | EDGE job (jobcap builds, last 9 windows) | flips/s |
+|---|---|---|
+| before, jobcap build | 81.2 us (82.8 / 79.7) | 19.45 (19.09 / 19.59) |
+| 1 + 2, jobcap build | 80.1 us (80.8 / 79.4) | 19.44 (19.29 / 19.55) |
+| HEAD, default build | | 20.75 (20.75 / 20.74) |
+| 1 + 2 + 3, default build | | 20.98 (21.05 / 20.89) |
+
+- Default builds, level, ABBA, MLAA on: +1.1%, both new runs above both old ones (the new
+  exe's first run, to warm the driver's cache, gave 21.00).
+- The jobcap ABBA saw 1 and 2 as ~1 us of an EDGE job, inside its run-to-run spread, and no
+  change in flips; the counts above are the firmer measure.
+
+**So:** the runtime's share of an EDGE job is real (~a third), but it is spread over a dozen
+mechanisms of 1-2 us each, and the frame rate moves ~0.26 for each unit of EDGE time (2.12).
+Removing every one of them that is safe to remove would gain a few percent of EDGE time and ~1%
+of frame rate. What is left: the copies themselves (necessary), the interrupt round trip (its
+save and restore stubs are interpreted, 5.4 a job), the check after every lifted call, and the
+lookups' hits.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
