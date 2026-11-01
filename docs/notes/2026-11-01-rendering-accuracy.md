@@ -62,7 +62,8 @@ more than 4 points more near-black pixels than the run's quieter frames:
 - **A band across the frieze at ~8-9 s** (two runs of four, MLAA on and off): a full-width strip,
   darker and shifted. In a captured frame (MLAA off) it starts in the screen-space shadow mask,
   0x01D90000: the strip's edge (y=554) is there first and longest (802 px), then in every target
-  after it. The mask is cleared (op 29), built by 358 full-screen passes (op 706-1190: blended,
+  after it. The mask is cleared (op 29), built by 358 passes (op 706-1190, per-tile triangles,
+  section 6: blended,
   one channel, depth-bounds and stencil tests over the linear depth and the shadow map
   0x01550000) and read by the lit draws (op 1193-1402) in the same frame.
 - **Rectangles with straight edges** whose contents belong elsewhere, at 14 s and 32 s of other
@@ -77,6 +78,11 @@ more than 4 points more near-black pixels than the run's quieter frames:
   depth bound shows as a horizontal edge: these are the seams of the October plan (2026-10-28
   plan, section 5, "Seams"), the screen mask 0x01D90000 built per tile and depth slice with
   depth bounds the SPU writes (P3).
+- P3 (section 6) found two causes, both fixed. The tile seams: every mask pass sampled a stale
+  texture where the title binds its shadow map (a depth texture the backend dropped). The light
+  rectangle left after that (x 392-640, y 305-360 at 10-12 s): the title's transparent effects
+  drawn into a 640x360 4x-antialiased surface, which the backend drew as a 640x360 viewport in
+  its targets' top-left quarter.
 - Unchanged: the title's MLAA path takes a copy of the display for its SPUs and later draws
   sample it; the backend binds a GPU snapshot for those, found in the same or the previous batch
   only (frames with no copy, or the read between two, miss it and read the stale copy). Whether
@@ -107,6 +113,8 @@ Same menu, regions of the still parts (luma):
 - The menu's dropped objects (2.1) pull its average down further: with every query answered
   visible the screenshots' median luma is 57.8 against 53.7, but the frames without dropped
   objects were 56.6 already. Most of the gap to RPCS3 is in every frame.
+- After P3 (section 6) the cinematic is far brighter (its shadow mask was wrong), the menu not:
+  -20% overall and -37% in the shadowed cloth against RPCS3, as before (8 captured frames).
 - Not uniform: shadows lose most, highlights least, as if the port's picture were RPCS3's raised
   to ~1.2, which is what a lower exposure before a filmic tonemap looks like.
 - Not a setting: the system save (where the title keeps its brightness) is byte for byte RPCS3's.
@@ -178,7 +186,7 @@ In order of value for effort. Each step is verified with the same captures and n
   RPCS3's (75.5 overall, 32 in the shadowed cloth), the reader is the PPU, and P5 generalises it.
 - If not: find the exposure in the final passes' constants and trace where the PPU takes it from.
 
-**P3. The tile seams in the cinematic (2.2): next.**
+**P3. The tile seams in the cinematic (2.2). Done: section 6.**
 - Known so far (October plan, "Seams" and "The seams, continued"): seven depth slices, one quad
   per 160x90 tile each, with depth bounds the SPU writes and a stencil test; with the depth
   bounds test off the edges go but the picture darkens; the scissor, the target cache and the
@@ -275,3 +283,53 @@ of the reports, the clears and the counter switches, in time order; 40,000 event
   the frame clock 70%); per frame the fixed build draws 4,028 vs 3,806 (+5.8%), looks up 10.5%
   more textures, and its prepass takes 8.8 vs 8.2 ms. Objects culled before are drawn now: some
   the old counts dropped while in view, some read "visible" before their count is back (P1b).
+
+**Then (fork `12187ab1`): a count reaches its report only while the report is as written.**
+- The title reads a report, takes the value it finds and marks the report again for its next
+  query (0xFFFFFFFF, or 0), often before the GPU's count is back. The count was then written
+  over that mark, and the title took it for its next query's: of 7,481 counts in the menu trace,
+  4,097 landed on a report the title had already marked.
+- A report now keeps the low word of the time stamp the walker wrote with it, and a count goes
+  in only while that and "visible" are still there. Menu trace: of 7,295 counts, 2,384 written,
+  3,898 dropped as taken by the title, 1,013 as taken by a later report. Screenshots once a
+  second: 0 of 62 with dropped objects.
+- The culling jobs read a report in the millisecond the walker writes it (median; 31 ms at the
+  90th percentile): what P1b has to beat.
+
+## 6. P3 done (2026-11-02): the shadow maps and an antialiased surface
+
+**The tile seams: the shadow maps were never sampled.**
+- The screen mask 0x01D90000 is built per light: the title renders the light's shadow map into
+  0x01550000 (depth only, LEQUAL, cleared to 1.0, a region such as 578x796 or 1406x664 of the
+  1408x1406 surface), then draws two inline triangles per 160x90 screen tile, each with the
+  tile's depth bounds and a stencil test (GREATER, mask 0x5F: not the sky), whose program
+  projects the pixel from the linear depth copy and takes three taps of unit 5 (`DBT_VTX`).
+- Unit 5 is the shadow map: DEPTH24_D8 at 0x01550000, zfunc GEQUAL, bilinear. The backend
+  dropped depth-format textures when they were bound, so the unit kept what was bound before, a
+  64x128 DXT1 texture (the October plan's "light pattern" was this), and every mask pass
+  sampled it. Tiles that took another light's pass at the same depth disagreed: the seams; and
+  the scene was shadowed where it is lit.
+- Before the fix, in a captured frame (`RSX_CAP_RAW`): across the seam at x = 800, pixels with
+  the same depth, the same stencil and the same passes whose depth bounds and stencil they meet
+  had mask values 162 and 0; the passes are per tile and the tiles disagreed. The occlusion
+  counts play no part: with `RSX_ZPASS=0` the seams were as many (8 and 8 against 7 and 9 on
+  the tile grid in two runs each).
+- Fix (fork `1b9c06ad`): a depth texture takes the depth plane of the depth surface at its
+  offset, and the program the comparison the decompiler had (depth FUNC reference, four
+  bilinear taps), the coordinate scaled to the light's region.
+- Measured: the mask's edges follow the shadow casters (the creatures' legs on the floor), not
+  the tile grid, and the cinematic is far less dark. Level frame rate unchanged with the next
+  fix too (ABBA 20.66 -> 20.98). The menu's brightness is unchanged (2.4).
+
+**The light rectangle: an antialiased surface drawn at pixel resolution.**
+- One rectangle stayed at 10-12 s, x 392-640, y 305-360. It is first in 0x2114000 and
+  0xA8C000, which the title's transparent effects write (`SURF_DBG`): a 640x360 surface with
+  SQUARE_CENTERED_4 (2x2 samples) over 0xA8C000 + 0x2114000 and the depth 0x11B0000, pitch 5120,
+  i.e. the memory of the 1280x720 targets: effects shaded at a quarter of the rate over
+  full-resolution targets and depth. The backend drew them with a 640x360 viewport, into the
+  targets' top-left quarter.
+- Fix (fork `15450691`): an antialiased surface at its sample resolution, as the shared engine
+  holds one: surface size, viewport and scissor scaled by the sample grid, WPOS per pixel
+  (`rsx_fp_apply_wpos_grid`). `RSX_AA_GRID=0` turns it off.
+- Measured: two runs of seven screenshots (8-14 s): the x = 640 edge is gone from every shot;
+  the few hits left on the tile grid fall on scene edges (the floor's stone joints, by eye).

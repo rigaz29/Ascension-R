@@ -282,7 +282,10 @@ seams and the menu flicker, before speed again):
   `RSX_CAP_DIP=<n>` captures frames drawing less than half of the frame before; `RSX_CAP_SHOT=1`
   captures the frame of each screenshot and the one after it. Manifests carry each draw's
   scissor, depth surface, depth/stencil key, depth bounds and samplers.
-- **Seams.** Their vertical edges sit exactly on an 8x8 grid of screen tiles (x = 160, 320, 480,
+- **Seams.** *Corrected 2026-11-02 (rendering note, section 6): not a light pattern. Unit 5 is
+  the light's shadow map (DEPTH24_D8 at 0x01550000, compared GEQUAL), which the backend dropped
+  when it was bound, so the passes sampled a stale texture; and each tile is two inline
+  triangles.* Their vertical edges sit exactly on an 8x8 grid of screen tiles (x = 160, 320, 480,
   640, ...). They come from a screen mask (`0x01D90000`, red channel) the object lighting reads
   the batch after: per frame, seven depth slices, each one quad per screen tile with its own
   depth bounds (from the SPU, e.g. 0.9116..0.9158), a stencil test, and a fragment program that
