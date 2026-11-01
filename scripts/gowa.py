@@ -466,14 +466,17 @@ def lift_jobmods(elf):
 # code's options): scripts/spu_native_hooks.json names, per lifted module, the
 # function and the native routine called at its entry. A routine does what work
 # it can and leaves the registers as the lifted code expects them, which then
-# goes on (native/spu_edge_skin.c).
+# goes on (native/spu_edge_skin.c). A module is a job module (spu/jobmods) or,
+# named pic_<EA>, a position-independent piece (spu/picfrags).
 NATIVE_HOOKS_FILE = os.path.join(ROOT, "scripts", "spu_native_hooks.json")
 
 
-def native_hooks(lift_dir):
+def native_hooks(lift_dir, pic=False):
     if not os.path.exists(NATIVE_HOOKS_FILE):
         return
     for module, funcs in sorted(json.load(open(NATIVE_HOOKS_FILE)).items()):
+        if module.startswith("pic_") != pic:
+            continue
         path = os.path.join(lift_dir, module, "spu_recomp.c")
         if not os.path.exists(path):
             die("native hook: no lifted module %s" % module)
@@ -505,6 +508,7 @@ def lift_pic(elf):
         die("lift_spu_pic failed")
     n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
     say("%d position-independent SPU pieces lifted to %s" % (n, os.path.relpath(PIC_DIR, ROOT)))
+    native_hooks(PIC_DIR, pic=True)
 
 
 def cmd_jobmods_entries(args):

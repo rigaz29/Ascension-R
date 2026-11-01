@@ -578,6 +578,80 @@ runs lifted.
   of a core less. Kept: it only removes work.
 - Batch did not set the frame. Next: the frame clock thread (1.4, 1.5), then the EDGE job.
 
+### 2.11 Update, 2026-11-01: EDGE's stages measured again; its fixed-point decoder as native code
+
+**Where an EDGE job's time goes now.** The sampler on the workers over the level's 80 s, the
+three EDGE workloads alike; a `--spu-lines` build splits each function by the operation a sample
+falls in:
+
+| function | share of EDGE | what costs most in it |
+|---|---|---|
+| `304A0` (piece `0x758590`) | 4.8% | frsqest/fi ~19%, shufb 10%, the exact int-to-float conversions 8% |
+| `7BB4` | 4.6% | fm/fma/fa ~32% and their range checks ~15%, frsqest/fi ~19% |
+| `30600` (piece `0x755B80`) | 3.9% | shufb 22%, float-to-int conversions 12% |
+| `D92C` | 3.4% | shufb 18%, float-to-int conversions 13% |
+| `30310` (piece `0x75EB40`) | 3.2% | int-to-float conversions ~32%, quadword shifts ~18% |
+| `EC08` (native since 2.8) | 3.0% | |
+
+- Across all of EDGE's lifted code, by operation:
+  - shufb 13.9%;
+  - LS reads and writes 15.1%;
+  - the crossings between lifted functions (`SPU_DIRECT`, `spu_link`) 9.3%;
+  - float ops and their checks ~12%;
+  - frsqest/fi 5.3%;
+  - conversions 3.8%.
+- `30310` and `304A0` are the same fixed-point vertex attribute decoder, 8.0% of EDGE between
+  them.
+  - Most of their cost is integer work and conversions, which are exact natively.
+  - `30310` is the small one: 54 statements, 7 registers carried from one iteration to the next,
+    ~100 iterations a call in the level. It went first.
+  - Native hooks were for job modules only; `gowa.py lift` now puts them into the pieces too
+    (`pic_<EA>` in `scripts/spu_native_hooks.json`).
+
+**Done: the decoder loop `30310` as native code** (`native/spu_edge_decode.c`,
+`GOWA_EDGE_NATIVE` bit 4).
+- A vertex is a 24-byte record of packed bit fields; the loop makes two attributes of it into
+  floats, each field an integer part plus a fraction. It is pipelined three deep:
+  - an iteration fetches the next record (two shufb of the three quadwords around it);
+  - it decodes the record fetched before (two gathers, the fields shifted into place by bits and
+    then bytes, merged);
+  - it converts and stores what was decoded before (csflt of the integer part, cuflt of the
+    fraction, fa).
+- Native: the same three stages in the same order.
+  - The stores come before the next record is read, so outputs that overlap the input read the
+    same bytes as on the SPU.
+  - The format comes from the job: the gather controls and the shift counts are registers. They
+    are prepared once a call, and any values work.
+  - csflt is cvtdq2ps. cuflt is an unsigned conversion with the same rounding (`x >> 1` from
+    2^31). Both run under the SPU code's MXCSR (toward zero, FTZ, DAZ), which is checked at entry.
+  - fa is native with the range check and the +0 rule.
+  - The last iteration runs in the lifted loop, so the job ends with exactly the lifted registers.
+- Checked:
+  - `tests/native/test_edge_native.py` takes the lifted loop from its lifted source and runs it
+    against the native one: random registers and local store, and in a third of the cases the
+    outputs over the input. 3000 cases are identical.
+  - Seven mutants are caught: cuflt as signed, a swapped shift, a bit count, the special
+    selectors, rotma's count, the record read before the stores, r18 left behind.
+  - Replay (`logs/jobcap2`, w15): 0 differ, 110 calls, 12,290 native iterations.
+- Speed:
+  - The loop alone: 28.9 -> 13.9 ns an iteration (gcc, 100 iterations a call).
+  - Replay, four alternate runs: the 40 EDGE jobs 2064 -> 2045 us (-0.9%). The six that use the
+    loop save 3-5 us each.
+  - Level, ABBA, two runs each: 19.42 -> 20.09 flips/s, both on-runs above both off-runs. The
+    bench's first run is often low: without it, 19.73 against 19.83 and 20.21.
+  - In the level: ~1.9M calls and ~200M native iterations a run, no fallback.
+- Next:
+  - `304A0`: the same decoder, plus a lookup (four LS reads by decoded indices) and a third
+    component rebuilt as sqrt(1 - x^2 - y^2) with frsqest/fi.
+    - It is pipelined four deep with 23 registers carried, float ones among them, so frsqest/fi
+      stay the exact forms in all four lanes.
+    - About 1.7-2x on the loop is expected, ~2% of EDGE.
+  - `30310` with two vertices to a 256-bit register (behind a check that the outputs miss the
+    input): about twice again, ~1% of EDGE.
+  - The broader levers: shufb, the LS accessors and the crossings are about a third of EDGE's
+    lifted time, in every function. A cheaper form of any of them helps all of EDGE, and the
+    other workloads too.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
