@@ -1002,6 +1002,70 @@ index a byte at a time, ~1.2 million a frame (`VTX_STATS`).
   for single-block loops (2.12 "Next", -5.5% of EDGE as a prototype) covers both loops and every
   other workload's loops.
 
+### 2.17 Update, 2026-11-02: the audio worker's dispatch; computed jumps as gotos (off for now)
+
+The second half of the review's cheap fixes (its option 6). 2.16 did the main thread's loop at
+`0x41DB50`; this is the audio worker's dispatch.
+
+**Where the audio worker's time went** (`logs/prof-now`, w7, 75 s of the level):
+- Lifted code 66%, the runtime 22%: `spu_lifted_lookup` 7.7%, `spu_indirect_branch` 4.1%,
+  `spu_drain_call_full` 4.0%, `spu_ib_resolve_task` 1.8%. About 18% of the worker's time was
+  dispatch.
+- Its seven hottest lifted functions (job modules `c5a3bed2f4a5`, `5bc2fdee17f4`,
+  `d3eebe50d457`) are branch-free loops. Each pass ends `selb $rX, $head, $exit, $cond;
+  bi $rX`: the head's address comes from an `ila` before the loop, the exit is `$r0` or the
+  code after the loop.
+- A `bi` that is not a return was lowered as "set pc, trampoline, return". Each pass left its C
+  function and came back through the drain loop, `spu_indirect_branch`, the task resolution and
+  the lookup, to enter the same function at its start again.
+
+**Done** (fork: `spu_lifter.py --ijmp-local`, which `gowa.py lift` passes for the job modules):
+- A computed jump (`bi` and the `bi*z` forms, not a return) compares its target with the
+  entries of its own C function that an `ila` of the image loads: its start, or a chunk that
+  `--merge-chunks` put in it.
+- It goes there with a goto when `SPU_IJMP_LOCAL` allows. The tests are `SPU_DIRECT`'s: not the
+  run's first transfer, not a stack-reset entry, no interrupt pending with interrupts enabled,
+  no diagnostic that watches each step. Anything else goes to the dispatcher as before.
+- The goto lands ahead of the entry's shufb preparations, so they are made again.
+- 690 jumps in 16 job modules, ~480 of them in the four audio modules. Every other line of the
+  lifted C is as before.
+- A function with a `--float-spec` body keeps the dispatcher in both bodies. One has both:
+  `759dedc8269b`'s `0x88D8`.
+- `SPU_IJMP_LOCAL=0`: the dispatcher as before. `SPU_IJMP_LOCAL=shadow`: every goto is checked
+  against the lookup and taken only if they agree.
+- `tools/test_spu_lifter_ijmp_local.py` covers:
+  - the loop unmerged and merged: one dispatch (the exit) with the gotos, 100 without;
+  - shadow;
+  - a pending interrupt, which still reaches the drain loop;
+  - a `--float-spec` function, left as it was.
+
+**Measured** (one exe, `SPU_IJMP_LOCAL=0` against `1`):
+- Shadow, a level run (`logs/prof-ijmp`): ~671 million gotos, no mismatch.
+- The audio worker (`SPURS_WID_PROF`):
+  - 68-70% of a core -> 55-57%;
+  - 3.7-4.0 ms a run -> 2.6-2.7 ms;
+  - its samples in the same 75 s 16,142 -> 12,308 (`spu_lifted_lookup` 7.2% -> 1.8%).
+- The time it gave back went to the other workloads: General6 87-88% -> 92% of a core, EDGE
+  211-220 -> 223-227 runs a second. The workers stay at ~593% of six cores.
+- Level, ABBA, six runs each (`logs/abba-ijmp`, `logs/abba-ijmp2`; the mean of each run's
+  windows, then of the runs):
+
+  | | flips/s | presents/s | skipped/s | frame clock thread |
+  |---|---|---|---|---|
+  | `SPU_IJMP_LOCAL=0` | 21.23 | 20.94 | 0.30 | 71.6% of a core |
+  | `SPU_IJMP_LOCAL=1` | 21.41 (+0.8%, t 1.1) | 20.37 (-2.7%, t -1.8) | 1.04 (t 3.3) | 73.8% (t 4.5) |
+
+- The frames came a little faster and fewer of them reached the screen. The frame clock thread
+  took 2.2 points of a core more for 0.8% more frames, and fell behind more often.
+- The likely cause is the cores it shares: six workers, the main thread and the frame clock
+  thread are eight busy threads on six cores with SMT, and denser SPU code leaves a sibling
+  thread less. Not tested further.
+- **The port keeps it off** (`main.cpp`: `env_default("SPU_IJMP_LOCAL", "0")`);
+  `SPU_IJMP_LOCAL=1` turns it on.
+- The same wall stands before 2.16's next step (EDGE as native code): SPU time saved now raises
+  flips, not presents. The frame clock thread needs headroom first, from its own hot spots, a
+  core to itself, or the multithreaded RSX.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

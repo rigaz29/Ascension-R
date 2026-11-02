@@ -467,9 +467,13 @@ def lift_jobmods(elf):
     if os.environ.get("GOWA_JOBMOD_MERGE") != "0":
         extra += ["--merge-chunks", "--merge-skip", ",".join(sorted(JOBMOD_MERGE_SKIP))]
         say("job modules: --merge-chunks, but not %s" % ", ".join(sorted(JOBMOD_MERGE_SKIP)))
+    # --ijmp-local: a computed jump to an entry of its own C function -- the branch-free
+    # loops' `selb $rX, $head, $exit, $cond; bi $rX` -- can be a goto, not a pass through
+    # the dispatcher (~18% of the audio worker's time). main.cpp leaves it off for now;
+    # SPU_IJMP_LOCAL=1 turns it on (plan 2.17).
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
             "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c"),
-            "--float-spec", str(SPU_FLOAT_SPEC)] + extra):
+            "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local"] + extra):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
@@ -501,7 +505,16 @@ def native_hooks(lift_dir, pic=False):
                 head = "void %s(spu_context* ctx) {\n" % func   # lifted before SPU_RESTRICT
             if src.count(head) != 1:
                 die("native hook: %s not found once in %s" % (func, module))
-            src = src.replace(head, "%s    %s(ctx);\n" % (head, native))
+            # --ijmp-local: a computed jump back to the function's start goes to its
+            # ijmp_ label, so the call goes right after that label, which the way in
+            # through the head passes too.
+            at = src.find(head)
+            own = src.find("ijmp_%s: ;\n" % func[-8:], at, src.find("\n}\n", at))
+            if own >= 0:
+                own += len("ijmp_%s: ;\n" % func[-8:])
+                src = src[:own] + "    %s(ctx);\n" % native + src[own:]
+            else:
+                src = src.replace(head, "%s    %s(ctx);\n" % (head, native))
             say("native hook: %s -> %s" % (func, native))
             # --merge-chunks: the loop is also inside the merged run of chunks
             # that leads to it, entered there by a goto rather than through the

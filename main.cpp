@@ -1144,6 +1144,15 @@ static void title_environment(void)
      * last context hits for a whole run (docs/notes/2026-10-28-level-after-l7.md).
      * SPU_MFC_LOOKUP_CACHE=0 goes back to the locked walk. */
     env_default("SPU_MFC_LOOKUP_CACHE", "1");
+    /* The job modules' computed jumps back to an entry of their own function
+     * as gotos (lift --ijmp-local): the audio worker's branch-free loops had
+     * spent ~18% of its time in the SPU dispatcher, and it went from 0.69 to
+     * 0.56 of a core. Off for now: the frame clock thread then needed more of
+     * its core for the same frames and fell behind more often, 20.94 -> 20.37
+     * presents a second for 21.23 -> 21.41 flips
+     * (docs/notes/2026-10-29-performance-plan.md, 2.17).
+     * SPU_IJMP_LOCAL=1 turns it on. */
+    env_default("SPU_IJMP_LOCAL", "0");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));
