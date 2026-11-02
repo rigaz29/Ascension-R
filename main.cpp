@@ -227,6 +227,11 @@ static ULONGLONG clock_us(void)
 static DWORD WINAPI frame_clock(LPVOID)
 {
     ps3_thread_name("frame clock");   /* vblank ticks, the RSX drain and presents */
+    /* GOWA_FRAME_CLOCK_PRIO=<-2..2>: this thread's priority, THREAD_PRIORITY_*
+     * (0 normal, the default; 1 above normal; 2 highest). It shares the CPU's
+     * six cores with six SPU workers and the main thread. */
+    if (const char* e = getenv("GOWA_FRAME_CLOCK_PRIO"))
+        SetThreadPriority(GetCurrentThread(), atoi(e));
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "ps3recomp";
 
@@ -251,6 +256,25 @@ static DWORD WINAPI frame_clock(LPVOID)
      * D3D12_VSYNC=0, lets the title run past 60 fps, for measuring it. */
     const bool flip_on_reach = getenv("GOWA_FLIP_ON_BEAT") == nullptr;
     ULONGLONG flip_min_ms = 16;
+    /* [display] frame_cap = 20 or 30 (the launcher's "Frame rate cap"): a flip
+     * completes and is presented no sooner than ~1/cap s after the one before,
+     * on the vblank beat as on the drain's own path, so with VSync on every
+     * frame stays on screen for the same number of refreshes (three or two at
+     * 60 Hz) instead of a mix of two, three and four -- an even pace below the
+     * title's 30 rather than a judder. Off, the beat completes and presents a
+     * flip whenever the drain has reached one, as before. GOWA_FLIP_MIN_MS
+     * overrides the interval. */
+    bool frame_cap = false;
+    {
+        const char* cap = ps3_settings_str("display", "frame_cap", "GOWA_FRAME_CAP", "off");
+        const int fps = cap ? atoi(cap) : 0;
+        if (fps >= 10 && fps <= 60) {
+            flip_min_ms = (ULONGLONG)(1000 / fps - 2);
+            frame_cap = true;
+            fprintf(stderr, "[gowa] frame cap %d fps: a flip no sooner than %llu ms after the last\n",
+                    fps, (unsigned long long)flip_min_ms);
+        }
+    }
     if (const char* e = getenv("GOWA_FLIP_MIN_MS")) flip_min_ms = (ULONGLONG)atoi(e);
     unsigned drain_poll_ms = 1;
     if (const char* e = getenv("GOWA_DRAIN_POLL_MS")) drain_poll_ms = (unsigned)atoi(e);
@@ -274,22 +298,30 @@ static DWORD WINAPI frame_clock(LPVOID)
         int fired = 0;
         while ((long long)(now_us - (beat0 + beats * 1001000ull / 60ull)) >= 0 && fired < 240) {
             cellGcmTickVBlank();
-            cellGcmTickFlip();
+            /* frame_cap: not before its interval since the last flip. */
+            const bool cap_ok = !frame_cap || clock_ms() - last_flip_ms >= flip_min_ms;
+            if (cap_ok) cellGcmTickFlip();
             /* Present a pending flip BEFORE draining any further. The flip
              * fires at a get==put frame boundary on the guest thread, so the
              * batch held right now is exactly the completed frame; presenting
              * after the drain races the guest's next-frame writes and shows a
              * mixed one. */
             if (rsx_ok && (held || cellGcm_take_flip_pending())) {
-                held = 0;
-                present_guest_frame();
-                last_flip = cellGcm_flip_request_count();
-                last_flip_ms = now;
+                if (cap_ok) {
+                    held = 0;
+                    present_guest_frame();
+                    last_flip = cellGcm_flip_request_count();
+                    last_flip_ms = now;
+                } else {
+                    held = 1;
+                }
             }
             /* Drain the FIFO every tick. This is what writes the RSX sync-fence
              * labels the game's per-frame logic blocks on, so it has to keep
-             * advancing at 60 Hz even while present() throttles. */
-            if (rsx_ok) cellGcm_rsx_process_fifo();
+             * advancing at 60 Hz even while present() throttles. Not past a
+             * flip frame_cap holds (only it leaves one held here): the drain
+             * would reach the next flip and present the two as one. */
+            if (rsx_ok && !held) cellGcm_rsx_process_fifo();
             beats++;
             InterlockedIncrement(&g_vblanks);
             fired++;
@@ -1075,6 +1107,16 @@ static void title_environment(void)
      * full segment publishes `put`, so the drain starts on a frame while the
      * title is still writing it. */
     env_default("GCM_FIFO_SEGMENT", "0x8000");
+    /* Stop the drain at every flip. With the walker 64 KB or more behind the
+     * title (the runtime's default), it went on past a flip: a frame clock
+     * thread that fell behind then presented two to six frames as one, 150-700
+     * ms apart, and a batch of several frames could fill and lose its last flip,
+     * showing a display buffer mid-frame (full-screen colour flashes). The
+     * title waits for its flips, so it never runs far ahead. ABBA, three runs
+     * each, first fight: flips 20.67 -> 20.72, presents 19.96 -> 20.72, gaps of
+     * 100 ms or more 18-31 -> 1 a run, the longest 248-717 -> 105-152 ms
+     * (docs/notes/2026-11-02-fight-stutter.md). */
+    env_default("GCM_FIFO_CATCHUP_BYTES", "0x1000000");
     /* The command ring waits (SEMAPHORE_ACQUIRE) on a label the SPU post-process
      * tasks write when a frame's batch is done. Without the wait the RSX runs
      * ahead of them; both other ports of this title turn it on. */
@@ -1153,6 +1195,13 @@ static void title_environment(void)
      * (docs/notes/2026-10-29-performance-plan.md, 2.17).
      * SPU_IJMP_LOCAL=1 turns it on. */
     env_default("SPU_IJMP_LOCAL", "0");
+    /* The frame clock thread at THREAD_PRIORITY_HIGHEST: it walks the RSX
+     * commands, records the draws and presents, on six cores shared with six
+     * SPU workers and the main thread. ABBA, two runs each, first fight: flips
+     * 20.85 (normal), 21.10 (above normal), 21.23 (highest); the longest present
+     * gaps 157-161 -> 105-115 ms; the audio ring's gaps unchanged, 0.2 per 5 s
+     * (docs/notes/2026-11-02-fight-stutter.md). GOWA_FRAME_CLOCK_PRIO=0: normal. */
+    env_default("GOWA_FRAME_CLOCK_PRIO", "2");
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));

@@ -58,6 +58,8 @@ static const char* const k_fps_n[] = { "Off", "In the title bar", "On screen" };
 static const char* const k_aniso[] = { "game", "2", "4", "8", "16" };
 static const char* const k_aniso_n[] = { "As the game sets it", "2x", "4x", "8x", "16x" };
 static const char* const k_async[] = { "0", "2" };
+static const char* const k_cap[] = { "off", "20", "30" };
+static const char* const k_cap_n[] = { "Off", "20 fps, even pace", "30 fps, even pace" };
 static const char* const k_scale[] = { "bilinear", "sharp", "fsr1" };
 static const char* const k_scale_n[] = { "Bilinear", "Sharp bilinear", "AMD FSR 1" };
 static const char* const k_aa[] = { "off", "smaa" };
@@ -85,6 +87,7 @@ static Opt s_opt[] = {
     { 0, "display", "mode", "windowed", "Window", 0, LIST(k_mode, k_mode_n) },
     { 0, "display", "window_size", "", "Window size", 0, LIST(k_size, k_size_n) },
     { 0, "display", "vsync", "on", "Wait for the display's refresh (VSync)", 1, k_onoff, NULL, 2 },
+    { 0, "display", "frame_cap", "off", "Frame rate cap", 0, LIST(k_cap, k_cap_n) },
     { 0, "display", "show_fps", "title", "Frame rate", 0, LIST(k_fps, k_fps_n) },
     { 1, "graphics", "scaling", "bilinear", "Scaling", 0, LIST(k_scale, k_scale_n) },
     { 1, "graphics", "sharpening", "high", "FSR 1 sharpening", 0, LIST(k_sharp, k_sharp_n) },
@@ -404,7 +407,8 @@ extern "C" int gowa_launcher(void)
 
     popt_init();
     const int prows = (s_npopt + 1) / 2, pgh = s_npopt ? 26 + prows * 30 : 0;
-    RECT r = { 0, 0, S(660), S(420 + (pgh ? pgh + 8 : 0)) };
+    /* 450: Display's five rows and Graphics' five end at y 378, the buttons under them. */
+    RECT r = { 0, 0, S(660), S(450 + (pgh ? pgh + 8 : 0)) };
     AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, FALSE);
     s_main = CreateWindowExA(WS_EX_CONTROLPARENT, "gowa_launcher", "God of War: Ascension (GowARecomp)",
                              WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
