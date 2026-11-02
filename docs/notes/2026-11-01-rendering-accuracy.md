@@ -201,14 +201,15 @@ In order of value for effort. Each step is verified with the same captures and n
   left until something points at it (then MLAA off by default as RPCS3's reference setup, or
   the copy written back before the SPUs read it, P5).
 
-**P4. Texture decode audit (2.3).**
+**P4. Texture decode audit (2.3). Menu, cinematic and level compared: sections 10 and 11.**
 - Find the draws behind the rainbow stripes and the blue patch in captured frames (the
   manifest's textures for that object; `TEX_SAVE` / `FP_IDCOLOR`).
 - Unit-test the suspects against the RSX semantics: the component remap crossbar (0xAA1B,
   0xAA93, 0x29E4), swizzled float formats (Y16_X16_FLOAT, W16Z16Y16X16_FLOAT), the swizzle flag
   on DXT. Fix the decoder; verify on the cinematic screenshots.
 
-**P5. Write-back of targets to guest memory (Write Color Buffers, where needed).**
+**P5. Write-back of targets to guest memory (Write Color Buffers, where needed). Colour surfaces in
+main memory: section 11.**
 - Track the guest ranges the GPU owns (targets drawn since their memory was last written by
   anything else).
 - Readers we see: SPU DMA GETs (`mfc_do_transfer`), RSX copies (blits, transfers). A read of an
@@ -227,7 +228,7 @@ In order of value for effort. Each step is verified with the same captures and n
   (a target sampled before its first draw read from guest memory, or a video frame shown
   before it is decoded).
 
-**P8. References.**
+**P8. References. The first level: section 11.**
 - RPCS3 screenshots at the same points as the bench's (menu, cinematic at fixed times), with its
   current configuration, to compare brightness and detail region by region.
 
@@ -495,3 +496,109 @@ taken as UNORM, so two emulators' copies of one guest texture hash alike. Menu f
 
 No texture of the menu decodes wrongly. The opening cinematic's textures are not compared yet:
 replaying RPCS3's 1.5 GB cinematic capture needs more memory than the machine had free.
+
+## 11. P8: the first level against RPCS3 (2026-11-02)
+
+**Reference.** `tools/rdoc/rpcs3_run.ps1` ran the user's RPCS3 (its settings unchanged) to the
+first level with F12 screenshots every 5 s: the "Dodge" prompt from +210 s, 37 shots to +390 s.
+Two RenderDoc captures of RPCS3 at the level (+330, +375; written to D: with `-CapDir`) and five
+of the port (`port_run.ps1 -At 76,80,84,140,170`) were compared draw by draw.
+
+**The light band is the title's.** RPCS3 shows a soft vertical shaft of light right of Megaera
+too. The port's was harder and whiter, and its whole sky washed out to white.
+
+**The cause: the exposure was stuck at its maximum.** The final composite (fp 0x01BB8202) had
+the same inputs in both emulators:
+- the fog volume: uniform across x, the same alpha per slice (0.345 to 0.275)
+- the 256x1 LUT
+- the linear depth (the sky 26,000-37,000)
+- the samplers (all clamp to edge, LUT and volume linear)
+- 25 of its 27 constants
+
+The other two, c13 and c14, are the exposure E: RPCS3 had E = 0.520 and 0.556 in its two
+captures, the port 1.4 every frame of the level (the menu's fixed 0.944 was right). The title
+measures the scene's average luminance down a chain of passes into a 1x1 A8R8G8B8 surface at IO
+offset 0xB20000, whose context DMA is the host buffer (0xFEED0001): main memory, EA 0x70B20000.
+The PPU reads it there, a half float in the first two bytes (the shader writes the half's bytes
+as R and A twice). The port drew the surface on the GPU and never wrote it to guest memory, so
+the PPU read 0 and set the maximum. RPCS3 writes it back (this title's custom config has Write
+Color Buffers on).
+
+Shown with a lever (`GUEST_POKE`):
+- The same bytes written into local memory at 0xC0B20000 changed nothing.
+- 2E F7 2E F7 (RPCS3's value of that frame) written at 0x70B20000 took the port's E from 1.4 to
+  0.804.
+- The bytes the other way round (F7 2E ...) changed nothing.
+
+So the RSX's A8R8G8B8 pixel is the bytes A R G B, and the half is big-endian.
+
+**Fix (fork).** A draw or clear into a colour surface in main memory is recorded with its offset,
+pitch, clip and format. At the batch's end each such surface is copied into that frame's readback
+buffer. When the batch's fence has passed, the pixels go to guest memory at the IO offset's EA in
+the RSX's byte order. `RSX_MAIN_WB=0` turns it off.
+
+This title has one such surface; its write-back is 4 bytes a frame, a frame or two after the RSX
+would have written it. The PPU now reads the scene's luminance (0.09-0.21 over the level), and E
+follows it between 0.64 and 0.79.
+
+Level brightness by region: RPCS3's 37 shots against 16 of the port (1 s apart, 70-145 s after
+the load; `level_avg`, regions as fractions of the frame):
+
+| region | RPCS3 | port before | port now |
+|---|---|---|---|
+| whole | 84.5 [68-103] | 109.9 (+30%) | 89.0 (+5%) |
+| sky right of Megaera | 95.4 [9-151] | 106.9 (+12%) | 86.9 (-9%) |
+| platform | 88.9 [56-124] | 123.3 (+39%) | 101.7 (+14%) |
+| left pillar | 43.9 [14-77] | 79.6 (+82%) | 54.7 (+25%) |
+
+The sky shows its clouds again, and the shaft is as soft as RPCS3's. The camera moves, so these
+are averages over different moments.
+
+Still open: the port's E (0.64-0.79) is above RPCS3's two samples (0.52, 0.56). In RPCS3's first
+capture the 1x1 surface held 0x2EF7 (0.109) and E was 0.520. With 0x2EF7 held constant, the port's
+E settles at 0.804. Either the luminance the port measures over time differs (the chain's reads
+of its Y16_X16 targets go through converted copies), or the PPU takes more than this surface
+into E.
+
+Level frame rate, ABBA (`logs/abba-mwb`), two runs each: 20.55 and 20.30 flips/s before, 20.20
+and 20.37 with the write-back (within the spread).
+
+**P4 continued.** `texhash` on RPCS3's opening-cinematic capture (97 textures) against three
+port captures of the same cinematic (80-84 s):
+- 84 have an identical copy in the port.
+- 7 are frame data: the luminance chain's four reads, the fog volume, two screen copies.
+- 6 static textures (BC1/BC3/R8, 128-256 px) are not in the port's frames. RPCS3's capture is an
+  earlier shot (the rocks behind Megaera); the port's are later ones.
+
+At the level, 198 of RPCS3's 207 textures have an identical copy. The rest:
+- 5 are frame data.
+- 4 are real textures (a 1024x1024 mask; 512x256 diffuse, specular and normal maps of one object)
+  that the port's frames do not hold.
+
+The rainbow stripes (2.3) showed in one port capture (140 s): on the far cliffs left of the
+chains and on the mountains at the right edge. The cliff draw (fp 0x01B25182, 8 textures) is
+RPCS3's draw with the same program and the same 6 textures, but:
+- two of its units read noise: 0xC5412100 (BC1 512x512, where the stripes' orange comes from) and
+  0xC5392000 (BC3 256x256)
+- the right images, RPCS3's for those two units, are in the port's later capture (170 s) at
+  0xC5B4E800 and 0xC5ACE700, both 0x73C700 further on
+
+The title moves this object's textures in local memory. For a while the port's draw reads the
+place they are not (yet) in, or the place the copy has not filled in guest memory. In another
+run's 16 level shots there were no stripes. Next:
+- the guest memory at both places at that moment (`RSX_CAP_MEM`)
+- the copy that moves them, and whether the port carries it out in guest memory
+
+**Tools.**
+- `inspect.py`:
+  - "event" lists the samplers (separate ones and those of combined image samplers)
+  - "actions_last" / "actions_n" describe only a frame's last N draws, or draws of given vertex
+    counts. Describing every draw of a port frame of 10,000 actions took over 10 minutes.
+- `port_run.ps1 -At` takes a list of times.
+- `rpcs3_run.ps1`:
+  - `-CapDir` puts RPCS3's captures on another drive
+  - its memory guard reads the free-memory counter
+- In the fork:
+  - `GUEST_PEEK=<ea>:<n>[:<every>]` logs guest memory at each flip, and `GUEST_POKE=<ea>:<hex>`
+    writes bytes there (`io:<offset>` for an IO offset)
+  - `RT_OFFDBG` prints each surface's context DMA handles

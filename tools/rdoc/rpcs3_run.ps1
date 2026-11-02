@@ -5,11 +5,12 @@
 # writes its own screenshot under screenshots\, copied to <Out>\t<s>.png), and with -RenderDoc
 # loads RenderDoc's Vulkan layer into this RPCS3 process only (environment variables; nothing is
 # registered) and captures -CapFrames frames at each second in -CapAt (trigger.py, captures in
-# %TEMP%\RenderDoc). Times count from the epilepsy warning, the first screen that holds 60 Hz. A
+# %TEMP%\RenderDoc, or <CapDir>\RenderDoc). Times count from the epilepsy warning, the first screen that holds 60 Hz. A
 # memory guard closes RPCS3 when free RAM stays under -MinFreeMB.
 param([Parameter(Mandatory = $true)][string]$Out, [int]$End = 110, [int]$ShotFrom = 5, [int]$ShotEvery = 5,
       [string]$CapAt = "", [int]$CapFrames = 1, [switch]$RenderDoc, [int]$WaitStart = 300,
-      [int]$MinFreeMB = 700, [string]$Rpcs3 = "D:\Games\PS3\RPCS3", [string]$Title = "NPUA80918")
+      [int]$MinFreeMB = 700, [string]$Rpcs3 = "D:\Games\PS3\RPCS3", [string]$Title = "NPUA80918",
+      [string]$CapDir = "")
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rdHome = if ($env:RENDERDOC_HOME) { $env:RENDERDOC_HOME } else { "$env:USERPROFILE\tools\RenderDoc_1.47_64" }
 New-Item -ItemType Directory -Force $Out | Out-Null
@@ -30,10 +31,16 @@ public static class RdocWin {
 "@
 $log = "$Out\run.txt"; Set-Content -Path $log -Value "" -Encoding utf8
 function L($m) { Add-Content -Path $log -Value $m; $m }
-function FreeMB { [int]((Get-CimInstance Win32_OperatingSystem).FreePhysicalMemory / 1024) }
+function FreeMB { [int](Get-Counter '\Memory\Available MBytes').CounterSamples[0].CookedValue }
 if ($RenderDoc) {
   $env:VK_ADD_IMPLICIT_LAYER_PATH = $rdHome
   $env:ENABLE_VULKAN_RENDERDOC_CAPTURE = "1"
+  # RenderDoc writes captures under the process's temp folder: -CapDir moves it (a capture of
+  # RPCS3 is 1-2 GB).
+  if ($CapDir) {
+    New-Item -ItemType Directory -Force $CapDir | Out-Null
+    $env:TMP = $CapDir; $env:TEMP = $CapDir
+  }
 }
 $eboot = "$Rpcs3\dev_hdd0\game\$Title\USRDIR\EBOOT.BIN"
 $p = Start-Process -FilePath "$Rpcs3\rpcs3.exe" -ArgumentList @("--no-gui", "--input-config", "automation", "`"$eboot`"") -WorkingDirectory $Rpcs3 -PassThru

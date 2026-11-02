@@ -1,8 +1,9 @@
 # Read a RenderDoc capture (rdoc.ps1 inspect <params>). Parameters: "capture", "out", "what" (a
 # list of the steps below), and the steps' own. Results go to <out>, the log to <out>/inspect.log.
 #   actions   every action; draws with their targets, depth, viewport, pixel shader and the
-#             pixel-stage textures (slow on a big capture: each draw is replayed). -> actions.txt,
-#             textures.txt
+#             pixel-stage textures (slow on a big capture: each draw is replayed; "actions_last":
+#             N describes only the last N draws, "actions_n": [3, 4] only draws of those vertex
+#             counts). -> actions.txt, textures.txt
 #   save      "save": [[event, "resource id", "name"], ...] -> <name>.png as of that event
 #   raw       "raw": [[event, "resource id", "name"], ...] -> <name>.bin (mip 0, every slice)
 #   swap      the swapchain images as of the last event -> swap_<n>.png
@@ -106,6 +107,15 @@ try:
     what = P.get("what", [])
 
     if "actions" in what:
+        # "actions_last": N describes only the frame's last N draws (the rest by name), for a
+        # capture with thousands of draws.
+        draws = [a.eventId for a, _ in order if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch)]
+        n_last = int(P.get("actions_last", 0))
+        described = set(draws[-n_last:]) if n_last > 0 else set(draws)
+        if P.get("actions_n"):
+            # only draws of these vertex counts (e.g. [3, 4]: full-screen passes)
+            ns = set(int(v) for v in P["actions_n"])
+            described = set(e for e in described if acts[e].numIndices in ns)
         with open(os.path.join(OUT, "textures.txt"), "w", encoding="utf-8") as f:
             for k, t in texs.items():
                 f.write("%s %dx%dx%d mips=%d arr=%d fmt=%s ms=%d flags=%s name=%s\n" % (
@@ -114,7 +124,7 @@ try:
         with open(os.path.join(OUT, "actions.txt"), "w", encoding="utf-8") as f:
             for a, depth in order:
                 line = "%s%d %s" % ("  " * depth, a.eventId, a.GetName(sf))
-                if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch):
+                if a.eventId in described:
                     try:
                         ctl.SetFrameEvent(a.eventId, False)
                         st = ctl.GetPipelineState()
@@ -215,6 +225,23 @@ try:
             f.write("targets %s\n" % ", ".join(outputs(st)))
             for i, d, vf, sws in views(st, rd.ShaderStage.Pixel):
                 f.write("  view %d: %s viewfmt=%s%s\n" % (i, d, vf, sws))
+            def samp(tag, i, s):
+                fl = s.filter
+                f.write("  %s %d: address %s/%s/%s filter min=%s mag=%s mip=%s func=%s aniso=%s "
+                        "lod=[%g,%g] bias=%g border=%s compare=%s\n" % (
+                            tag, i, s.addressU, s.addressV, s.addressW, fl.minify, fl.magnify,
+                            fl.mip, fl.filter, s.maxAnisotropy, s.minLOD, s.maxLOD, s.mipBias,
+                            list(s.borderColorValue.floatValue)[:4], s.compareFunction))
+            try:
+                # separate samplers (D3D12), and the samplers of combined image samplers (Vulkan)
+                for u in st.GetSamplers(rd.ShaderStage.Pixel, True):
+                    samp("sampler", u.access.index, u.sampler)
+                for u in st.GetReadOnlyResources(rd.ShaderStage.Pixel, True):
+                    s = getattr(u, "sampler", None)
+                    if s is not None:
+                        samp("view sampler (%s)" % getattr(s, "type", "?"), u.access.index, s)
+            except Exception as e:
+                f.write("  samplers: %s\n" % e)
             targets = ctl.GetDisassemblyTargets(True)
             for stage, suffix in ((rd.ShaderStage.Pixel, "ps"), (rd.ShaderStage.Vertex, "vs")):
                 refl = st.GetShaderReflection(stage)
