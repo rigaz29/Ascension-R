@@ -3,6 +3,7 @@
     gowa.py bench                                   # build/GowARecomp.exe, one run
     gowa.py bench --runs 2 --variant "a|build/ab_a.exe|" --variant "b|build/ab_b.exe|RSX_ZPASS=0"
     gowa.py bench --baseline logs/bench-<stamp>/result.json --shots 75,140 --gpu 100
+    gowa.py bench --variant "fsr|||--set graphics.scaling=fsr1 --set display.window_size=1600x900"
 
 A run starts the executable with PAD_FILE input: Square every 5 s from 15 s
 until the opening movie's video decoder closes, then Cross on the main menu
@@ -49,6 +50,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import statistics
 import subprocess
 import threading
@@ -66,8 +68,9 @@ WM_CLOSE, WM_KEYDOWN, VK_F12 = 0x0010, 0x0100, 0x7B
 
 def add_args(p):
     p.add_argument("--variant", action="append", default=[],
-                   help='"name|exe|ENV=1;ENV2=0" (exe relative to the repo; default '
-                        '"base|build/GowARecomp.exe|"); repeat for an A/B')
+                   help='"name|exe|ENV=1;ENV2=0|ARGS" (exe relative to the repo; default '
+                        '"base|build/GowARecomp.exe|"; ARGS: the executable\'s own, e.g. '
+                        '"--set graphics.antialiasing=smaa"; gowa.ini is not changed); repeat for an A/B')
     p.add_argument("--runs", type=int, default=1, help="runs per variant, alternated (default 1)")
     p.add_argument("--env", action="append", default=[], help="K=V for every variant")
     p.add_argument("--route", default=None,
@@ -230,7 +233,8 @@ def run_once(exe, env_extra, a, out, tag):
     log_out, log_err = os.path.join(out, tag + ".log"), os.path.join(out, tag + ".err")
     shots_dir = os.path.join(os.path.dirname(exe), "screenshots")
     with open(log_out, "w") as fo, open(log_err, "w") as fe:
-        p = subprocess.Popen([exe, "--no-launcher"], cwd=os.path.dirname(exe), env=env, stdout=fo, stderr=fe)
+        args = shlex.split(env_extra.get("GOWA_BENCH_ARGS", ""), posix=False)
+        p = subprocess.Popen([exe, "--no-launcher"] + args, cwd=os.path.dirname(exe), env=env, stdout=fo, stderr=fe)
     t0 = time.monotonic()
 
     def t():
@@ -443,6 +447,9 @@ def parse_variant(s):
         if "=" in kv:
             k, v = kv.split("=", 1)
             env[k.strip()] = v
+    # The fourth field: the executable's own arguments, kept with the run's env record.
+    if len(f) > 3 and f[3].strip():
+        env["GOWA_BENCH_ARGS"] = f[3].strip()
     return name, os.path.join(ROOT, exe) if not os.path.isabs(exe) else exe, env
 
 
