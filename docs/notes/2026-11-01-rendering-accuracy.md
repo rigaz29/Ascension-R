@@ -180,7 +180,7 @@ In order of value for effort. Each step is verified with the same captures and n
 - Measure what culling saves: level frame rate with `RSX_ZPASS=0` against the fix.
 - Verify: 0 of 30 menu screenshots with dropped objects, with culling on.
 
-**P2. The dark picture: prove the exposure path first (2.4). In progress: section 9.**
+**P2. The dark picture: prove the exposure path first (2.4). Resolved: section 9.**
 - Experiment: after each frame, write the 1x1 luminance target back to its guest address
   (a copy to a readback buffer, read one frame later: no stall). If the menu's luma moves toward
   RPCS3's (75.5 overall, 32 in the shadowed cloth), the reader is the PPU, and P5 generalises it.
@@ -384,39 +384,97 @@ patch Disable MLAA on (the same for every variant of each bench).
   level screenshots unchanged by eye; level 21.27 against 21.04 flips/s with the old fill (one
   run each).
 
-## 9. P2 so far (2026-11-02): the menu is still 20% darker
+## 9. P2: the dark menu (2026-11-02): resolved
 
-Measured with `menu_luma` (the regions of 2.4 against the same RPCS3 shot, 8 captured frames):
--20% overall, -15% sky, -7% amber, -13% rock, -37% shadowed cloth, after P1, P3 and P7 alike.
+**Result.** Menu brightness by region, the mean over RPCS3's own 14 screenshots of one run (F12,
+5 s apart; the menu animates, the brackets are the range) and over 9 frames of the port 1.5 s
+apart (`menu_avg`, the fade-in frame left out):
 
-**The luminance chain was broken; fixed, but it does not set the exposure.**
-- The chain (the scene of the frame before, 0x02114000, down to 640x360, 160x180, 40x45, 8x9 and
-  1x1 at 0x00B20000) draws each step as A8R8G8B8 and reads it in the next draw as
-  Y16_X16_FLOAT, through a converted copy refreshed before each draw. The refresh was skipped
-  when its source was the target bound, a check made before the draw's own retarget: so against
-  the previous draw's target, the step just drawn. Every step after the first read zeros and the
-  1x1 luminance was 0.
-- Fix (fork): the check compares with the targets and depth surface the draw itself binds (the
-  same for the depth-to-colour copy). The chain now ends in 0.097 (both halves), its steps
-  non-zero; level and screenshots unchanged (ABBA 21.02 / 20.98).
-- But no draw, RSX copy or SPU transfer reads 0x00B20000, and writing it back to guest memory
-  every frame (`RSX_WB`, an experiment not kept) changed nothing: 59.8 against 60.7.
+| region | RPCS3 | port at the start of the day | port now |
+|---|---|---|---|
+| whole visible | 67.9 [66-70] | 61.3 (-10%) | 68.4 (+1%) |
+| sky | 120.8 [114-132] | 118.8 (-2%) | 122.8 (+2%) |
+| amber shard | 129.9 [119-142] | 128.1 (-1%) | 133.6 (+3%) |
+| right rock | 34.3 [29-43] | 35.6 (+4%) | 36.7 (+7%) |
+| left fabric | 28.4 [25-35] | 20.3 (-29%) | 29.7 (+5%) |
 
-**What the final composite does** (fp 0x01BB8202, 47 instructions; constants with `FPK_PICK`): the
-scene (0x00E10000) decoded as rgb x (alpha x 7 + 1); a depth fog whose colour is a white LUT with
-an alpha ramp (256x1, main memory, remap 0xAA1B: right) times a 64x32 half-float screen table
-(main memory, two buffers a frame apart); x0.944 (constant over the menu: no adaptive exposure);
-a filmic curve; sRGB out. 90% of the scene's pixels have alpha ~0 (no boost).
+Every region is now inside RPCS3's own range. (Section 2.4's -20% was against the user's
+screenshot, a brighter moment of the animated menu; against RPCS3's own shots the gap was -10%.)
+The black patches on the cloth and rocks and the red-black stain at the left edge are gone.
 
-**Open leads:**
-- The 64x32 table is all zero in both buffers. An SPU job (pc 0x0834C) PUTs zeros over it
-  (the same local-store buffer to every row, twice in 20 s), the PPU zeroed it once; no
-  other writer, and no 64x32 surface anywhere: the fog/glow term it scales is never there.
-- Next to RPCS3's shot the menu's amber is dimmer and less glowing inside, and the rock's left
-  edge has a dark red stain RPCS3 does not show (a decode error, P4?).
-- RPCS3's frames as ground truth (what the table and the scene target hold there) would settle
-  it; RenderDoc is not installed (installing it is for the user to allow).
+**How it was found: RenderDoc on both.** RenderDoc 1.47 (portable) captured RPCS3 (its Vulkan
+layer loaded into that process only, through `VK_ADD_IMPLICIT_LAYER_PATH` and
+`ENABLE_VULKAN_RENDERDOC_CAPTURE`; nothing registered) and the port (`RENDERDOC_DLL`). Python run by
+`qrenderdoc --ui-python` triggered the captures at set times and compared them draw by draw: pixel
+history, texel values, constant buffers, vertex shader outputs and shader debug traces.
+
+Four faults, each fixed in the fork:
+
+1. **The composite's table is a volume.** The fog/glow term of the final composite (fp 0x01BB8202,
+   unit 5) reads a 64x32x16 RGBA16F volume (SET_TEXTURE_FORMAT dimension 3, depth 16 in
+   CONTROL3), not a 64x32 table. Its first slice is empty and slices 1-15 rise with depth (R 0.03 to
+   0.45), in our guest memory exactly as in RPCS3's texture. The backend made a 2D texture of the
+   first slice, so the term was always zero. Now the volume is a TEXTURE3D of every slice with a
+   Texture3D view, and the program declares that unit Texture3D and samples it with three
+   coordinates. Alone this took the menu from -10% to -3%. (Section 9's first lead, "the table is
+   all zero; an SPU job only clears it", had read the first 16 KB, which is the empty slice.)
+2. **Cube textures were never sampled as cubes.** A buffered program declared every unit in the
+   Texture2D array, and the cube retarget matched a declaration form the decompiler no longer
+   emits, so a TEXTURECUBE view was read through a Texture2D declaration. Cube and volume units are
+   now declared on their own t-registers through the decompiler's per-unit path, and they are part
+   of the pipeline key. `RSX_TEX_SEP=0` keeps the array; `RSX_TEX3D=0` keeps volumes as their first
+   slice.
+3. **A cube's face stride was wrong for DXT3/DXT5.** The pyramid was summed with 8 bytes a block
+   for every compressed format, so faces 1-5 were read from half their offsets. Once the cubes were
+   sampled as cubes, the menu rocks reflected noise. The upload now uses
+   `rsx_texture_cube_face_stride`.
+4. **SRC1 [21:19], the first source's read precision.** The cloth and rocks program (key CFB7E14B,
+   186 instructions) has 4 there on four MULs, among them `MUL h10.y, r3.w, c` with r3.w = N.L, and
+   RPCS3's translation clamps exactly those four sources to [0, 1]. Read as is, N.L = -0.18 scaled
+   the light, the colour went to -0.07, and the pixel was written black. At one such pixel
+   everything else was equal between the two captures:
+   - the 7 textures' texels at the pixel's uv
+   - the 57 constants
+   - the vertex outputs of the same vertices
+   - the shader's structure
+   One NRM carries 5 and is left as read, as RPCS3 leaves it. 3 clamps to [-1, 1] (the cinematic,
+   below). No other value occurs, and one would be read as is and logged. `RSX_FP_SRC_PREC=0`
+   turns this off.
+
+Also added: texture sign expansion (UNSIGNED_REMAP_BIASED) compiled into D3D12 programs, as the
+other backends do (`RSX_TEX_EXPAND=0` leaves it out). No menu program uses it.
+
+**The luminance chain** (section 9's first fix, kept): the converted copy of a target read as
+Y16_X16_FLOAT is no longer skipped against the previous draw's target. The chain does not set the
+exposure: no draw, copy or SPU transfer reads its 1x1 result.
 
 Tools added: `RSX_CAP_MEM=<ea>:<bytes>` (guest memory in a capture), `FPK_PICK=<fp>[:<every>]` (a
-program's inline constants per draw), `SPU_DMA_RANGE` now shows a PUT's first bytes;
-`scripts`-side in the session's scratchpad: `menu_luma.py`.
+program's inline constants per draw), `FP_PICK=u<hash>` (dump a program by its key hash, the "ucode"
+in a capture's pipeline names, with its bytes as `duck_fp.bin`), `SPU_DMA_RANGE` now shows a PUT's
+first bytes.
+
+**Beyond the menu.**
+- In the opening cinematic, the fog volume now shows: the pale teal sky and hazy mountains behind
+  Megaera match RPCS3's shots of the same shots. Before, they were dark and brown.
+- The cinematic's LG2s carry the first-source precision 3. RPCS3's translation is
+  `log2(clamp(abs(h1.z), -1, 1))`, the only [-1, 1] clamps among its 59 pixel shaders there, and
+  3 is now that clamp.
+- In the first level the fog whitens the distance. A soft vertical band of light shows at the
+  right edge. It is probably a light shaft in the SPU-built volume, but it is not yet checked
+  against RPCS3, which has no level reference (P8).
+- Level frame rate, ABBA (`logs/abba-p2`):
+  - start of the day: 18.95 and 20.82
+  - now: 19.07 and 20.66
+  The first new run lost draws while the new cube and volume program variants compiled once (they
+  are kept in the shader cache); the second is level with the old.
+
+**Tools in `tools/rdoc/`** (RenderDoc 1.47, `RENDERDOC_HOME` or `%USERPROFILE%\tools\RenderDoc_1.47_64`):
+- `rpcs3_run.ps1` boots the game in the user's RPCS3 with its settings unchanged:
+  - presses through the menu to the cinematic
+  - takes RPCS3's own F12 screenshots
+  - with `-RenderDoc`, captures frames at set times
+- `port_run.ps1` does the same for a port bench run.
+- `rdoc.ps1 <script> <params.json>` runs `trigger.py` (capture a running process) or `inspect.py`
+  (actions, saves, raw data, swapchain, pixel history, one event with a shader debug trace, texel
+  picks, vertex outputs, RPCS3's or the port's constants, every pixel shader) inside
+  `qrenderdoc --ui-python`.
