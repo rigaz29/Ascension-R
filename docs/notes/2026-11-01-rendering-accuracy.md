@@ -228,7 +228,7 @@ main memory: section 11.**
   (a target sampled before its first draw read from guest memory, or a video frame shown
   before it is decoded).
 
-**P8. References. The first level: section 11.**
+**P8. References. The first level: section 11; its exposure: section 12.**
 - RPCS3 screenshots at the same points as the bench's (menu, cinematic at fixed times), with its
   current configuration, to compare brightness and detail region by region.
 
@@ -602,3 +602,64 @@ run's 16 level shots there were no stripes. Next:
   - `GUEST_PEEK=<ea>:<n>[:<every>]` logs guest memory at each flip, and `GUEST_POKE=<ea>:<hex>`
     writes bytes there (`io:<offset>` for an IO offset)
   - `RT_OFFDBG` prints each surface's context DMA handles
+
+## 12. P8: the exposure's last gap (2026-11-02)
+
+**What section 11 left.** The port's level exposure was 0.64-0.79, RPCS3's two captures 0.520 and
+0.556. Section 11's comparison (0x2EF7 held: 0.804 in the port, 0.520 in RPCS3 with the same value)
+does not stand by itself: with the 1x1 value held, the port's E closes on its final value by the
+same factor every frame in log space (ln E - ln E* x0.283 every 60 frames, 2.1% a frame: 1.339,
+0.929, 0.837, 0.813, 0.807, 0.805 ... 0.804), so E follows about two seconds of the scene's
+luminance, and one frame's 1x1 value says little about that frame's E.
+
+**The luminance chain in both captures** (RPCS3 12476, the port's 140 s capture). Five passes in
+both: the scene (1280x720) to 640x360, 160x180, 40x45, 8x9 and the 1x1. Each target is A8R8G8B8 and
+the next pass reads it as Y16_X16_FLOAT (two big-endian halves; RPCS3 views the target as R16G16,
+the port converts a copy, both with the same halves). The first four passes keep the mean of what
+they read: RPCS3 0.2008, 0.2003, 0.2002, 0.2009; the port 0.2215, 0.2214, 0.2214, 0.2233.
+
+The last pass sums 20 point samples of the 8x9 grid and scales the sum by 0.05 (c11.x). Its
+offsets (c1-c10, in texels of c0.zw = 0.125, 0.111111) put every sample's x on a texel edge, 1.0 or
+3.0 texels (u = 0.125, 0.375). Which texel an edge sample takes decides the result:
+- RPCS3 binds an 8x9 texture: columns 1 and 3, rows 0, 2, 4, 6, 8. The sum of those texels gives
+  0x2EF8; its 1x1 holds 0x2EF7.
+- The port bound its copy at the target's size (320x180) and scaled the coordinate by 8/320
+  (fp_tcscale 0.025). The edges landed a hair short: columns 0 and 2, the same rows. Those give
+  0x2EC0; its 1x1 holds 0x2EBF.
+
+Both are reproduced to one half-float ulp. With RPCS3's columns the port's frame would have
+measured 0.154 instead of 0.105. The scales of the other passes (1, 0.5, 0.0625, 0.125) are exact,
+which is why their means held.
+
+**Fix (fork).** The Y16_X16 copy is now the size of the texture the program reads, one per unit and
+size (`y16_copy_key`), and the program's coordinates reach it unscaled (`dr_coord_scales` takes the
+copy's size). It is still refreshed before each draw that reads it, now only over what is read (the
+last pass converts 72 texels, not 57,600). `RSX_Y16_EXACT=0` restores the target-sized copy. The
+chain's copies take four render-target slots instead of two (26 of the 32 at the level), and
+`off_rt_get` now logs when all 32 are in use instead of failing silently.
+
+**Result.** The level, the same exe both ways (`logs/gfx-y16x`, E from the frames after the
+cinematic's last fade):
+
+| | E mean | E median | E range | 1x1 mean |
+|---|---|---|---|---|
+| `RSX_Y16_EXACT=0` | 0.678 | 0.681 | 0.53-0.78 | 0.132 |
+| now | 0.536 | 0.546 | 0.45-0.58 | 0.163 |
+| RPCS3, two captures | | | 0.520, 0.556 | |
+
+Brightness against RPCS3's 37 level shots (`level_avg`, 16 shots each):
+- the whole picture: +6% before, -2% now
+- the upper sky band: -17%, now -1%
+- the left pillar: +28%, now +9%
+- the platform: +8%, now -16%
+- the sky right of Megaera: +3%, now +23%
+
+The camera moves, and the regional numbers swing with what is in each region at the sampled
+moments. The whole picture and E are the measure.
+
+Level frame rate, ABBA (`logs/abba-y16x`), two runs each, the same exe: 20.52 and 21.05 flips/s
+with `RSX_Y16_EXACT=0`, 21.04 and 20.90 now (within the spread). No run logged a full set of
+render-target slots.
+
+Not done: a capture of the fixed build, to see columns 1 and 3 taken directly. The run was
+stopped when the machine ran low on memory.
