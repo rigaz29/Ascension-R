@@ -97,6 +97,8 @@ differ.
 - The title still makes its five MLAA tasks at start-up, whatever the word says, but never
   signals them: the six `spu job` threads went from 76-79% of a core to 2.6-3.2%.
 - The picture: the same scene, nothing missing (`logs/bench-nomlaa`, shots at load + 75 s).
+  - Later, frame captures showed that in this path bloom and the motion blur are drawn but
+    overwritten before they reach the picture ([FSR 3 note](2026-11-03-fsr3.md), section 3).
 - It made the backend compile new shaders every run, and skip draws while they built: section 5.
 
 **Depth of Field, Motion Blur.** One run each against the same exe with nothing on:
