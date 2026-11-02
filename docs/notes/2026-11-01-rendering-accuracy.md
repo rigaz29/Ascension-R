@@ -478,3 +478,20 @@ first bytes.
   (actions, saves, raw data, swapchain, pixel history, one event with a shader debug trace, texel
   picks, vertex outputs, RPCS3's or the port's constants, every pixel shader) inside
   `qrenderdoc --ui-python`.
+
+## 10. P4: texture decode audit, the menu (2026-11-02)
+
+`tools/rdoc` `inspect` with `texhash` hashes every texture of a capture that is not a render target
+(level 0, every face or slice, as of the frame's end), with 8-bit BGRA reordered to RGBA and sRGB
+taken as UNORM, so two emulators' copies of one guest texture hash alike. Menu frames, RPCS3's
+(60 textures) against the port's (61):
+
+- 55 are byte for byte the same: every DXT1/3/5 image, the cube maps, the 8-bit ones and the
+  256x1 LUT.
+- The other 5 are frame data:
+  - the luminance chain's four R16G16_FLOAT reads of render targets (RPCS3 views the target
+    as Y16_X16; the port converts a copy)
+  - the fog volume (the SPU's, already shown equal in section 9)
+
+No texture of the menu decodes wrongly. The opening cinematic's textures are not compared yet:
+replaying RPCS3's 1.5 GB cinematic capture needs more memory than the machine had free.

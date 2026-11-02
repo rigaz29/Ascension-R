@@ -333,6 +333,36 @@ try:
                 f.write("ps %s first event %d pipeline '%s'\n" % (ps, a.eventId, names.get(rid_s(pipe), "")))
         log("shaders: %d" % len(seen))
 
+    if "texhash" in what:
+        # Every texture that is not a render target: size, format, levels, and an md5 of its
+        # level-0 data as of the last event (every face or slice), with 8-bit BGRA reordered
+        # to RGBA and sRGB taken as its UNORM twin, so that two emulators' copies of one guest
+        # texture hash alike whichever channel order they store. -> texhash.txt
+        import hashlib
+        ctl.SetFrameEvent(last_event, True)
+        with open(os.path.join(OUT, "texhash.txt"), "w", encoding="utf-8") as f:
+            for k, t in texs.items():
+                cat = t.creationFlags
+                if cat & (rd.TextureCategory.ColorTarget | rd.TextureCategory.DepthTarget | rd.TextureCategory.SwapBuffer):
+                    continue
+                fmt = t.format.Name()
+                h = hashlib.md5()
+                faces = t.arraysize if t.depth <= 1 else 1
+                total = 0
+                for sl in range(max(1, faces)):
+                    data = bytes(ctl.GetTextureData(t.resourceId, rd.Subresource(0, sl, 0)))
+                    if fmt.startswith("B8G8R8A8"):
+                        b = bytearray(data)
+                        b[0::4], b[2::4] = data[2::4], data[0::4]
+                        data = bytes(b)
+                    h.update(data)
+                    total += len(data)
+                base = fmt.replace("_SRGB", "_UNORM").replace("B8G8R8A8", "R8G8B8A8")
+                f.write("%s %dx%dx%d mips=%d arr=%d fmt=%s bytes=%d md5=%s name=%s\n" % (
+                    k, t.width, t.height, t.depth, t.mips, t.arraysize, base, total, h.hexdigest(),
+                    names.get(k, "")))
+        log("texhash done")
+
     if "port" in what:
         eid = int(P["event"])
         ctl.SetFrameEvent(eid, True)
