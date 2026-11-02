@@ -913,6 +913,95 @@ of frame rate. What is left: the copies themselves (necessary), the interrupt ro
 save and restore stubs are interpreted, 5.4 a job), the check after every lifted call, and the
 lookups' hits.
 
+### 2.16 Update, 2026-11-02: what sets the frame after the rendering work; the frame clock's first round
+
+**Where the frame stands.** The level at 21.0 flips/s with MLAA off (the user's `gowa.ini`),
+RPCS3 24.0. The thread table: the SPU workers 580% of six cores, the main thread 95%, the frame
+clock thread 76%. That last one was 68% on 2026-11-01: the rendering fixes since (the occlusion
+counts' extra draws, P3's shadow maps and antialiased surface) added ~18% to its frame.
+
+**Each part made 25% longer** (`logs/probe-now`, ABBA, two runs each; the 2026-11-01 figures are
+the [comparison note](2026-10-31-rpcs3-vs-port.md)'s 4.4):
+
+| +25% on | flips/s | change | 2026-11-01 |
+|---|---|---|---|
+| nothing | 21.02 | | |
+| the frame clock thread (`RSX_SLOW=25`) | 18.40 | -12.5%; presents 20.5 -> 4.6 a second | -2.8% |
+| EDGE (`SPURS_WID_SLOW`, w14-16) | 19.30 | -8.2% | -6.5% |
+| General6 (w2) | 20.36 | -3.1% | |
+| the main thread (`GOWA_MAIN_SLOW=25`) | 20.82 | -1.0% | ~0 |
+
+- The frame clock thread is now the most sensitive. Slowed, it falls behind, and the walk passes
+  flips without presenting them. Diagnostics as light as `PERF=1` did the same (3.5 presents a
+  second).
+- EDGE sets the rest.
+
+**The sampler** (`logs/prof-now`, 75 s of the level, `PS3_SAMPLE_THREAD`, `SPURS_WID_PROF`):
+- The SPU workers: 590% of six cores. EDGE 2.79 cores, General6 0.95, audio 0.70, RenJobSet
+  0.64, RenderJobs 0.56.
+- The main thread: `poll_mwaitx` 41%. One spin loop the hooks did not have, 15%: in
+  `func_0041D4E8`, at `0x41DB50`, until the u16 at `*(r30 + 0xC) + 0xE0` reads 0 (its samples
+  fall on the loop's load, compare and branch). Lifted work ~28%, coherency ~5%.
+- The frame clock thread:
+  - idle in the message pump 20%
+  - the FIFO walk and the methods ~19% (`rsx_process_method` 8.3%)
+  - the vertex uploads ~9.4%
+  - the textures ~10%
+  - the prepass ~9%
+  - the draws and the driver ~10%
+- The GPU: the 3D engine 28% on average, at 525-885 MHz.
+
+**Where the walk's time goes** (`GCM_METHOD_HIST`, words a second):
+
+| words a second | what |
+|---|---|
+| ~500k | NO_OPERATION (0x0100) |
+| ~790k | vertex constants (already one call a run, `rsx_process_vp_run`) |
+| ~127k | DRAW_INDEX_ARRAY |
+| ~88k | SET_BEGIN_END |
+| ~80k | INLINE_ARRAY |
+| ~70k | INVALIDATE_VERTEX_CACHE_FILE (0x1714) |
+| ~33k each | the two scissor words |
+
+`rsx_process_method` is a chain of ~150 tests ahead of the draw and scissor handlers. NO_OPERATION
+and 0x1714 went through all of them to the -1 at its end. `upload_tris_vp_raw` also read each
+index a byte at a time, ~1.2 million a frame (`VTX_STATS`).
+
+**Done** (fork, and `scripts/ppu_hooks.json`):
+1. `rsx_process_method`: the frequent methods jump to their handlers; NO_OPERATION and 0x1714
+   return -1 at once (`RSX_METHOD_FAST=0`: the chain).
+2. The walker skips NO_OPERATION words that do not increment into other methods
+   (`GCM_NOP_FAST=0`).
+3. The index conversion as SSE4.1 (`rsx_index_copy.h`, `VTX_IX_SIMD=0`): eight 16-bit indices an
+   operation. `tools/test_rsx_index_copy.py` compares it with the scalar form on 8,000 random
+   arrays (lengths, offsets, ranges).
+4. The main thread's loop at `0x41DB50` calls `gowa_poll_wait`, as the other four. The PPU code
+   was lifted again for it (`gowa.py lift --chunks 200`, 200 files rebuilt).
+
+**Measured** (`logs/abba-fc1`, ABBA, two runs each):
+
+| | flips/s | presents/s | frame clock thread |
+|---|---|---|---|
+| before | 21.01 (21.04 / 21.01) | 20.64 | 75.5-76.3% |
+| 1-4 | 21.19 (21.23 / 20.87) | 20.84 | 71.1-71.7% |
+| 1-4 and `TEX_CACHE_MB=2048` | 21.27 (21.35 / 21.09) | 21.17 | 71.5-71.7% |
+
+- The frame clock thread's work is 6% less, back to ~71% of a core. The frame rate moved within
+  the spread (+0.9%): the saturated SPU side is the other half of the limit.
+- A texture cache of 2048 MB instead of 1311 (a third of the 4 GB): +0.4% flips, +1.6% presents,
+  0.4 GB more private memory. The default stays.
+
+**Next, EDGE as native code (plan 2.11's list), weighed before starting:**
+- `7BB4` (lighting, 4.6% of EDGE): 59 float operations an iteration (29 fm, 18 fma, 8 fs), two
+  frsqest/fi pairs, 18 shufb, 12 stores. Its work comes in pairs, so it can go two elements to a
+  256-bit operation, as the normal loop (`A950`) did. Expected ~1.8x.
+- `30600` (4.7%): ~130 instructions an iteration, its shufb controls computed in the loop, float
+  to integer conversions, clgth/selb tests. Statement for statement it would be ~1.2-1.3x (as
+  `304A0`'s first form).
+- At -8.2% for +25% of EDGE, both would give ~+1-1.5% flips/s. The lifter's registers in locals
+  for single-block loops (2.12 "Next", -5.5% of EDGE as a prototype) covers both loops and every
+  other workload's loops.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

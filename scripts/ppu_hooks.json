@@ -8,6 +8,8 @@
     {"addr": "0x0044CD64", "fn": "gowa_poll_wait",
      "note": "func_0044CD20: the job-graph scan (func_0044CA48) until its entries are done"},
     {"addr": "0x0044D154", "fn": "gowa_poll_wait",
-     "note": "func_0044D120: the same scan, from its other caller"}
+     "note": "func_0044D120: the same scan, from its other caller"},
+    {"addr": "0x0041DB50", "fn": "gowa_poll_wait",
+     "note": "func_0041D4E8: until the u16 at [*(r30 + 0xC)] + 0xE0 reads 0 (15% of the main thread in the first level)"}
   ]
 }
