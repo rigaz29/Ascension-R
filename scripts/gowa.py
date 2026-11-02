@@ -43,7 +43,9 @@ TOOLS = os.path.join(PS3RECOMP, "tools")
 LOCAL = os.path.join(ROOT, "local.json")
 ANALYSIS = os.path.join(ROOT, "analysis")
 RECOMPILED = os.path.join(ROOT, "recompiled")
-BUILD = os.path.join(ROOT, "build")
+# GOWA_BUILD_DIR: another build tree (relative to the repo, or absolute), e.g. a --jobcap one
+# beside the normal build, so the two need not rebuild everything each time one is switched.
+BUILD = os.path.join(ROOT, os.environ.get("GOWA_BUILD_DIR") or "build")
 VFS_GAME = os.path.join(ROOT, "vfs", "PS3_GAME")
 HDD0 = os.path.join(ROOT, "gamedata", "dev_hdd0")
 
@@ -455,6 +457,22 @@ JOBMOD_SKIP = {}
 JOBMOD_MERGE_SKIP = {"jobmod_a67e549fa0ab_e41E8", "jobmod_1bdd67b54c3b_e7F60"}
 
 
+def loop_locals_args():
+    """GOWA_LOOP_LOCALS=1: the job modules and pieces lifted with --loop-locals, but not the
+    loops a native routine takes (spu_native_hooks.json): their lifted copy runs one iteration.
+    GOWA_LOOP_LOCALS_MAX=N: only loops that name at most N registers."""
+    if os.environ.get("GOWA_LOOP_LOCALS") != "1":
+        return []
+    args = ["--loop-locals"]
+    if os.path.exists(NATIVE_HOOKS_FILE):
+        heads = sorted({f[-8:] for funcs in json.load(open(NATIVE_HOOKS_FILE)).values() for f in funcs})
+        if heads:
+            args += ["--loop-locals-skip", ",".join(heads)]
+    if os.environ.get("GOWA_LOOP_LOCALS_MAX"):
+        args += ["--loop-locals-max", os.environ["GOWA_LOOP_LOCALS_MAX"]]
+    return args
+
+
 def lift_jobmods(elf):
     shutil.rmtree(JOBMODS_DIR, ignore_errors=True)
     extra = ["--skip-ea", ",".join("%X" % ea for ea in sorted(JOBMOD_SKIP))] if JOBMOD_SKIP else []
@@ -469,11 +487,11 @@ def lift_jobmods(elf):
         say("job modules: --merge-chunks, but not %s" % ", ".join(sorted(JOBMOD_MERGE_SKIP)))
     # --ijmp-local: a computed jump to an entry of its own C function -- the branch-free
     # loops' `selb $rX, $head, $exit, $cond; bi $rX` -- can be a goto, not a pass through
-    # the dispatcher (~18% of the audio worker's time). main.cpp leaves it off for now;
-    # SPU_IJMP_LOCAL=1 turns it on (plan 2.17).
+    # the dispatcher (~18% of the audio worker's time). main.cpp turns it on;
+    # SPU_IJMP_LOCAL=0 turns it off (plan 2.17, 2.18). --loop-locals: loop_locals_args.
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
             "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c"),
-            "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local"] + extra):
+            "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local"] + extra + loop_locals_args()):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
     say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
@@ -528,13 +546,28 @@ def native_hooks(lift_dir, pic=False):
                 if pos < 0:
                     break
                 fn_start = src.rfind("\nvoid ", 0, pos)
+                ins = 0
                 if src.find(head, fn_start) != fn_start + 1:     # not the function above
                     at = pos + len(label)
-                    src = src[:at] + "    %s(ctx);\n" % native + src[at:]
+                    # --loop-locals: the loop's registers are loaded into locals on the
+                    # line before its label; the routine reads and writes ctx->gpr, so
+                    # it runs ahead of that load (once on the way in, as it takes the
+                    # loop from there).
+                    prev = src.rfind("\n", 0, pos) + 1
+                    if src[prev:pos].lstrip().startswith("spu_l") and "= ctx->gpr[" in src[prev:pos]:
+                        at = prev
+                    call = "    %s(ctx);\n" % native
+                    src = src[:at] + call + src[at:]
+                    ins = len(call)
                     extra += 1
-                pos += len(label)
+                pos += len(label) + ins
             if extra:
                 say("native hook: %s also in %d merged function(s)" % (native, extra))
+            # Between a loop's local loads and its label the routine would work on
+            # registers the loop no longer reads.
+            if re.search(r"\n[ \t]*spu_l\d+ = ctx->gpr\[\d+\];[^\n]*\nloc_%s:\n[ \t]*%s\(ctx\);"
+                         % (func[-8:], native), src):
+                die("native hook: %s lands after the loop-locals loads of loc_%s" % (native, func[-8:]))
         # the routines' declarations ahead of every function that calls them
         first = min(i for i in (src.find("\nvoid "), src.find("\nstatic void ")) if i >= 0)
         decls = "".join("void %s(spu_context* ctx);\n" % n for n in sorted(set(funcs.values())))
@@ -554,7 +587,7 @@ PIC_LIST = os.path.join(ROOT, "scripts", "spu_pic_pieces.json")
 def lift_pic(elf):
     shutil.rmtree(PIC_DIR, ignore_errors=True)
     if run([sys.executable, os.path.join(TOOLS, "lift_spu_pic.py"), "--elf", elf,
-            "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC)]):
+            "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC)] + loop_locals_args()):
         die("lift_spu_pic failed")
     n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
     say("%d position-independent SPU pieces lifted to %s" % (n, os.path.relpath(PIC_DIR, ROOT)))

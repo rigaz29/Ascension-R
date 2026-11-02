@@ -1066,6 +1066,136 @@ The second half of the review's cheap fixes (its option 6). 2.16 did the main th
   flips, not presents. The frame clock thread needs headroom first, from its own hot spots, a
   core to itself, or the multithreaded RSX.
 
+### 2.18 Update, 2026-11-03: computed jumps as gotos on; the replay repaired; the loops' registers in locals (off)
+
+**Computed jumps as gotos, on.** 2.17 left `SPU_IJMP_LOCAL` off because the frame clock thread
+then fell behind more often. The stutter fixes since (`docs/notes/2026-11-02-fight-stutter.md`:
+the drain stops at every flip; the frame clock thread at the highest normal priority) took that
+cost away. Level, ABBA, three runs each (`logs/a-ijmp`; the mean of each run's windows, then of
+the runs):
+
+| | flips/s | presents/s | skipped/s | frame clock thread |
+|---|---|---|---|---|
+| `SPU_IJMP_LOCAL=0` | 20.70 | 20.65 | 0 | 70.4% of a core |
+| `SPU_IJMP_LOCAL=1` | 21.33 (+3.0%, t 2.1) | 21.40 | 0 | 73.1% |
+
+- Every flip is presented in both. The long gaps are the same: one a run, at ~89 s.
+- The port now sets `SPU_IJMP_LOCAL=1` (`main.cpp`).
+
+**The replay, repaired** (fork `runtime/spu/spu_jobcap.c`). Captures taken in the fight
+(`SPU_JOB_CAPTURE_T0=90`) replayed with 14 of 120 jobs off their record, then hung. There were
+three causes:
+1. **The kernel poll.**
+   - A job manager polls the SPURS kernel inside a job (`cellSpursModulePoll`). In the game the
+     kernel answers.
+   - A replay has no kernel and answered 0 ("workload 0"), so the job manager went another way.
+   - The capture now records the answer after the line the poll copies to LS 0x100 (format
+     `SPUJCAP2`), and the replay serves it.
+2. **Channel counts.** A channel count (`rchcnt`) was compared with the record as if it were
+   part of the request. Every non-zero count was a divergence, from the replay's first version.
+3. **The stall status.**
+   - In the game, reading `MFC_RdListStallStat` clears the stall mask. A read served from the
+     record did not clear the live one.
+   - The stall-and-notify event came back after the handler's acknowledge, and the handler ran
+     again, deeper each time, until the stack overflowed.
+
+Also:
+- A run that has gone off its record stops after 64 more requests.
+- The replay takes the files in name order (its sort compared pointers).
+- `SPU_JOB_REPLAY_TRACE=1` prints every request.
+
+Two new captures, from 90 s into the level:
+- `logs/jobcap6`: General6 (w2), RenderJobs (w12), EDGE (w15); 40 jobs each.
+- `logs/jobcap7`: Batch (w6), RenJobSet (w8-w11), w13; 30 each.
+
+277 of 290 jobs come out as in the game. Batch's other 13 end before their record does, the
+same in every build.
+
+`PS3_SAMPLE_MAIN` cannot profile a replay: the sampler suspended the replay's thread while it
+held the C runtime's lock, and both stopped.
+
+**The loops' registers in locals** (2.12's "Next"; fork `spu_lifter.py --loop-locals`):
+
+How it works:
+- It applies to a single-block loop that ends in its one conditional branch back, with no other
+  way out. Its SPU registers live in C locals:
+  - loaded before its label, after its shufb preparations;
+  - renamed inside;
+  - the registers it writes stored back after the branch back, and in the pending-interrupt exit
+    of a merged chunk entry.
+- It skips the loops a native routine takes (`--loop-locals-skip`, from
+  `scripts/spu_native_hooks.json`). Their lifted copy runs one iteration after the routine, and
+  the copies in and out were all it did there.
+- `--loop-locals-max` (`GOWA_LOOP_LOCALS_MAX`) caps the registers a loop may name. Not used.
+- It covers 438 loops: 419 in the job modules, 19 in the pieces.
+
+The native hooks:
+- `gowa.py native_hooks` puts the routine's call ahead of a loop's loads in a merged function.
+- The first build had it after them: the check looked for a 4-space indent, and the lifter
+  writes 8. The routine then worked on registers the loop no longer read, and 14 of 40 EDGE jobs
+  replayed wrong.
+- A check now stops the lift if a call lands there.
+
+`tools/test_spu_lifter_loop_locals.py`:
+- It checks the shape, a loop with another way out, a loop without a store, the skip list and
+  the cap.
+- It builds the lift with and without the option and runs both on 2,000 random contexts:
+  unmerged, merged, with an interrupt pending at entry and with one arriving mid-loop.
+- Two mutants fail it: no store after the loop, and none in the interrupt exit.
+
+Replay, best of three passes of ten runs a job. The replay's own spread on the large workloads
+is +/-0.5%.
+
+| workload | jobs | without | with | |
+|---|---|---|---|---|
+| RenderJobs (w12) | 40 | 527.5 us | 505.3 us | -4.2% |
+| General6 (w2) | 40 | 852.2 us | 843.8 us | -1.0% |
+| EDGE (w15) | 40 | 55.9 us | 56.3 us | +0.6% |
+| Batch (w6) | 30 | 23.2 us | 23.0 us | -1.1% |
+| RenJobSet (w8-w11) | 120 | | | -0.4% to +1.2% |
+
+- General6 runs two kinds of job: `0xBF60` (-7.6%) and `0x81E8` (+0.6%).
+- All 290 jobs come out as without it. Batch's 13 diverge the same way.
+
+The versions on the way (the geometric mean of the per-job ratios):
+
+| | General6 `0xBF60` | General6 `0x81E8` | RenderJobs | EDGE |
+|---|---|---|---|---|
+| every loop, every register stored back | -8.7% | -0.2% | -2.0% | +3.7% |
+| only loops with a store; hooked loops skipped | -9.1% | +51% | -2.0% | ~0 |
+| every loop but the hooked ones; written registers stored back | -7.6% | +0.6% | -4.1% | +0.4% |
+
+- Two changes together took EDGE from +3.7% to +0.4% (the first row against the last):
+  - the hooked loops skipped (`A950` names 81 registers);
+  - only the written registers stored back.
+- Leaving out the loops without a store made General6's `0x81E8` jobs 51% slower:
+  - In that module this changes one loop, `0x5DD8`: a float loop of 40 registers with no store.
+  - Why its absence cost so much was not traced.
+  - So loops without a store can gain too. A likely reason (not verified) is the float forms'
+    out-of-line exact paths, which make the compiler reload `ctx->gpr` as a store does.
+
+Level, ABBA, three runs each (`logs/b-ll`):
+
+| | flips/s | presents/s | frame clock thread |
+|---|---|---|---|
+| without | 21.60 | 21.65 | 72.7% of a core |
+| with | 21.55 (-0.2%, t -0.3) | 21.61 | 72.1% |
+
+- The SPU time it saves does not reach the frame rate.
+  - RenderJobs' -4.2% is ~1.3 ms of its ~32 ms a frame (40 jobs of ~0.8 ms in the game).
+  - On the frame's critical path that would be ~+2.8% flips/s. It is not there.
+- Like 2.12's levers without a level gain, it stays off.
+  `GOWA_LOOP_LOCALS=1 py scripts/gowa.py lift --jobmods-only` turns it on.
+- The fallback, `7BB4` as native code, was estimated at +0.7% (2.16). That is below what an
+  ABBA of this size can see, and it is SPU time too. Not done.
+
+**Texture decode:** see `docs/notes/2026-11-02-fight-stutter.md`, "After P1-P4":
+- Swizzled B8 is decoded a 4x4 tile at a time: 3.89 -> 0.44 ns a texel.
+- The first spill chunk is made at boot.
+
+**Next:** find what bounds the frame now. Use 2.7's probe again: slow each workload, the main
+thread and the frame clock thread one at a time.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

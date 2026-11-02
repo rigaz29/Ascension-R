@@ -1189,12 +1189,13 @@ static void title_environment(void)
     /* The job modules' computed jumps back to an entry of their own function
      * as gotos (lift --ijmp-local): the audio worker's branch-free loops had
      * spent ~18% of its time in the SPU dispatcher, and it went from 0.69 to
-     * 0.56 of a core. Off for now: the frame clock thread then needed more of
-     * its core for the same frames and fell behind more often, 20.94 -> 20.37
-     * presents a second for 21.23 -> 21.41 flips
-     * (docs/notes/2026-10-29-performance-plan.md, 2.17).
-     * SPU_IJMP_LOCAL=1 turns it on. */
-    env_default("SPU_IJMP_LOCAL", "0");
+     * 0.56 of a core. Off at first: the frame clock thread then fell behind
+     * more often. With the drain stopping at every flip and that thread at the
+     * highest priority, ABBA, three runs each: 20.70 -> 21.33 flips/s (+3.0%),
+     * every frame presented (docs/notes/2026-10-29-performance-plan.md, 2.17
+     * and 2.18).
+     * SPU_IJMP_LOCAL=0 turns it off. */
+    env_default("SPU_IJMP_LOCAL", "1");
     /* The frame clock thread at THREAD_PRIORITY_HIGHEST: it walks the RSX
      * commands, records the draws and presents, on six cores shared with six
      * SPU workers and the main thread. ABBA, two runs each, first fight: flips

@@ -154,3 +154,56 @@ and the draws whose pipelines were building were skipped.
   The pace is even, at a lower average: the frames that were ready in 33 ms now wait for 50.
 - **Not done:** RPCS3 recorded at the same moments. Its 37 screenshots show no flash, but they
   are too sparse to rule out a half-second one.
+
+## After P1-P4: the texture burst (2026-11-03)
+
+With P1-P4 one long gap is left per session, at 88-93 s: 116-183 ms in the six runs of
+`logs/a-ijmp`. Its hitch lines:
+
+- 74-105 textures uploaded, 30.9-86.0 ms on the frame clock thread:
+  - decode 17-29 ms;
+  - one upload buffer made (a frame index's second spill chunk), 6.2-49.5 ms.
+- 4-19 pipelines made, 2.0-11.5 ms.
+- The rest, 20-70 ms over a normal frame, is not on the frame clock thread's books. It is most
+  likely the game's own frame (its longest were 76-92 ms, "What was found" 1); not traced at
+  this moment.
+
+At 77-79 s each frame index made its first spill chunk of the texture ring, 5.3-7.3 ms each.
+
+**What the decode costs**, by format (a census line every 10 s, new; `logs/c-decode`, 149 s):
+
+| format | textures | Mtexels | ms | ns a texel |
+|---|---|---|---|---|
+| `0x81` B8, swizzled | 357 | 186 | 724 | 3.89 |
+| `0x86`/`0x88` DXT1/DXT5 | 8,112 | 3,600 | 366 | 0.08-0.16 (a copy) |
+| `0x85` A8R8G8B8, linear | 118 | 99 | 53 | 0.54 |
+| `0x9F` Y16_X16_FLOAT, swizzled | 81 | 5 | 21 | 4.5 |
+
+B8 swizzled was two thirds of the decode, at 65-223 ms every 10 s of the fight.
+
+**Done** (fork):
+- **C-1:** each frame index's first spill chunk is made at boot with the ring, and is never
+  released when idle.
+- **C-2:** swizzled B8, A8R8G8B8 and D8R8G8B8 are deswizzled a 4x4 Morton tile at a time with
+  32-bit operations (`decode_swizzled_tiles`, `libs/video/rsx_texture_layout.c`).
+  - It needs both sides a multiple of 4, at most 4096; other sizes go texel by texel.
+  - `RSX_DESWIZZLE_TILES=0` turns it off.
+  - `test_decode_swizzled_tiles` checks it against the Morton formula: three formats, 14 sizes
+    from 1x1 to 1024x1024, both channel orders. The wrapper is `tools/test_rsx_texture_layout.py`.
+- The census line: `[census] texture decode (format, swizzled, compressed: textures, Mtexels,
+  ms)`.
+
+**Measured** (`logs/c-decode2`, one run):
+- B8 swizzled: 3.89 -> 0.44 ns a texel; over the run 724 -> 64 ms. All decode: ~1.17 s -> ~0.46 s.
+- No frame of the fight made the first chunk: it was made at boot, 13.7 ms inside the startup's
+  207 ms gap.
+- The burst is still there: 143 ms at 92.83 s, with:
+  - 111 textures in 33.4 ms: decode 12.5, a second spill chunk 13.1;
+  - 15 pipelines in 9.1 ms.
+
+  Most of that gap is the game's frame.
+
+**Not done:**
+- A second chunk at boot would save that frame's 6-50 ms, for 64 MB more upload memory.
+- Decoding textures off the frame clock thread would take the rest of the upload work from it.
+  That belongs with the multithreaded RSX.
