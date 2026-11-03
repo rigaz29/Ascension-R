@@ -200,3 +200,74 @@ native EDGE (2-3x, +45-70%) needs most of them done.
   lifted one: its masks and the literal writer are about half each.
 - Gate, ABBA: 14.56 -> 14.74 flips/s (+1.2%), within the runs' spread.
 - On by default: exact, faster in replay, no loss at the gate.
+
+## The transform, and one range test a call (2026-11-04)
+
+**`0xF538`, the 4x4 transform** (`native/spu_edge_xform.c`, bit 1024):
+- Eight vertices a pass in AVX2.
+- The last pass runs with the runtime's forms and leaves every register as the lifted loop does.
+  Without that, the strict replay saw 36 jobs differ: later code spills registers the transform
+  left.
+- The call-by-call check can now compare all 128 registers (`all_regs`).
+
+**Profile** (rdtsc around calls, the 1,200 gate jobs of the replay):
+- lighting `0x73E0`: 26%;
+- output `0x9080`: 20%, nearly all of it the compression pieces `D158` calls;
+- `0xDBF8`: 11%, a tail jump into the decompression pieces;
+- `0xE4D0`: 6%;
+- culling: 5%.
+
+Inside lighting, the native loops `7BB4`/`7ED8` were 64% of the stage.
+- They cost ~255 cycles an iteration against ~347 lifted.
+- Their per-op range test (and, compare, movemask, branch, then +0: ~7 instructions an op)
+  was most of it.
+
+**The fast pass** (`spu_edge_light.c`, `spu_edge_simd.h`'s `ecf_*`):
+- The ops run native with nothing tested.
+- Under round-toward-zero, an exact result beyond FLT_MAX leaves FLT_MAX and sets MXCSR's
+  overflow flag. A conversion out of range sets invalid.
+- Operands with exponent 255 are looked for in what the ops read.
+- Any of these redoes the work with the exact forms from the same start:
+  - a whole call, where the output is apart from the input;
+  - else one pass, from its inputs still in registers.
+- +0 is applied only where values leave (stores, registers). A zero's sign never changes a
+  non-zero result of mul, add, sub or the fused forms.
+- `GOWA_EDGE_EXACT=1` forces the redo, to test it.
+
+**The flags need ordered reads.** clang takes the float ops for pure and moved some across a
+plain `_mm_getcsr`. In the game the vertex pass stored FLT_MAX where the SPU saturates to
+`0x7FFFFFFF`, in 6,923 calls. The fix:
+- `ldmxcsr`/`stmxcsr` go through volatile asm with a memory clobber;
+- the pass's register inputs come out of an empty asm after the clear;
+- its results go into one before the read.
+
+With `GOWA_EDGE_VERIFY=1`, each fast call of the two lighting loops is also checked against the
+exact pass.
+
+**Results.**
+- Checked in the game:
+  - transform: 1.13M calls;
+  - culling: 414K calls;
+  - point lights: 352K calls;
+  - the lighting self-check: clean;
+  - all identical.
+- Strict replay: 0 differences, both ways.
+- Replay, the lit jobs: 100.3 -> ~88 us.
+- Gate, ABBA against main: 15.34 -> 15.94 flips/s (+3.9%).
+- At this level (~2%), code layout moves the replay times: with the culling natives off,
+  builds that differ only in them differ by 3-5 us.
+
+**`0xE4D0` -> `0xDCC0`, index decompression (6%): deferred.**
+- Five stages in place over the compressed buffer:
+  1. bit unpack;
+  2. delta prefix sum;
+  3. the new-vertex bitmask;
+  4. a copy;
+  5. two-bit triangle codes through the tables at `0xFC00`/`0xFD00`.
+- Two loops (`E3C4`, `E210`) are 87% of it, all dynamic shuffles.
+- Tested by scrambling after the lifted call:
+  - r2-r79 it leaves do not matter;
+  - its scratch past the output is sent out by DMA: PUT bytes differ when it is not
+    reproduced.
+- A native would have to rebuild every stage's scratch bit for bit, for at most ~3-4% of the
+  job time.
