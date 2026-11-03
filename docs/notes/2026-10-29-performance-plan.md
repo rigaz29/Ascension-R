@@ -1196,6 +1196,65 @@ Level, ABBA, three runs each (`logs/b-ll`):
 **Next:** find what bounds the frame now. Use 2.7's probe again: slow each workload, the main
 thread and the frame clock thread one at a time.
 
+### 2.19 Update, 2026-11-03: what bounds the gate with the default patches
+
+The default patches (Disable MLAA, Motion Blur and Shadows on, Mesh Trimming off) took the fight
+to ~30 flips/s. The gate after it is the slowest place: Kratos idle at profile 2's checkpoint
+there, windows from 10 to 90 s after the load, on a copy of the saves (the copy's saves were
+unchanged after the ten runs).
+
+**Each part made 25% longer** (`logs/probe-gate`, ABBA, two runs each):
+
+| +25% on | flips/s | change |
+|---|---|---|
+| nothing | 15.38 (15.75 / 15.19) | |
+| EDGE (`SPURS_WID_SLOW`, w14-16) | 13.55 (13.72 / 13.45) | -11.9% |
+| General6 (w2) | 14.25 (13.61 / 14.59) | -7.3% |
+| the frame clock thread (`RSX_SLOW=25`) | 15.12 (15.12 / 15.18) | -1.7%, within the spread |
+| the main thread (`GOWA_MAIN_SLOW=25`) | 15.11 (15.09 / 15.11) | -1.8%, within the spread |
+
+- The gate is bound by the SPU side: the six workers at 516-527% of a core (the policy modules
+  594%), the main thread at 92-94%, the frame clock thread at 50%.
+- General6 counts for more than its share of SPU time (15%): it is on the frame's chain.
+
+**Where the SPU time goes** (`logs/prof-gate`, one run with the sampler, 14.04 flips/s):
+
+| workload | share of a core | ms a run |
+|---|---|---|
+| EDGE w14, w15, w16 | 120-122% each, 3.6 cores: 61% of SPU time | 7.8-8.2 |
+| General6 (w2) | 89% | 3.7 |
+| audio (w7) | 46% | 2.1 |
+| RenderJobs (w12) | 39% | 3.3 |
+| RenJobSet (w8-10) | 37% between them | |
+
+- EDGE takes ~234 ms of SPU time a frame here, against ~133 in the fight (2.16). For 30 flips/s
+  all the SPU work of a frame has to fit 6 x 33 ms: about half of what it is at this view.
+- **One function holds 23% of EDGE here:** `jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0`, the
+  same in w14, w15 and w16. It is the per-vertex lighting stage, whose inner loop at `7BB4` was
+  4.6% of EDGE in the level (2.11, 2.16). At the gate it is ~14% of all SPU time. Its inner loops
+  are `7BB4` (~130 lifted lines) and `7ED8` (~100); which of them is hot needs a `--spu-lines`
+  profile.
+- Next in EDGE: `30600` (piece `0x755B80`) 8.8%, `D640` 5.9%, `302E8` 4.0%; the runtime's DMA
+  and channels ~10%.
+- General6: `4F00` 24.7%, `4AB0` 14.1%, `63B4` 6.3% (module `a67e549fa0ab_e41E8`), the rest in
+  `1bdd67b54c3b_e7F60`.
+- Audio: spread, no function above 3.9%.
+- The frame clock thread: 60% of its samples outside the executable (the driver, waits).
+
+**What follows for the options weighed with the user:**
+1. Native code where the gate's time is: the lighting loops of `73E0` (2.16 estimated ~1.8x for
+   `7BB4` as two elements to a 256-bit op), then General6's `4F00` and `4AB0`, then `30600` and
+   `D640`. What the probe's slopes predict: ~+4-5% flips/s at this view for the lighting stage,
+   ~+4-5% for General6's two, a few % for the rest.
+2. A title patch for less per-vertex lighting, if the light count of a draw can be found where
+   the PPU builds EDGE's jobs: research, with a visible cost.
+3. Audio as native code: its time is spread over many functions; little for the work.
+4. The frame clock thread: not what bounds the gate.
+5. EDGE on the GPU (Phase 3.3): the only option of the size the gate needs for 30 flips/s
+   (twice the SPU throughput), and the largest work.
+
+The fight was not probed again with the default patches.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
