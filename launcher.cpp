@@ -180,7 +180,7 @@ static const char* patch_desc(const char* id)
         { "disable_motion_blur", "Saves the blur's work. With Disable MLAA on it never reaches the screen "
                                  "anyway." },
         { "disable_mesh_trimming", "For drawing above 720p, which this port does not do: here it only adds "
-                                   "geometry (about 3% slower)." },
+                                   "geometry (3% slower at the first level, 11% at the gate)." },
         { "disable_shadows", "No dynamic shadows: the biggest saving, about 25% faster in the Megaera "
                              "fight." },
     };
