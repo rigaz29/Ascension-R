@@ -68,6 +68,13 @@ static int d250_native(spu_context* ctx)
     if (in_a + 64 * (groups + 2) > SPU_LS_SIZE || out_a + 64 * groups > SPU_LS_SIZE) return 0;
     if (out_a != in_a && out_a < in_a + 64 * (groups + 2) && in_a < out_a + 64 * groups) return 0;
 
+    /* the lifted prologue's saves (r80, r126, r1 below the caller's r1): the local store ends
+     * the same, the frame included */
+    const uint32_t sp = ctx->gpr[1]._u32[0];
+    ec_stq(ls, sp - 0x10, ec_m(ctx->gpr[80]));
+    ec_stq(ls, sp - 0x20, ec_m(ctx->gpr[126]));
+    ec_stq(ls, sp - 0x40, ec_m(ctx->gpr[1]));
+
     /* C = A * B as the prologue makes it, four lanes at a time with the runtime's forms */
     u128 A[4], B[4], C[4];
     for (int i = 0; i < 4; i++) A[i] = ec_u(ec_ldq(ls, c + 0xE0 + 16 * i));
@@ -158,7 +165,7 @@ static void cull_stats(void)
 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000D250(spu_context* ctx);
 static SPU_THREAD_LOCAL spu_context* t_d250_guard;
-static edge_vstat s_v250 = { "cull D250", 0x200, 0, 0, 0, 0, 0, 0 };
+static edge_vstat s_v250 = { "cull D250", 0, 0, 0, 0, 0, 0, 0 };
 static void cull_verify_report(void) { edge_vreport(&s_v250); }
 
 /* The hook at 0xD250's entry: 1 when the call is done (the function returns). */

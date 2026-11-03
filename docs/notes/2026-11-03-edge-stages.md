@@ -141,3 +141,28 @@ code.
 
 Each native stage at ~3x is worth 1-7% of the gate's frame rate. The phase 0 estimate for a whole
 native EDGE (2-3x, +45-70%) needs most of them done.
+
+## Later the same day
+
+**The frame.** A whole-function native routine now writes the lifted prologue's saves too:
+- `0x6AC8` saves r80-r85, r126 and r1; `0xD250` saves r80, r126 and r1.
+- Without them `0x6AC8`'s frame bytes stayed as they were. The replay counted 27 of 40 w14 jobs
+  different, with the PUTs and registers the same.
+- The check now compares the whole local store, and both are identical:
+  - in the replay;
+  - in the game: 544,769 calls of `0x6AC8` and 622,592 of `0xD250`.
+
+**The fused form's redo** (fork `gowa-edge`, `spu_helpers.h`):
+- Four lanes at once in double precision under rounding toward zero.
+- Exact against the lane-by-lane forms on 3,000,000 random vectors (`tools/test_spu_float_redo.py`).
+- At the gate its share of EDGE went 1.8% -> 1.05%. The calls stay: EDGE makes extended-range
+  masks all the time.
+
+**Read, not done yet:**
+- `0xDBF8`/`0xDBC8` (11%) only dispatches into the decompression pieces.
+- `0x9080`'s big child `0xD158` calls the compression piece `0x755B80` (8.6%). That piece, and
+  `0x75BD10`'s `0x302E8` (3.8%), are shuffle and select loops; AVX2 gains little on those.
+- The culling triangle loop's decode is under way:
+  - its writer packs the raw 24 bytes of a group two passes back, with the keep mask, through
+    three 16-entry tables;
+  - the plan is the keep masks native and the writer's statements as they are.

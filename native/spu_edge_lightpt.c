@@ -73,9 +73,15 @@ static int pt_native(spu_context* ctx)
     const int32_t first = (int32_t)ctx->gpr[9]._u32[0], end = (int32_t)ctx->gpr[10]._u32[0];
     if (first == end) return 0;
     const int32_t count = (int32_t)ctx->gpr[7]._u32[0];
-    if (count <= 0) return 1;                      /* the lifted function returns before any store */
     if (count > 0x10000) return 0;
     uint8_t* const ls = ctx->ls;
+    /* the lifted prologue's saves (r80-r85, r126, r1 below the caller's r1), before any test:
+     * the local store ends the same, the frame included */
+    const uint32_t sp = ctx->gpr[1]._u32[0];
+    for (int r = 80; r <= 85; r++) ec_stq(ls, sp - 0x10u * (uint32_t)(r - 79), ec_m(ctx->gpr[r]));
+    ec_stq(ls, sp - 0x70, ec_m(ctx->gpr[126]));
+    ec_stq(ls, sp - 0x90, ec_m(ctx->gpr[1]));
+    if (count <= 0) return 1;                      /* the lifted function returns here */
     const uint32_t colors = ctx->gpr[3]._u32[0], pos = ctx->gpr[4]._u32[0], idx = ctx->gpr[6]._u32[0];
     const uint32_t lt = ctx->gpr[8]._u32[0];
     const u128 inten = ctx->gpr[13];
@@ -135,7 +141,7 @@ static void pt_stats(void)
 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_00006AC8(spu_context* ctx);
 static SPU_THREAD_LOCAL spu_context* t_pt_guard;
-static edge_vstat s_vpt = { "point lights 6AC8", 0x200, 0, 0, 0, 0, 0, 0 };
+static edge_vstat s_vpt = { "point lights 6AC8", 0, 0, 0, 0, 0, 0, 0 };
 static void pt_verify_report(void) { edge_vreport(&s_vpt); }
 
 /* The hook at 0x6AC8's entry: 1 when the call is done (the function returns). */
