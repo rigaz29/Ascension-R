@@ -155,6 +155,8 @@ static Opt s_opt[] = {
       "Esc is not a PS3 button; off leaves it free." },
     { T_SYSTEM, "system", "save_backups", "5", "Save backups", 0, LIST(k_bak, k_bak_n), k_bak_s,
       "Copies kept of a save before the game writes over it." },
+    { T_SYSTEM, "system", "steady_audio", "on", "Steady audio", 1, SW,
+      "Keeps one SPU for the game's sound, so heavy fights do not break it up. About 2.5% fewer frames." },
     { T_SYSTEM, "launcher", "show", "on", "Show this window at start", 1, SW,
       "When off, hold Shift while the game starts to bring it back." },
 };

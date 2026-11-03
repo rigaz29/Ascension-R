@@ -1147,6 +1147,14 @@ static void title_environment(void)
      * flips/s unchanged (docs/notes/2026-10-28-rendering-accuracy-plan.md, 3.4).
      * SPURS_BOOST_WID=none leaves every worker at normal priority. */
     env_default("SPURS_BOOST_WID", "7");
+    /* [system] steady_audio (the launcher's "Steady audio", on by default): SPU 5,
+     * the only SPU the title lets workload 7 run on, runs that workload only
+     * (SPURS_RESERVE=7:5). In the parasites' fight a kick of it waited up to 8-16 ms
+     * for SPU 5 while other workloads' jobs held it -- past the ~16 ms of blocks the
+     * title keeps ahead, so the blocks played as gaps. Reserved: 1.6-6.8 ms, for ~2.5%
+     * fewer flips (docs/notes/2026-11-03-parasite-stutter.md). */
+    if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1))
+        env_default("SPURS_RESERVE", "7:5");
     /* Each display buffer its own target, the flipped one presented: the title
      * draws its video into one buffer, tonemaps into the next and composites
      * its post chain into a third within one frame, and with a single
