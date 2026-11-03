@@ -504,6 +504,8 @@ def lift_jobmods(elf):
 # it can and leaves the registers as the lifted code expects them, which then
 # goes on (native/spu_edge_skin.c). A module is a job module (spu/jobmods) or,
 # named pic_<EA>, a position-independent piece (spu/picfrags).
+# A routine named "?name" may take the whole function instead: it returns int, and
+# nonzero makes the function return to its link (native/spu_edge_cull.c).
 NATIVE_HOOKS_FILE = os.path.join(ROOT, "scripts", "spu_native_hooks.json")
 
 
@@ -518,6 +520,9 @@ def native_hooks(lift_dir, pic=False):
             die("native hook: no lifted module %s" % module)
         src = open(path, encoding="utf-8").read()
         for func, native in sorted(funcs.items()):
+            takes = native.startswith("?")
+            native = native.lstrip("?")
+            call = ("    if (%s(ctx)) SPU_RET(ctx);\n" if takes else "    %s(ctx);\n") % native
             head = "void %s(spu_context* SPU_RESTRICT ctx) {\n" % func
             if src.count(head) != 1:
                 head = "void %s(spu_context* ctx) {\n" % func   # lifted before SPU_RESTRICT
@@ -530,9 +535,9 @@ def native_hooks(lift_dir, pic=False):
             own = src.find("ijmp_%s: ;\n" % func[-8:], at, src.find("\n}\n", at))
             if own >= 0:
                 own += len("ijmp_%s: ;\n" % func[-8:])
-                src = src[:own] + "    %s(ctx);\n" % native + src[own:]
+                src = src[:own] + call + src[own:]
             else:
-                src = src.replace(head, "%s    %s(ctx);\n" % (head, native))
+                src = src.replace(head, head + call)
             say("native hook: %s -> %s" % (func, native))
             # --merge-chunks: the loop is also inside the merged run of chunks
             # that leads to it, entered there by a goto rather than through the
@@ -556,7 +561,6 @@ def native_hooks(lift_dir, pic=False):
                     prev = src.rfind("\n", 0, pos) + 1
                     if src[prev:pos].lstrip().startswith("spu_l") and "= ctx->gpr[" in src[prev:pos]:
                         at = prev
-                    call = "    %s(ctx);\n" % native
                     src = src[:at] + call + src[at:]
                     ins = len(call)
                     extra += 1
@@ -565,12 +569,13 @@ def native_hooks(lift_dir, pic=False):
                 say("native hook: %s also in %d merged function(s)" % (native, extra))
             # Between a loop's local loads and its label the routine would work on
             # registers the loop no longer reads.
-            if re.search(r"\n[ \t]*spu_l\d+ = ctx->gpr\[\d+\];[^\n]*\nloc_%s:\n[ \t]*%s\(ctx\);"
+            if re.search(r"\n[ \t]*spu_l\d+ = ctx->gpr\[\d+\];[^\n]*\nloc_%s:\n[ \t]*(?:if \()?%s\(ctx\)"
                          % (func[-8:], native), src):
                 die("native hook: %s lands after the loop-locals loads of loc_%s" % (native, func[-8:]))
         # the routines' declarations ahead of every function that calls them
         first = min(i for i in (src.find("\nvoid "), src.find("\nstatic void ")) if i >= 0)
-        decls = "".join("void %s(spu_context* ctx);\n" % n for n in sorted(set(funcs.values())))
+        decls = "".join(("int %s(spu_context* ctx);\n" if n.startswith("?") else "void %s(spu_context* ctx);\n")
+                        % n.lstrip("?") for n in sorted(set(funcs.values())))
         src = src[:first + 1] + decls + src[first + 1:]
         open(path, "w", encoding="utf-8", newline="\n").write(src)
 
