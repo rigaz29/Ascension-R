@@ -2,7 +2,7 @@
 
 Checked 2026-11-03. The options came with the runtime from the God of War HD port:
 `[graphics] scaling`, `sharpening`, `antialiasing` and `anisotropy` (the launcher's Graphics
-page). The question was whether they work in this title.
+tab, [launcher note](2026-11-03-launcher.md)). The question was whether they work in this title.
 
 ## Where they act
 
@@ -53,7 +53,7 @@ the executable's own arguments, `--set section.key=value`; `gowa.ini` is not cha
 
 ## The frame rate on screen
 
-`display.show_fps = overlay` (the launcher's "On screen, with CPU/GPU load") draws a panel in the
+`display.show_fps = overlay` (the launcher's "On screen", or its Play tab's switch) draws a panel in the
 top left corner, made 2026-11-03 at the user's asking.
 
 | row | what it is |

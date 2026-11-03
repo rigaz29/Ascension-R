@@ -69,6 +69,9 @@ below was read back from our `GOWA.elf` (scratchpad `patch_sites.py`, `flag_xref
   the next lift. Save writes `[patches] <id> = on/off`; Defaults turns them all off. An on/off box
   now reads `1`, `true` and `yes` as on too, as the settings do, so a value written by hand is not
   shown off and then saved so.
+  - 2026-11-03: the launcher is now a window of tabs. Its Game patches tab has a switch for each
+    patch, with a line on what it does, and its Play tab three presets of them
+    ([launcher note](2026-11-03-launcher.md)).
 - Everything is off by default. The guards are read by the lifted code, so they only change
   before the guest starts.
   - 2026-11-03: a patch with `"default": true` in the catalog is on unless switched off.
