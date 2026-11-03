@@ -22,8 +22,9 @@
  *  - colour = fma(old colour, blend, sum), stored vertex 0 to 7.
  * A last pass past the count is done whole, as the lifted loop does.
  *
- * This takes the eight vertices as eight lanes, each channel's sum as its own vector, with the SPU's
- * exact float forms: per element the same operations in the same order as the lifted code.
+ * This takes the eight vertices as eight lanes, each channel's sum as its own vector: per element the
+ * same operations in the same order as the lifted code, in the fast pass of spu_edge_simd.h (a pass
+ * redone with the SPU's exact float forms when MXCSR's flags or an exponent 255 show).
  * Declined (lifted instead):
  *  - another MXCSR;
  *  - no lights (first == end: another path, a tail call).
@@ -67,6 +68,57 @@ EC_INL void lp_aos(const __m256 in[4], __m128i q[8])
     q[4] = ec_hi(w0); q[5] = ec_hi(w1); q[6] = ec_hi(w2); q[7] = ec_hi(w3);
 }
 
+/* the lights for eight vertices */
+typedef struct {
+    u128 inten;
+    __m128i intenm;
+    uint32_t lpos, lpar;
+    int32_t first, lights;
+    __m256 init, blend, one, half, two, three;
+} pt_k;
+EC_INL __m128i ec_e255q(__m128i x)
+{
+    const __m128i e = _mm_set1_epi32(0x7F800000);
+    return _mm_cmpeq_epi32(_mm_and_si128(x, e), e);
+}
+EC_INL __m128i pt_pzq(__m128 r) { return _mm_castps_si128(_mm_and_ps(r, _mm_cmpneq_ps(r, _mm_setzero_ps()))); }
+
+/* one pass: every light's sum, then colour = fma(old colour, blend, sum) (+0 applied), fast
+ * (bad collects the light quadwords' exponent-255 lanes) or exact */
+EC_INL void pt_pass(const int f, const uint8_t* ls, const pt_k* k, const __m256 P[4], const __m256 old[4],
+                    __m256 out[4], __m128i* bad)
+{
+    __m256 acc[4];
+    acc[0] = acc[1] = acc[2] = acc[3] = k->init;
+    for (int32_t i = 0; i < k->lights; i++) {
+        const uint32_t li = 16u * (uint32_t)(k->first + i);
+        const __m128i Lm = ec_ldq(ls, k->lpos + li), Pm = ec_ldq(ls, k->lpar + li);
+        u128 L, C;
+        if (f) {
+            *bad = _mm_or_si128(*bad, _mm_or_si128(ec_e255q(Lm), _mm_or_si128(ec_e255q(Pm), ec_e255q(k->intenm))));
+            L = ec_u(Lm);
+            C = ec_u(pt_pzq(_mm_mul_ps(_mm_castsi128_ps(k->intenm), _mm_castsi128_ps(Pm))));
+        } else {
+            L = ec_u(Lm);
+            C = spu_fm(k->inten, ec_u(Pm));
+        }
+        const __m256 dx = ecf_fs(f, ec_set(L._u32[0]), P[0]);
+        const __m256 dy = ecf_fs(f, ec_set(L._u32[1]), P[1]);
+        const __m256 dz = ecf_fs(f, ec_set(L._u32[2]), P[2]);
+        const __m256 d2 = ecf_pz(f, ecf_fma(f, dz, dz, ecf_fma(f, dy, dy, ecf_fm(f, dx, dx))));   /* its bits are read */
+        const __m256i d2i = _mm256_castps_si256(d2);
+        const __m256 y = _mm256_castsi256_ps(ec_fi(d2i, ec_frsqest(d2i)));
+        const __m256 y2 = ecf_fma(f, ecf_fnms(f, ecf_fm(f, y, d2), y, k->one), ecf_fm(f, y, k->half), y);
+        const __m256 t = ecf_fm(f, ecf_fm(f, y2, d2), ec_set(L._u32[3]));
+        const __m256 tc = _mm256_blendv_ps(t, k->one, ecf_fcgt(f, t, k->one));
+        const __m256 a = ecf_fs(f, k->one, tc);
+        const __m256 s = ecf_fm(f, ecf_fm(f, a, a), ecf_fnms(f, k->two, a, k->three));
+        const __m256 att = ecf_fm(f, ecf_fm(f, s, s), ec_set(C._u32[3]));
+        for (int q = 0; q < 4; q++) acc[q] = ecf_fma(f, att, ec_set(C._u32[q]), acc[q]);
+    }
+    for (int q = 0; q < 4; q++) out[q] = ecf_pz(f, ecf_fma(f, old[q], k->blend, acc[q]));
+}
+
 static int pt_native(spu_context* ctx)
 {
     if ((_mm_getcsr() & EC_MXCSR_RZFZ) != EC_MXCSR_RZFZ) return 0;
@@ -92,6 +144,12 @@ static int pt_native(spu_context* ctx)
     const __m256 one = ec_set(0x3F800000u), half = ec_set(0x3F000000u), two = ec_set(0x40000000u), three = ec_set(0x40400000u);
     const int32_t lights = end > first ? end - first : 0;
 
+    /* each pass fast (spu_edge_simd.h), redone exact from its inputs, still in registers, when
+     * MXCSR's flags or an exponent 255 show */
+    const pt_k k = { inten, ec_m(inten), lpos, lpar, first, lights, init, blend, one, half, two, three };
+    const int force = ec_force_exact();
+    const unsigned csr = _mm_getcsr();
+    _mm_setcsr(csr & ~0x3Fu);
     for (int32_t done = 0; done < count; done += 8) {
         uint32_t off[8];
         __m128i p[8], c[8];
@@ -101,42 +159,36 @@ static int pt_native(spu_context* ctx)
             p[j] = ec_ldq(ls, pos + off[j]);
             c[j] = ec_ldq(ls, colors + off[j]);
         }
-        __m256 P[4], acc[4];
+        __m256 P[4], old[4], out[4];
         lp_soa(p, P);
-        acc[0] = acc[1] = acc[2] = acc[3] = init;
-        for (int32_t i = 0; i < lights; i++) {
-            const uint32_t li = 16u * (uint32_t)(first + i);
-            const u128 L = ec_u(ec_ldq(ls, lpos + li));
-            const u128 C = spu_fm(inten, ec_u(ec_ldq(ls, lpar + li)));
-            const __m256 dx = ec_fs(ec_set(L._u32[0]), P[0]);
-            const __m256 dy = ec_fs(ec_set(L._u32[1]), P[1]);
-            const __m256 dz = ec_fs(ec_set(L._u32[2]), P[2]);
-            const __m256 d2 = ec_fma(dz, dz, ec_fma(dy, dy, ec_fm(dx, dx)));
-            const __m256i d2i = _mm256_castps_si256(d2);
-            const __m256 y = _mm256_castsi256_ps(ec_fi(d2i, ec_frsqest(d2i)));
-            const __m256 y2 = ec_fma(ec_fnms(ec_fm(y, d2), y, one), ec_fm(y, half), y);
-            const __m256 t = ec_fm(ec_fm(y2, d2), ec_set(L._u32[3]));
-            const __m256 tc = _mm256_blendv_ps(t, one, ec_fcgt(t, one));
-            const __m256 a = ec_fs(one, tc);
-            const __m256 s = ec_fm(ec_fm(a, a), ec_fnms(two, a, three));
-            const __m256 att = ec_fm(ec_fm(s, s), ec_set(C._u32[3]));
-            for (int k = 0; k < 4; k++) acc[k] = ec_fma(att, ec_set(C._u32[k]), acc[k]);
-        }
-        __m256 old[4], out[4];
         lp_soa(c, old);
-        for (int k = 0; k < 4; k++) out[k] = ec_fma(old[k], blend, acc[k]);
+        int fast = !force;
+        if (fast) {
+            __m128i bad = _mm_setzero_si128();
+            pt_pass(1, ls, &k, P, old, out, &bad);
+            for (int j = 0; j < 8; j++) bad = _mm_or_si128(bad, _mm_or_si128(ec_e255q(p[j]), ec_e255q(c[j])));
+            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm_testz_si128(bad, bad)) {
+                fast = 0;
+                __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+            }
+        }
+        if (!fast) {
+            pt_pass(0, ls, &k, P, old, out, NULL);
+            _mm_setcsr(csr & ~0x3Fu);
+        }
         __m128i q[8];
         lp_aos(out, q);
         for (int j = 0; j < 8; j++) ec_stq(ls, colors + off[j], q[j]);
     }
+    _mm_setcsr(csr);
     __atomic_add_fetch(&s_pt_verts, (long long)count, __ATOMIC_RELAXED);
     return 1;
 }
 
 static void pt_stats(void)
 {
-    fprintf(stderr, "[edge-native] point lights 6AC8: %lld calls native, %lld vertices, %lld declined, %lld exact ops\n",
-            s_pt_calls, s_pt_verts, s_pt_declined, s_ec_exact);
+    fprintf(stderr, "[edge-native] point lights 6AC8: %lld calls native, %lld vertices, %lld declined, %lld exact ops, %lld passes redone\n",
+            s_pt_calls, s_pt_verts, s_pt_declined, s_ec_exact, s_ec_redone);
 }
 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_00006AC8(spu_context* ctx);

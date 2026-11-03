@@ -17,8 +17,9 @@
  * ((count + 7) >> 3) + 1 passes. All eight loads come before the eight stores, so this routine
  * keeps that order too, which keeps any overlap of input and output as the lifted loop has it.
  *
- * Exact: the set-up runs through the runtime's own SPU forms, the loop through the SPU float
- * forms of spu_edge_simd.h (native in range, the runtime's exact forms otherwise). The last
+ * Exact: the set-up runs through the runtime's own SPU forms, the loop through the fast pass of
+ * spu_edge_simd.h (a pass redone with the exact forms when MXCSR's flags or an exponent 255
+ * show). The last
  * pass runs with the runtime's forms and leaves every register as the lifted loop does: the
  * job's later code spills some of them to the local store.
  * Declined (lifted instead): another MXCSR; a count above 0x10000.
@@ -36,6 +37,15 @@
 #if defined(__AVX2__) && defined(__FMA__)
 
 static volatile long long s_xf_calls, s_xf_verts, s_xf_declined;
+
+/* two vertices (one per half): the three-term sum and the result, fast or exact */
+EC_INL void xf_vertex(const int f, __m256 v, __m256 c0, __m256 c1, __m256 c2, __m256 c3, __m256* part, __m256* res)
+{
+    const __m256 a = ecf_fm(f, v, c0);
+    const __m256 b = ecf_fma(f, _mm256_permute_ps(v, _MM_SHUFFLE(0, 3, 2, 1)), c1, a);
+    *part = ecf_fma(f, _mm256_permute_ps(v, _MM_SHUFFLE(1, 0, 3, 2)), c2, b);
+    *res = ecf_fma(f, _mm256_permute_ps(v, _MM_SHUFFLE(2, 1, 0, 3)), c3, *part);
+}
 
 static int xf_native(spu_context* ctx)
 {
@@ -72,6 +82,13 @@ static int xf_native(spu_context* ctx)
      * registers (r20 and r21 zero, the other six fma(0, c3, 0)) */
     const __m256 z = _mm256_setzero_ps(), f0 = ec_fma(z, c3, z);
     __m256 prev[4] = { z, f0, f0, f0 }, v[4], part[4];
+    /* each pass fast (spu_edge_simd.h), redone exact from its inputs, still in registers, when
+     * MXCSR's flags or an exponent 255 show; constants with exponent 255: every pass exact */
+    const unsigned csr = _mm_getcsr();
+    const int all_exact = ec_force_exact() ||
+        !_mm256_testz_si256(_mm256_or_si256(_mm256_or_si256(ec_e255(c0), ec_e255(c1)), _mm256_or_si256(ec_e255(c2), ec_e255(c3))),
+                            _mm256_set1_epi32(-1));
+    _mm_setcsr(csr & ~0x3Fu);
     for (uint32_t p = 0; p + 1 < passes; p++) {
         const uint32_t in = src + 128u * p, out = dst + 128u * (p ? p - 1 : 0);
         for (int j = 0; j < 4; j++)
@@ -80,13 +97,25 @@ static int xf_native(spu_context* ctx)
             ec_stq(ls, out + 32u * (uint32_t)j, ec_lo(prev[j]));
             ec_stq(ls, out + 32u * (uint32_t)j + 16, ec_hi(prev[j]));
         }
-        for (int j = 0; j < 4; j++) {
-            const __m256 a = ec_fm(v[j], c0);
-            const __m256 b = ec_fma(_mm256_permute_ps(v[j], _MM_SHUFFLE(0, 3, 2, 1)), c1, a);
-            part[j] = ec_fma(_mm256_permute_ps(v[j], _MM_SHUFFLE(1, 0, 3, 2)), c2, b);
-            prev[j] = ec_fma(_mm256_permute_ps(v[j], _MM_SHUFFLE(2, 1, 0, 3)), c3, part[j]);
+        int fast = !all_exact;
+        if (fast) {
+            __m256i bad = _mm256_setzero_si256();
+            for (int j = 0; j < 4; j++) {
+                bad = _mm256_or_si256(bad, ec_e255(v[j]));
+                xf_vertex(1, v[j], c0, c1, c2, c3, &part[j], &prev[j]);
+            }
+            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+                fast = 0;
+                __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+            } else
+                for (int j = 0; j < 4; j++) prev[j] = ec_pz(prev[j]);
+        }
+        if (!fast) {
+            for (int j = 0; j < 4; j++) xf_vertex(0, v[j], c0, c1, c2, c3, &part[j], &prev[j]);
+            _mm_setcsr(csr & ~0x3Fu);
         }
     }
+    _mm_setcsr(csr);
 
     /* the last pass with the runtime's SPU forms, which leaves every register as the lifted
      * loop does (callers spill some of them): its loads, pass passes - 2's stores, then its
@@ -94,7 +123,8 @@ static int xf_native(spu_context* ctx)
     u128 pv[8], pp[8];                             /* pass passes - 2: the inputs, the three-term sums */
     for (int j = 0; j < 4; j++) {
         pv[2 * j] = ec_u(ec_lo(v[j]));    pv[2 * j + 1] = ec_u(ec_hi(v[j]));
-        pp[2 * j] = ec_u(ec_lo(part[j])); pp[2 * j + 1] = ec_u(ec_hi(part[j]));
+        const __m256 pz = ec_pz(part[j]);           /* the fast pass leaves a zero's sign */
+        pp[2 * j] = ec_u(ec_lo(pz)); pp[2 * j + 1] = ec_u(ec_hi(pz));
     }
     u128 fo[8];                                    /* its results: r20, r21, r7, r2, r5, r76, r73, r72 */
     fo[0] = ec_u(ec_lo(prev[0]));
@@ -142,8 +172,8 @@ static int xf_native(spu_context* ctx)
 
 static void xf_stats(void)
 {
-    fprintf(stderr, "[edge-native] transform F538: %lld calls native, %lld vertices, %lld declined, %lld exact ops\n",
-            s_xf_calls, s_xf_verts, s_xf_declined, s_ec_exact);
+    fprintf(stderr, "[edge-native] transform F538: %lld calls native, %lld vertices, %lld declined, %lld exact ops, %lld passes redone\n",
+            s_xf_calls, s_xf_verts, s_xf_declined, s_ec_exact, s_ec_redone);
 }
 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000F538(spu_context* ctx);

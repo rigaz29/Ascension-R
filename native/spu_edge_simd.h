@@ -11,6 +11,7 @@
 #include "spu_context.h"
 #include "spu_helpers.h"
 #include <immintrin.h>
+#include <stdlib.h>
 #include <stdint.h>
 
 #if defined(__AVX2__) && defined(__FMA__)
@@ -184,6 +185,40 @@ EC_INL __m256i ec_frsqest(__m256i x)
     rexp = _mm256_blendv_epi8(rexp, _mm256_set1_epi32(255), _mm256_cmpeq_epi32(exp, _mm256_setzero_si256()));
     return _mm256_or_si256(_mm256_slli_epi32(rexp, 23), frac);
 }
+
+
+/* ---- A fast pass with one range test (the scheme of spu_edge_light.c's loops) ----
+ * The ops native with nothing tested. Under round-toward-zero an exact result beyond FLT_MAX
+ * leaves FLT_MAX and sets MXCSR's overflow flag; a conversion out of range sets the invalid
+ * flag; an operand with the SPU's exponent 255 (extended range: Inf or NaN here) is looked for
+ * with ec_e255 in what the ops read. When any of those shows, the caller redoes the work with
+ * the exact forms above (f = 0) from the same inputs. A zero's sign never changes a non-zero
+ * result of mul, add, sub or the fused forms, so the fast pass applies +0 only where a value
+ * leaves: what is stored or written back, and the bits a bit-field op reads. f is a constant
+ * where these are inlined. */
+EC_INL __m256 ecf_fm(int f, __m256 a, __m256 b) { return f ? _mm256_mul_ps(a, b) : ec_fm(a, b); }
+EC_INL __m256 ecf_fma(int f, __m256 a, __m256 b, __m256 c) { return f ? _mm256_fmadd_ps(a, b, c) : ec_fma(a, b, c); }
+EC_INL __m256 ecf_fnms(int f, __m256 a, __m256 b, __m256 c) { return f ? _mm256_fnmadd_ps(a, b, c) : ec_fnms(a, b, c); }
+EC_INL __m256 ecf_fms(int f, __m256 a, __m256 b, __m256 c) { return f ? _mm256_fmsub_ps(a, b, c) : ec_fms(a, b, c); }
+EC_INL __m256 ecf_fs(int f, __m256 a, __m256 b) { return f ? _mm256_sub_ps(a, b) : ec_fs(a, b); }
+EC_INL __m256 ecf_fcgt(int f, __m256 a, __m256 b) { return f ? _mm256_cmp_ps(a, b, _CMP_GT_OQ) : ec_fcgt(a, b); }
+EC_INL __m256i ecf_cflts0(int f, __m256 x) { return f ? _mm256_cvttps_epi32(x) : ec_cflts0(x); }
+EC_INL __m256 ecf_pz(int f, __m256 r) { return f ? ec_pz(r) : r; }
+/* the lanes with exponent 255 */
+EC_INL __m256i ec_e255(__m256 x)
+{
+    const __m256i e = _mm256_set1_epi32(0x7F800000);
+    return _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_castps_si256(x), e), e);
+}
+#define EC_FLAGS_BAD 0x09u       /* MXCSR: invalid, overflow */
+/* GOWA_EDGE_EXACT=1: the exact pass always (to test it) */
+static int ec_force_exact(void)
+{
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("GOWA_EDGE_EXACT"); v = e && e[0] == '1'; }
+    return v;
+}
+static volatile long long s_ec_redone;   /* per including file: passes the fast forms left to the exact */
 
 #endif
 #endif

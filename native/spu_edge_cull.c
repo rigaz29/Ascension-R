@@ -52,6 +52,39 @@
 
 static volatile long long s_d250_calls, s_d250_verts, s_d250_declined;
 
+/* the vertex pass's constants */
+typedef struct {
+    __m256 c[4][4];                 /* C's rows, x y z w */
+    __m256 sxs, sys, szs, oxs, oys, ozs, xmin, ymin, xmax, ymax, zmin, zmax, one, sign;
+} d250_k;
+
+/* eight vertices: the screen x and y (+0 applied) and the flags, fast or exact */
+EC_INL void d250_pass(const int f, const d250_k* k, __m256 X, __m256 Y, __m256 Z, __m256* osx, __m256* osy, __m256i* ofl)
+{
+    const __m256 xp = ecf_fma(f, Z, k->c[0][2], ecf_fma(f, Y, k->c[0][1], ecf_fma(f, X, k->c[0][0], k->c[0][3])));
+    const __m256 yp = ecf_fma(f, Z, k->c[1][2], ecf_fma(f, Y, k->c[1][1], ecf_fma(f, X, k->c[1][0], k->c[1][3])));
+    const __m256 zp = ecf_fma(f, Z, k->c[2][2], ecf_fma(f, Y, k->c[2][1], ecf_fma(f, X, k->c[2][0], k->c[2][3])));
+    const __m256 W = ecf_pz(f, ecf_fma(f, Z, k->c[3][2], ecf_fma(f, Y, k->c[3][1], ecf_fma(f, X, k->c[3][0], k->c[3][3]))));
+    const __m256i wi = _mm256_castps_si256(W);                /* frest, fi and the sign read its bits */
+    const __m256 r = _mm256_castsi256_ps(ec_fi(wi, ec_frest(wi)));
+    const __m256 rcp = ecf_fma(f, ecf_fnms(f, r, W, k->one), r, r);
+    const __m256 ws = _mm256_and_ps(W, k->sign);
+    const __m256 px = _mm256_xor_ps(ecf_fm(f, xp, rcp), ws);
+    const __m256 py = _mm256_xor_ps(ecf_fm(f, yp, rcp), ws);
+    const __m256 pz = _mm256_xor_ps(ecf_fm(f, zp, rcp), ws);
+    const __m256 sx = ecf_fma(f, px, k->sxs, k->oxs), sy = ecf_fma(f, py, k->sys, k->oys), sz = ecf_fma(f, pz, k->szs, k->ozs);
+    __m256i fl = _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, sx, k->xmax)), _mm256_set1_epi32(0x80));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, k->xmin, sx)), _mm256_set1_epi32(0x40)));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, sy, k->ymax)), _mm256_set1_epi32(0x20)));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, k->ymin, sy)), _mm256_set1_epi32(0x10)));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, sz, k->zmax)), _mm256_set1_epi32(0x08)));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, k->zmin, sz)), _mm256_set1_epi32(0x04)));
+    fl = _mm256_or_si256(fl, _mm256_and_si256(_mm256_castps_si256(ecf_fcgt(f, W, _mm256_setzero_ps())), _mm256_set1_epi32(0x02)));
+    *osx = ecf_pz(f, sx);
+    *osy = ecf_pz(f, sy);
+    *ofl = fl;
+}
+
 static int d250_native(spu_context* ctx)
 {
     if ((_mm_getcsr() & EC_MXCSR_RZFZ) != EC_MXCSR_RZFZ) return 0;
@@ -89,16 +122,27 @@ static int d250_native(spu_context* ctx)
     const u128 zgt = spu_fcgt(ec_splat(D, 2), ec_splat(D, 3));
     const uint32_t zmin_b = zgt._u32[0] ? D._u32[3] : D._u32[2], zmax_b = zgt._u32[0] ? D._u32[2] : D._u32[3];
 
-    const __m256 c0x = ec_set(C[0]._u32[0]), c0y = ec_set(C[0]._u32[1]), c0z = ec_set(C[0]._u32[2]), c0w = ec_set(C[0]._u32[3]);
-    const __m256 c1x = ec_set(C[1]._u32[0]), c1y = ec_set(C[1]._u32[1]), c1z = ec_set(C[1]._u32[2]), c1w = ec_set(C[1]._u32[3]);
-    const __m256 c2x = ec_set(C[2]._u32[0]), c2y = ec_set(C[2]._u32[1]), c2z = ec_set(C[2]._u32[2]), c2w = ec_set(C[2]._u32[3]);
-    const __m256 c3x = ec_set(C[3]._u32[0]), c3y = ec_set(C[3]._u32[1]), c3z = ec_set(C[3]._u32[2]), c3w = ec_set(C[3]._u32[3]);
-    const __m256 sxs = ec_set(S._u32[0]), sys = ec_set(S._u32[1]), szs = ec_set(S._u32[2]);
-    const __m256 oxs = ec_set(O._u32[0]), oys = ec_set(O._u32[1]), ozs = ec_set(O._u32[2]);
-    const __m256 xmin = _mm256_set1_ps((float)h0), ymin = _mm256_set1_ps((float)h1);
-    const __m256 xmax = _mm256_set1_ps((float)((h0 + h2) & 0xFFFF)), ymax = _mm256_set1_ps((float)((h1 + h3) & 0xFFFF));
-    const __m256 zmin = ec_set(zmin_b), zmax = ec_set(zmax_b);
-    const __m256 one = ec_set(0x3F800000u), sign = ec_set(0x80000000u), zero = _mm256_setzero_ps();
+    d250_k kk;
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++) kk.c[i][j] = ec_set(C[i]._u32[j]);
+    kk.sxs = ec_set(S._u32[0]); kk.sys = ec_set(S._u32[1]); kk.szs = ec_set(S._u32[2]);
+    kk.oxs = ec_set(O._u32[0]); kk.oys = ec_set(O._u32[1]); kk.ozs = ec_set(O._u32[2]);
+    kk.xmin = _mm256_set1_ps((float)h0); kk.ymin = _mm256_set1_ps((float)h1);
+    kk.xmax = _mm256_set1_ps((float)((h0 + h2) & 0xFFFF)); kk.ymax = _mm256_set1_ps((float)((h1 + h3) & 0xFFFF));
+    kk.zmin = ec_set(zmin_b); kk.zmax = ec_set(zmax_b);
+    kk.one = ec_set(0x3F800000u); kk.sign = ec_set(0x80000000u);
+    const __m256 zero = _mm256_setzero_ps();
+
+    /* each pass fast (spu_edge_simd.h), redone exact from its inputs, still in registers, when
+     * MXCSR's flags or an exponent 255 show; constants with exponent 255: every pass exact */
+    __m256i kbad = _mm256_setzero_si256();
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 4; j++) kbad = _mm256_or_si256(kbad, ec_e255(kk.c[i][j]));
+    const __m256 kv[] = { kk.sxs, kk.sys, kk.szs, kk.oxs, kk.oys, kk.ozs, kk.zmin, kk.zmax };
+    for (unsigned i = 0; i < sizeof kv / sizeof kv[0]; i++) kbad = _mm256_or_si256(kbad, ec_e255(kv[i]));
+    const int all_exact = ec_force_exact() || !_mm256_testz_si256(kbad, kbad);
+    const unsigned csr = _mm_getcsr();
+    _mm_setcsr(csr & ~0x3Fu);
 
     for (uint32_t g = 0; g < groups; g += 2) {
         const uint32_t a = in_a + 64 * g;
@@ -112,26 +156,21 @@ static int d250_native(spu_context* ctx)
         const __m256 Y = _mm256_shuffle_ps(t0, t1, _MM_SHUFFLE(3, 2, 3, 2));
         const __m256 Z = _mm256_shuffle_ps(t2, t3, _MM_SHUFFLE(1, 0, 1, 0));
 
-        const __m256 xp = ec_fma(Z, c0z, ec_fma(Y, c0y, ec_fma(X, c0x, c0w)));
-        const __m256 yp = ec_fma(Z, c1z, ec_fma(Y, c1y, ec_fma(X, c1x, c1w)));
-        const __m256 zp = ec_fma(Z, c2z, ec_fma(Y, c2y, ec_fma(X, c2x, c2w)));
-        const __m256 W = ec_fma(Z, c3z, ec_fma(Y, c3y, ec_fma(X, c3x, c3w)));
-        const __m256i wi = _mm256_castps_si256(W);
-        const __m256 r = _mm256_castsi256_ps(ec_fi(wi, ec_frest(wi)));
-        const __m256 rcp = ec_fma(ec_fnms(r, W, one), r, r);
-        const __m256 ws = _mm256_and_ps(W, sign);
-        const __m256 px = _mm256_xor_ps(ec_fm(xp, rcp), ws);
-        const __m256 py = _mm256_xor_ps(ec_fm(yp, rcp), ws);
-        const __m256 pz = _mm256_xor_ps(ec_fm(zp, rcp), ws);
-        const __m256 sx = ec_fma(px, sxs, oxs), sy = ec_fma(py, sys, oys), sz = ec_fma(pz, szs, ozs);
-
-        __m256i f = _mm256_and_si256(_mm256_castps_si256(ec_fcgt(sx, xmax)), _mm256_set1_epi32(0x80));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(xmin, sx)), _mm256_set1_epi32(0x40)));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(sy, ymax)), _mm256_set1_epi32(0x20)));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(ymin, sy)), _mm256_set1_epi32(0x10)));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(sz, zmax)), _mm256_set1_epi32(0x08)));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(zmin, sz)), _mm256_set1_epi32(0x04)));
-        f = _mm256_or_si256(f, _mm256_and_si256(_mm256_castps_si256(ec_fcgt(W, zero)), _mm256_set1_epi32(0x02)));
+        __m256 sx, sy;
+        __m256i f;
+        int fast = !all_exact;
+        if (fast) {
+            d250_pass(1, &kk, X, Y, Z, &sx, &sy, &f);
+            const __m256i bad = _mm256_or_si256(_mm256_or_si256(ec_e255(X), ec_e255(Y)), ec_e255(Z));
+            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+                fast = 0;
+                __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+            }
+        }
+        if (!fast) {
+            d250_pass(0, &kk, X, Y, Z, &sx, &sy, &f);
+            _mm_setcsr(csr & ~0x3Fu);
+        }
 
         /* records (sx, sy, flags, 0): vertices 0-3 in the low lanes' order, 4-7 in the high */
         const __m256 fl = _mm256_castsi256_ps(f);
@@ -153,14 +192,15 @@ static int d250_native(spu_context* ctx)
             ec_stq(ls, o + 112, ec_hi(q3));
         }
     }
+    _mm_setcsr(csr);
     __atomic_add_fetch(&s_d250_verts, (long long)n, __ATOMIC_RELAXED);
     return 1;
 }
 
 static void cull_stats(void)
 {
-    fprintf(stderr, "[edge-native] cull D250: %lld calls native, %lld vertices, %lld declined, %lld exact ops\n",
-            s_d250_calls, s_d250_verts, s_d250_declined, s_ec_exact);
+    fprintf(stderr, "[edge-native] cull D250: %lld calls native, %lld vertices, %lld declined, %lld exact ops, %lld passes redone (both routines)\n",
+            s_d250_calls, s_d250_verts, s_d250_declined, s_ec_exact, s_ec_redone);
 }
 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000D250(spu_context* ctx);
@@ -219,8 +259,10 @@ EC_INL uint32_t ec_ls16(const uint8_t* ls, uint32_t a) { return (ec_ls8(ls, a) <
 EC_INL u128 ec_splat32(uint32_t v) { u128 r; r._u32[0] = r._u32[1] = r._u32[2] = r._u32[3] = v; return r; }
 
 /* the cull masks of groups g and g + 1 (lanes 0-3 and 4-7) */
-static void d618_masks2(const uint8_t* ls, uint32_t ibase, uint32_t r29, uint32_t g,
-                        const __m256 s39, const __m256i r63, const __m256i r55, uint32_t* m0, uint32_t* m1)
+/* f: fast (bad collects the records' exponent-255 lanes; the caller reads MXCSR's flags) or exact */
+EC_INL void d618_masks2(const int f, const uint8_t* ls, uint32_t ibase, uint32_t r29, uint32_t g,
+                        const __m256 s39, const __m256i r63, const __m256i r55, uint32_t* m0, uint32_t* m1,
+                        __m256i* bad)
 {
     /* the two groups' 24 indexes (48 bytes; the caller keeps the buffer inside the local store) */
     const __m128i sw16 = _mm_setr_epi8(1, 0, 3, 2, 5, 4, 7, 6, 9, 8, 11, 10, 13, 12, 15, 14);
@@ -245,15 +287,20 @@ static void d618_masks2(const uint8_t* ls, uint32_t ibase, uint32_t r29, uint32_
     const __m256 Xa = _mm256_castsi256_ps(gx[0]), Xb = _mm256_castsi256_ps(gx[1]), Xc = _mm256_castsi256_ps(gx[2]);
     const __m256 Ya = _mm256_castsi256_ps(gy[0]), Yb = _mm256_castsi256_ps(gy[1]), Yc = _mm256_castsi256_ps(gy[2]);
     const __m256i Fa = gf[0], Fb = gf[1], Fc = gf[2];
-    /* the facing: fms(Xb - Xa, Yc - Ya, (Yb - Ya) * (Xc - Xa)), the mode's sign, > 0 */
-    const __m256 cross = ec_fms(ec_fs(Xb, Xa), ec_fs(Yc, Ya), ec_fm(ec_fs(Yb, Ya), ec_fs(Xc, Xa)));
-    const __m256i facing = _mm256_castps_si256(ec_fcgt(_mm256_xor_ps(cross, _mm256_castsi256_ps(r63)),
-                                                       _mm256_setzero_ps()));
-    /* degenerate after snapping */
+    if (f)
+        *bad = _mm256_or_si256(*bad, _mm256_or_si256(
+            _mm256_or_si256(ec_e255(Xa), _mm256_or_si256(ec_e255(Xb), ec_e255(Xc))),
+            _mm256_or_si256(ec_e255(Ya), _mm256_or_si256(ec_e255(Yb), ec_e255(Yc)))));
+    /* the facing: fms(Xb - Xa, Yc - Ya, (Yb - Ya) * (Xc - Xa)), the mode's sign, > 0 (a zero's
+     * sign does not change the float compare) */
+    const __m256 cross = ecf_fms(f, ecf_fs(f, Xb, Xa), ecf_fs(f, Yc, Ya), ecf_fm(f, ecf_fs(f, Yb, Ya), ecf_fs(f, Xc, Xa)));
+    const __m256i facing = _mm256_castps_si256(ecf_fcgt(f, _mm256_xor_ps(cross, _mm256_castsi256_ps(r63)),
+                                                        _mm256_setzero_ps()));
+    /* degenerate after snapping (cvttps of a zero is 0 whatever its sign) */
     const __m256 half = ec_set(0x3F000000u);
-    const __m256i qxa = ec_cflts0(ec_fma(Xa, s39, half)), qxb = ec_cflts0(ec_fma(Xb, s39, half));
-    const __m256i qxc = ec_cflts0(ec_fma(Xc, s39, half)), qya = ec_cflts0(ec_fma(Ya, s39, half));
-    const __m256i qyb = ec_cflts0(ec_fma(Yb, s39, half)), qyc = ec_cflts0(ec_fma(Yc, s39, half));
+    const __m256i qxa = ecf_cflts0(f, ecf_fma(f, Xa, s39, half)), qxb = ecf_cflts0(f, ecf_fma(f, Xb, s39, half));
+    const __m256i qxc = ecf_cflts0(f, ecf_fma(f, Xc, s39, half)), qya = ecf_cflts0(f, ecf_fma(f, Ya, s39, half));
+    const __m256i qyb = ecf_cflts0(f, ecf_fma(f, Yb, s39, half)), qyc = ecf_cflts0(f, ecf_fma(f, Yc, s39, half));
     const __m256i allx = _mm256_and_si256(_mm256_and_si256(_mm256_cmpeq_epi32(qxc, qxa), _mm256_cmpeq_epi32(qxb, qxc)),
                                           _mm256_cmpeq_epi32(qxa, qxb));
     const __m256i ally = _mm256_and_si256(_mm256_and_si256(_mm256_cmpeq_epi32(qyc, qya), _mm256_cmpeq_epi32(qyb, qyc)),
@@ -362,8 +409,26 @@ static int d618_native(spu_context* ctx)
     uint32_t mstack[1024], *masks = mstack;
     if (groups + 2 > 1024) masks = (uint32_t*)malloc(sizeof(uint32_t) * (groups + 2));
     if (!masks) abort();
-    for (uint32_t g = 0; g < groups; g += 2)
-        d618_masks2(ls, ibase, r29, g, s39, r63, r55, &masks[g], &masks[g + 1]);
+    {
+        /* every group fast (spu_edge_simd.h), all redone exact when MXCSR's flags or an exponent
+         * 255 show (the masks go to this array only) */
+        int fast = !ec_force_exact();
+        if (fast) {
+            const unsigned csr = _mm_getcsr();
+            __m256i bad = _mm256_setzero_si256();
+            _mm_setcsr(csr & ~0x3Fu);
+            for (uint32_t g = 0; g < groups; g += 2)
+                d618_masks2(1, ls, ibase, r29, g, s39, r63, r55, &masks[g], &masks[g + 1], &bad);
+            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+                fast = 0;
+                __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+            }
+            _mm_setcsr(csr);
+        }
+        if (!fast)
+            for (uint32_t g = 0; g < groups; g += 2)
+                d618_masks2(0, ls, ibase, r29, g, s39, r63, r55, &masks[g], &masks[g + 1], NULL);
+    }
     if (groups) masks[groups - 1] |= lastmask;
 
     /* the writer, statement for statement (0xD92C), with the pipeline's two passes ahead */
