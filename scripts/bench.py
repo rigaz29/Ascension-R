@@ -10,6 +10,9 @@ until the opening movie's video decoder closes, then Cross on the main menu
 (Single Player), the profiles (Profile 1) and Profile 1's menu, whose cursor
 rests on Continue Game: its checkpoint loads R_MEGAERA03, the opening
 cinematic runs to ~45 s after the choice, and the Megaera fight follows.
+(--profile N: Down N-1 times on the profiles, for another profile's
+checkpoint. Where a checkpoint is depends on the saves, so a run on a copy of
+them, --set paths.hdd0=<copy>, keeps the player's own.)
 The menu answers at once (screenshots every 4 s: the main menu is up 2 s
 after the movie), so the three presses come 6 s apart from 6 s after it, and
 the choice is confirmed by the thread it starts
@@ -59,7 +62,7 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build")
 
-CROSS, SQUARE = 0x4000, 0x8000
+CROSS, SQUARE, DOWN = 0x4000, 0x8000, 0x0040
 MENU = (6, 12, 18)                  # Cross: Single Player, Profile 1, Continue Game (s after the movie)
 LOADING = b"SaveDataUtil::LoadFileSaveProfile"   # the thread Continue Game starts
 CINEMATIC_PRESS = 24                # s after the load: the old route's fourth Cross
@@ -73,6 +76,9 @@ def add_args(p):
                         '"--set graphics.antialiasing=smaa"; gowa.ini is not changed); repeat for an A/B')
     p.add_argument("--runs", type=int, default=1, help="runs per variant, alternated (default 1)")
     p.add_argument("--env", action="append", default=[], help="K=V for every variant")
+    p.add_argument("--profile", type=int, default=1,
+                   help="the profile the menu route continues (default 1): Down that many times "
+                        "less one on the profiles, between the first two Crosses")
     p.add_argument("--route", default=None,
                    help="Cross at these seconds after the movie (e.g. the old 45,80,105,130), "
                         "counting every later time from the movie; default: the menu route, "
@@ -270,11 +276,16 @@ def run_once(exe, env_extra, a, out, tag):
         # The menu route: Cross until Continue Game starts loading the level.
         loading = seen(log_err, LOADING)
         presses, extra, last, anchor = list(MENU), 0, t(), None
+        # --profile: Down a second apart from 3 s after the first Cross, all before the second.
+        downs = [MENU[0] + 3 + k for k in range(max(0, min(a.profile, 4) - 1))]
         while p.poll() is None:
             if loading():
                 anchor = t()
                 break
-            if presses and t() >= mc + presses[0]:
+            if downs and t() >= mc + downs[0]:
+                downs.pop(0)
+                press(DOWN, 4)
+            elif presses and t() >= mc + presses[0]:
                 presses.pop(0)
                 press(CROSS)
                 last = t()

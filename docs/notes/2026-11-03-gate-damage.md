@@ -91,3 +91,44 @@ From a session that shows the damage:
 
 - the census says how many targets that session held;
 - a capture of a damaged frame shows which pass read what.
+
+## The slow gate
+
+The user then played a New Game on profile 2 with `GowARecomp-debug.bat`
+(`logs/user-20261103-073254.log`, one F12 capture). The picture was right. What was left was "a
+freeze of ~20 s" once Kratos could walk after the whipping scene.
+
+**From the session's log:**
+
+- **No freeze.** No present came more than 201 ms after the one before, except 378 ms at the
+  F12 capture.
+- **The slow stretch.** From the second autosave (~245 s), when the title unmaps and maps IO
+  memory for the next section, frames took 80-100 ms: 10-11 flips/s for ~20 s.
+- **The render-target table** held 29 targets and evicted none.
+
+**At the gate, from profile 2's checkpoint.**
+
+- `gowa.py bench --profile 2` (new) continues another profile's checkpoint: Down between the
+  first two Crosses.
+- Kratos idle, `logs/slow` to `logs/slow3`.
+
+| | flips/s | frame clock thread | EDGE w14-16, a run |
+|---|---|---|---|
+| Disable Mesh Trimming on (the user's setting) | 11.67 | 85% | 7.6-7.7 ms |
+| Disable Mesh Trimming off | 13.12 (+12%) | 65% | 7.3-7.6 ms |
+| Disable Mesh Trimming off, Disable Motion Blur on | 14.01 (+20%) | 68% | 6.8-7.0 ms |
+
+- **The SPU threads are full** (575-595% of 600).
+  - The three EDGE workloads take 117-120% of a core each, at 7.3-7.7 ms a run.
+  - In the fight (2026-11-02) they took ~95% each, at 4.2-4.5 ms a run.
+  - EDGE's native routines do run (skinning ~99% native), and no SPU code is interpreted.
+- **Disable Mesh Trimming** makes EDGE keep the triangles it would trim.
+  - At 720p that adds nothing to the picture.
+  - Here it costs the frame clock thread a fifth of its time, and 12% of the frame rate.
+- **Disable Motion Blur.** With Disable MLAA the motion blur's output is overwritten
+  ([FSR 3 note](2026-11-03-fsr3.md), section 3). So turning the blur off costs nothing that is
+  seen.
+  - It takes the velocity pass's objects out of EDGE's work: 6.8-7.0 ms a run.
+  - It gains another 7% here.
+- **Walking on.** From the gate into the jumping area the frame rate rises to ~17 (the runs
+  above).
