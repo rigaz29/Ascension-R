@@ -1357,6 +1357,56 @@ r66/r62/r60, normals r52/r54/r56) and B (r65/r63/r61, r50/r53/r55).
   the native list in 2.19, General6's `4F00`/`4AB0` count for more per ms (General6 is on the
   frame's chain); EDGE's next functions are 4-9% each.
 
+### 2.21 Update, 2026-11-03: General6's noise subroutine, its upper bound; what the gate waits on
+
+**What General6's top functions are.** In module `a67e549fa0ab_e41E8`, the chain
+`4930 -> 4AB0 -> 4E90 -> 4E9C -> 4F00` is one subroutine. The lifter split it at branch targets.
+- It is an ABI function: `4930` saves the callee-saved registers and `4F00`'s end restores them.
+- The code at 0x6898-0x68F8 calls it four times, with scaled coordinates in r3-r6, and sums
+  the results in r3: four octaves of a 3D noise.
+- Its hashing:
+  - `cflts`, `& 255`;
+  - word loads from a 256-word table at LS 0x4680, through the preferred slot
+    (`lqx` + `rotqby`), chained as `p[p[X]+Y]+Z`.
+- A call is ~860 SPU ops: shufb 196, LS reads 116, a 82, fa 80, shli 60, rotqby 56, andi 48,
+  fm 44. Two thirds are integer, shuffle and loads.
+- It is ~45% of General6 at the gate (`logs/prof-g6`; `4F00` alone 24.8%, `4AB0` 13.5%).
+- `4F00` is already the lifter's `--float-spec` form. `4AB0`'s ops are already vector forms
+  (`cflts` ~20 instructions, `rotqby` and the LS read a few each).
+
+**The upper bound, measured before any native code.**
+- An experiment build, not kept: `GOWA_G6_ORACLE=1` returned at `4930`'s entry with r3 = 0.
+- Gate, ABBA, two runs each (`logs/g6-oracle`):
+
+| | flips/s | General6 | the policy modules | EDGE, each workload |
+|---|---|---|---|---|
+| the noise | 15.38 (15.78 / 14.85) | 97% of a core | 593% | 116-117%, 177 runs/s |
+| no noise | 15.83 (15.83 / 15.84) | 53% | 577% | 122-124%, 203-216 runs/s |
+
+- With the noise free, the frame rate gained at most ~3%, within the spread of the two base
+  runs.
+- The workers had time left over ("empty" runs 12-13% -> 19-22%). EDGE took ~18 of the 45
+  points General6 gave up.
+- A native noise would gain a part of that, so it was not written.
+
+**What the gate waits on** (`logs/diag-gate`, one run, 14.74 flips/s). Nothing is full:
+- **The main thread:** 92%, of which half is `poll_mwaitx`, in the hooked loops of
+  `scripts/ppu_hooks.json`: SPU progress counters and the job graph's entries.
+- **The six SPU workers:** ~86% each.
+- **The frame clock thread:** 52%.
+- **The GPU:** its 3D engine at 27%, at 855 MHz.
+- So the frame is the chain the main thread waits through, not any one resource's throughput.
+- The probe's slopes (2.19) are not the gains of speeding a workload up:
+  - slowing a workload lengthens the chain wherever its jobs are on it;
+  - speeding it up shortens only those parts.
+  - EDGE's lighting loops (2.20, -6.6% of EDGE's time) gave +0.6-1.3%. General6's noise for
+    free gave at most ~3%.
+- Identical runs at the gate differ by 4-6%. Small gains there need more than two runs a side.
+
+**Next, before more native code:** the chain itself. Which jobs does the main thread wait for
+each frame, and what do those jobs wait for? That means the job graph's entries, with each
+job's start, end and workload against the main thread's waits.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
