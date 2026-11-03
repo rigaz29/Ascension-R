@@ -1,6 +1,6 @@
 /*
  * EDGE's per-vertex lighting, point lights (job module e8f44fbc6dbf, 0x6AC8; lighting's
- * 0x73E0 calls it once a lit job): GOWA_EDGE_NATIVE bit 256, off by default while it is new.
+ * 0x73E0 calls it once a lit job): GOWA_EDGE_NATIVE bit 256, on unless GOWA_EDGE_NATIVE leaves it out.
  *
  * The arguments:
  *  - r3: the colours;  r4: the positions;  r6: the index list;  r7: the count;
@@ -151,7 +151,7 @@ int gowa_edge_lightpt_6ac8(spu_context* ctx)
     static int on = -1;
     if (on < 0) {
         const char* e = getenv("GOWA_EDGE_NATIVE");
-        on = e && (atoi(e) & 256) != 0;
+        on = !e || (atoi(e) & 256) != 0;
         if (on && getenv("GOWA_EDGE_NATIVE_STATS")) atexit(pt_stats);
         if (on && edge_verify_on()) atexit(pt_verify_report);
     }

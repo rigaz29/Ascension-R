@@ -166,3 +166,9 @@ native EDGE (2-3x, +45-70%) needs most of them done.
   - its writer packs the raw 24 bytes of a group two passes back, with the keep mask, through
     three 16-entry tables;
   - the plan is the keep masks native and the writer's statements as they are.
+
+**Gate, the first two native stages** (`logs/edge-p1/ab1`, ABBA, two runs each, the redo in both):
+- `0xD250` and `0x6AC8` off: 14.40 flips/s (14.55 / 14.35).
+- On: 14.81 (14.85 / 14.75), +2.8%; both runs above both.
+- The model said ~+3% (4.1% and 2.7% of EDGE, ~3x and ~2x faster).
+- Both are on by default now (`GOWA_EDGE_NATIVE` bits 128 and 256, like the other natives).

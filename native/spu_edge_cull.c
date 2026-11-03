@@ -1,7 +1,7 @@
 /*
  * EDGE's triangle culling as native code (job module e8f44fbc6dbf; docs/notes/2026-11-03-edge-stages.md).
  *
- * 0xD250, the vertex pass (GOWA_EDGE_NATIVE bit 128, off by default while it is new):
+ * 0xD250, the vertex pass (GOWA_EDGE_NATIVE bit 128, on unless GOWA_EDGE_NATIVE leaves it out):
  *  - D640 (the culling) calls it once a call, before its triangle loop.
  *  - For each vertex it writes a 16-byte record (sx, sy, flags, 0).
  *  - flags:
@@ -175,7 +175,7 @@ int gowa_edge_cull_d250(spu_context* ctx)
     static int on = -1;
     if (on < 0) {
         const char* e = getenv("GOWA_EDGE_NATIVE");
-        on = e && (atoi(e) & 128) != 0;
+        on = !e || (atoi(e) & 128) != 0;
         if (on && getenv("GOWA_EDGE_NATIVE_STATS")) atexit(cull_stats);
         if (on && edge_verify_on()) atexit(cull_verify_report);
     }
