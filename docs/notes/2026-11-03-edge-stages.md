@@ -172,3 +172,31 @@ native EDGE (2-3x, +45-70%) needs most of them done.
 - On: 14.81 (14.85 / 14.75), +2.8%; both runs above both.
 - The model said ~+3% (4.1% and 2.7% of EDGE, ~3x and ~2x faster).
 - Both are on by default now (`GOWA_EDGE_NATIVE` bits 128 and 256, like the other natives).
+
+## Culling's triangle loop, native (2026-11-03, later)
+
+`0xD618`/`0xD640` as one native routine (`native/spu_edge_cull.c`, `GOWA_EDGE_NATIVE` bit 512).
+- Each group of four triangles' cull mask, eight triangles a pass, in the SPU's exact forms:
+  - the records gathered with AVX2;
+  - degenerate after snapping, outside one plane, facing by the mode;
+  - Mesh Trimming's patch;
+  - the last group's lanes past the count.
+- The in-place writer runs statement for statement, with the runtime's SPU forms:
+  - its three shuffle tables;
+  - stores past the end into the frame's scratch;
+  - the pipeline's two fill passes.
+  - So the index buffer, the frame and the scratch end the same, byte for byte.
+- The frame, the vertex pass's call, the count at `ctx + 0x190` and `0xB600`'s word at
+  `ctx + 0x58` are as the lifted function leaves them.
+- The count is the halfword at `ctx + 0x190` (bytes 0-1: `rotqbyi 14` and `0xFFFF`), not
+  `+0x19E`, as first read.
+- The check (`spu_edge_verify.h`) now keeps one copy per level. The lifted culling's own call of
+  the vertex pass is checked inside it, and with one copy that inner check overwrote the outer one.
+
+**Checked:** identical on 82 calls in the replay, 520,193 in the game, and the strict replay.
+
+**Speed.**
+- Replay, the lit jobs: 105.1-106.0 -> 101.6-101.9 us (-3.6%). The routine is ~1.7x the
+  lifted one: its masks and the literal writer are about half each.
+- Gate, ABBA: 14.56 -> 14.74 flips/s (+1.2%), within the runs' spread.
+- On by default: exact, faster in replay, no loss at the gate.

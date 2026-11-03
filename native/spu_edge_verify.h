@@ -58,7 +58,12 @@ static void edge_vdiff(edge_vstat* st, const char* what, uint32_t at, const uint
 static int edge_verify(spu_context* ctx, edge_vstat* st, int (*native)(spu_context*),
                        void (*lifted)(spu_context*), spu_context** guard)
 {
-    static SPU_THREAD_LOCAL spu_context* copy;
+    /* one copy per level: a checked function whose lifted run calls another checked one (the
+     * culling calls the vertex pass) must not lose its copy to the inner check */
+    static SPU_THREAD_LOCAL spu_context* copies[4];
+    static SPU_THREAD_LOCAL int depth;
+    if (depth >= 4) return 0;
+    spu_context* copy = copies[depth];
     if (!copy) {
 #ifdef _WIN32
         copy = (spu_context*)_aligned_malloc(sizeof(spu_context), 64);
@@ -66,7 +71,9 @@ static int edge_verify(spu_context* ctx, edge_vstat* st, int (*native)(spu_conte
         copy = (spu_context*)aligned_alloc(64, (sizeof(spu_context) + 63) & ~(size_t)63);
 #endif
         if (!copy) return 0;
+        copies[depth] = copy;
     }
+    depth++;
     memcpy(copy, ctx, sizeof *copy);
     memcpy(copy->ls_store, ctx->ls, SPU_LS_SIZE);
     copy->ls = copy->ls_store;
@@ -109,6 +116,7 @@ static int edge_verify(spu_context* ctx, edge_vstat* st, int (*native)(spu_conte
         if (reg_bad) __atomic_add_fetch(&st->reg_differ, 1, __ATOMIC_RELAXED);
     }
     if ((n & 4095) == 0) edge_vreport(st);
+    depth--;
     return 1;
 }
 

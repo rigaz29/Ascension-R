@@ -150,6 +150,31 @@ EC_INL __m256 ec_fs(__m256 a, __m256 b)              /* a - b */
     const __m256 r = _mm256_sub_ps(a, b);
     return __builtin_expect(ec_ok(r), 1) ? ec_pz(r) : ec_fs_x(a, b);
 }
+EC_COLD __m256 ec_fms_x(__m256 a, __m256 b, __m256 c)
+{
+    EC_EXACT();
+    return ec_join(spu_fms(ec_u(ec_lo(a)), ec_u(ec_lo(b)), ec_u(ec_lo(c))),
+                   spu_fms(ec_u(ec_hi(a)), ec_u(ec_hi(b)), ec_u(ec_hi(c))));
+}
+EC_INL __m256 ec_fms(__m256 a, __m256 b, __m256 c)   /* a*b - c */
+{
+    const __m256 r = _mm256_fmsub_ps(a, b, c);
+    return __builtin_expect(ec_ok(r), 1) ? ec_pz(r) : ec_fms_x(a, b, c);
+}
+/* cflts with scale 0 (i8 173): truncation toward zero, the SPU's saturation. Native where every
+ * lane's biased exponent is below 158 (|x| < 2^31; exponent 0 reads as zero under DAZ). */
+EC_COLD __m256i ec_cflts0_x(__m256 x)
+{
+    EC_EXACT();
+    return _mm256_castps_si256(ec_join(spu_cflts(ec_u(ec_lo(x)), 173), spu_cflts(ec_u(ec_hi(x)), 173)));
+}
+EC_INL __m256i ec_cflts0(__m256 x)
+{
+    const __m256i e = _mm256_and_si256(_mm256_srli_epi32(_mm256_castps_si256(x), 23), _mm256_set1_epi32(0xFF));
+    if (__builtin_expect(!_mm256_movemask_ps(_mm256_castsi256_ps(_mm256_cmpgt_epi32(e, _mm256_set1_epi32(157)))), 1))
+        return _mm256_cvttps_epi32(x);
+    return ec_cflts0_x(x);
+}
 EC_INL __m256i ec_frsqest(__m256i x)
 {
     const __m256i exp = _mm256_and_si256(_mm256_srli_epi32(x, 23), _mm256_set1_epi32(0xFF));
