@@ -46,6 +46,7 @@
  * to one counter a call cost ~4% of the loop). */
 #include "spu_context.h"
 #include "spu_helpers.h"
+#include "spu_edge_verify.h"
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -271,6 +272,81 @@ typedef struct {
     int param;
 } lt7_st;
 
+/* finish light j: its direction and colour (stored for 0x7ED8), the sums */
+LT_INL void lt7_finish(const int f, uint8_t* ls, const lt7_k* k, lt7_st* s)
+{
+    const __m256 D = o_fm(f, s->SQ, s->RS);
+    const __m256 nz = o_fm(f, s->DZ, s->RS), nx = o_fm(f, s->DX, s->RS), ny = o_fm(f, s->DY, s->RS);
+    const __m256 DK = o_fm(f, D, lt_dup(s->K));
+    const __m256 LX = s->param ? lt_dup(s->QX) : o_pz(f, nx);
+    const __m256 LY = s->param ? lt_dup(s->QY) : o_pz(f, ny);
+    const __m256 LZ = s->param ? lt_dup(s->QZ) : o_pz(f, nz);
+    lt_ls_wr(ls, s->w23 + 0x20, lt_lo(LZ));
+    lt_ls_wr(ls, s->w23 + 0x00, lt_lo(LX));
+    lt_ls_wr(ls, s->w23 + 0x10, lt_lo(LY));
+    lt_ls_wr(ls, s->w23 + 0x30, lt_hi(LX));
+    lt_ls_wr(ls, s->w23 + 0x40, lt_hi(LY));
+    lt_ls_wr(ls, s->w23 + 0x50, lt_hi(LZ));
+    __m256 NL = o_fm(f, k->NX, LX);
+    NL = o_fma(f, k->NY, LY, NL);
+    NL = o_fma(f, k->NZ, LZ, NL);
+    const __m256 M = _mm256_blendv_ps(DK, k->ONE, o_fcgt(f, DK, k->ONE));
+    const __m256 T = o_fs(f, k->ONE, M);
+    const __m256 S = o_fnms(f, k->TWO, T, k->THREE);
+    const __m256 T2 = o_fm(f, T, T);
+    const __m256 SM = o_fm(f, T2, S);
+    const __m256 SM2 = o_fm(f, SM, SM);
+    const __m256 ATT = o_fm(f, SM2, lt_dup(s->CW));
+    __m256 H = _mm256_andnot_ps(k->SIGN, o_fma(f, NL, k->HALF, k->HALF));
+    H = _mm256_blendv_ps(H, k->ONE, o_fcgt(f, H, k->ONE));
+    const __m256 AA = _mm256_andnot_ps(k->SIGN, ATT);
+    const __m256 CR = o_pz(f, o_fm(f, lt_dup(s->CX), ATT));
+    const __m256 CG = o_pz(f, o_fm(f, lt_dup(s->CY), ATT));
+    const __m256 CB = o_pz(f, o_fm(f, lt_dup(s->CZ), ATT));
+    const __m256 W = o_fm(f, AA, H);
+    lt_ls_wr(ls, s->w29 + 0x20, lt_lo(CB));
+    lt_ls_wr(ls, s->w29 + 0x50, lt_hi(CB));
+    lt_ls_wr(ls, s->w29 + 0x30, lt_hi(CR));
+    lt_ls_wr(ls, s->w29 + 0x00, lt_lo(CR));
+    lt_ls_wr(ls, s->w29 + 0x40, lt_hi(CG));
+    lt_ls_wr(ls, s->w29 + 0x10, lt_lo(CG));
+    s->AZ = o_fma(f, LZ, W, s->AZ);
+    s->WS = o_fa(f, s->WS, W);
+    s->AX = o_fma(f, LX, W, s->AX);
+    s->AY = o_fma(f, LY, W, s->AY);
+    s->r46 = _mm_add_epi32(s->r46, _mm_set1_epi32(1));
+    s->r23 = _mm_add_epi32(s->r23, _mm_set1_epi32(96));
+    s->r29 = _mm_add_epi32(s->r29, _mm_set1_epi32(96));
+    s->w23 += 96; s->w29 += 96;
+}
+
+/* begin light j+1: its position, colour and direction (bad: the quadwords' exponent-255 lanes) */
+LT_INL void lt7_begin(const int f, const uint8_t* ls, const lt7_k* k, lt7_st* s, __m128i* bad)
+{
+    const __m128i P = lt_ls_rd(ls, s->q99), C = lt_ls_rd(ls, s->q97), Q = lt_ls_rd(ls, s->q98);
+    if (f) *bad = _mm_or_si128(*bad, _mm_or_si128(lt_e255q(P), _mm_or_si128(lt_e255q(C), lt_e255q(Q))));
+    s->DX = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0x00)), k->VX);
+    s->DY = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0x55)), k->VY);
+    s->DZ = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0xAA)), k->VZ);
+    __m256 SQ = o_fma(f, s->DX, s->DX, k->EPS);
+    SQ = o_fma(f, s->DY, s->DY, SQ);
+    SQ = o_fma(f, s->DZ, s->DZ, SQ);
+    s->SQ = o_pz(f, SQ);                          /* frsqest and fi read its bits */
+    s->RS = lt_rsqrt(s->SQ);
+    s->K = _mm_shuffle_epi32(P, 0xFF);
+    s->QX = _mm_shuffle_epi32(Q, 0x00);
+    s->QY = _mm_shuffle_epi32(Q, 0x55);
+    s->QZ = _mm_shuffle_epi32(Q, 0xAA);
+    const __m128i C2 = f ? lt_pzq(_mm_mul_ps(k->r93m, _mm_castsi128_ps(C))) : lt_m(spu_fm(k->r93, lt_u(C)));
+    s->CX = _mm_shuffle_epi32(C2, 0x00);
+    s->CY = _mm_shuffle_epi32(C2, 0x55);
+    s->CZ = _mm_shuffle_epi32(C2, 0xAA);
+    s->CW = _mm_shuffle_epi32(C2, 0xFF);
+    s->param = k->n100 > (int32_t)_mm_cvtsi128_si32(s->r43);
+    s->r43 = _mm_add_epi32(s->r43, _mm_set1_epi32(16));
+    s->q99 += 16; s->q97 += 16; s->q98 += 16;
+}
+
 /* n iterations (fewer when the fast pass meets an interrupt); f: fast (bad collects the
  * light quadwords' exponent-255 lanes) or exact */
 LT_INL int lt7_run(const int f, spu_context* ctx, uint8_t* ls, const lt7_k* k, lt7_st* s, int n, __m128i* bad)
@@ -278,72 +354,8 @@ LT_INL int lt7_run(const int f, spu_context* ctx, uint8_t* ls, const lt7_k* k, l
     int done = 0;
     for (; done < n; done++) {
         if (f && ctx->int_enable && (ctx->event_status & ctx->event_mask)) break;
-        /* ---- finish light j ---- */
-        const __m256 D = o_fm(f, s->SQ, s->RS);
-        const __m256 nz = o_fm(f, s->DZ, s->RS), nx = o_fm(f, s->DX, s->RS), ny = o_fm(f, s->DY, s->RS);
-        const __m256 DK = o_fm(f, D, lt_dup(s->K));
-        const __m256 LX = s->param ? lt_dup(s->QX) : o_pz(f, nx);
-        const __m256 LY = s->param ? lt_dup(s->QY) : o_pz(f, ny);
-        const __m256 LZ = s->param ? lt_dup(s->QZ) : o_pz(f, nz);
-        lt_ls_wr(ls, s->w23 + 0x20, lt_lo(LZ));
-        lt_ls_wr(ls, s->w23 + 0x00, lt_lo(LX));
-        lt_ls_wr(ls, s->w23 + 0x10, lt_lo(LY));
-        lt_ls_wr(ls, s->w23 + 0x30, lt_hi(LX));
-        lt_ls_wr(ls, s->w23 + 0x40, lt_hi(LY));
-        lt_ls_wr(ls, s->w23 + 0x50, lt_hi(LZ));
-        __m256 NL = o_fm(f, k->NX, LX);
-        NL = o_fma(f, k->NY, LY, NL);
-        NL = o_fma(f, k->NZ, LZ, NL);
-        const __m256 M = _mm256_blendv_ps(DK, k->ONE, o_fcgt(f, DK, k->ONE));
-        const __m256 T = o_fs(f, k->ONE, M);
-        const __m256 S = o_fnms(f, k->TWO, T, k->THREE);
-        const __m256 T2 = o_fm(f, T, T);
-        const __m256 SM = o_fm(f, T2, S);
-        const __m256 SM2 = o_fm(f, SM, SM);
-        const __m256 ATT = o_fm(f, SM2, lt_dup(s->CW));
-        __m256 H = _mm256_andnot_ps(k->SIGN, o_fma(f, NL, k->HALF, k->HALF));
-        H = _mm256_blendv_ps(H, k->ONE, o_fcgt(f, H, k->ONE));
-        const __m256 AA = _mm256_andnot_ps(k->SIGN, ATT);
-        const __m256 CR = o_pz(f, o_fm(f, lt_dup(s->CX), ATT));
-        const __m256 CG = o_pz(f, o_fm(f, lt_dup(s->CY), ATT));
-        const __m256 CB = o_pz(f, o_fm(f, lt_dup(s->CZ), ATT));
-        const __m256 W = o_fm(f, AA, H);
-        lt_ls_wr(ls, s->w29 + 0x20, lt_lo(CB));
-        lt_ls_wr(ls, s->w29 + 0x50, lt_hi(CB));
-        lt_ls_wr(ls, s->w29 + 0x30, lt_hi(CR));
-        lt_ls_wr(ls, s->w29 + 0x00, lt_lo(CR));
-        lt_ls_wr(ls, s->w29 + 0x40, lt_hi(CG));
-        lt_ls_wr(ls, s->w29 + 0x10, lt_lo(CG));
-        s->AZ = o_fma(f, LZ, W, s->AZ);
-        s->WS = o_fa(f, s->WS, W);
-        s->AX = o_fma(f, LX, W, s->AX);
-        s->AY = o_fma(f, LY, W, s->AY);
-        /* ---- begin light j+1 ---- */
-        const __m128i P = lt_ls_rd(ls, s->q99), C = lt_ls_rd(ls, s->q97), Q = lt_ls_rd(ls, s->q98);
-        if (f) *bad = _mm_or_si128(*bad, _mm_or_si128(lt_e255q(P), _mm_or_si128(lt_e255q(C), lt_e255q(Q))));
-        s->DX = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0x00)), k->VX);
-        s->DY = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0x55)), k->VY);
-        s->DZ = o_fs(f, lt_dup(_mm_shuffle_epi32(P, 0xAA)), k->VZ);
-        __m256 SQ = o_fma(f, s->DX, s->DX, k->EPS);
-        SQ = o_fma(f, s->DY, s->DY, SQ);
-        SQ = o_fma(f, s->DZ, s->DZ, SQ);
-        s->SQ = o_pz(f, SQ);                          /* frsqest and fi read its bits */
-        s->RS = lt_rsqrt(s->SQ);
-        s->K = _mm_shuffle_epi32(P, 0xFF);
-        s->QX = _mm_shuffle_epi32(Q, 0x00);
-        s->QY = _mm_shuffle_epi32(Q, 0x55);
-        s->QZ = _mm_shuffle_epi32(Q, 0xAA);
-        const __m128i C2 = f ? lt_pzq(_mm_mul_ps(k->r93m, _mm_castsi128_ps(C))) : lt_m(spu_fm(k->r93, lt_u(C)));
-        s->CX = _mm_shuffle_epi32(C2, 0x00);
-        s->CY = _mm_shuffle_epi32(C2, 0x55);
-        s->CZ = _mm_shuffle_epi32(C2, 0xAA);
-        s->CW = _mm_shuffle_epi32(C2, 0xFF);
-        s->param = k->n100 > (int32_t)_mm_cvtsi128_si32(s->r43);
-        s->r43 = _mm_add_epi32(s->r43, _mm_set1_epi32(16));
-        s->r46 = _mm_add_epi32(s->r46, _mm_set1_epi32(1));
-        s->r23 = _mm_add_epi32(s->r23, _mm_set1_epi32(96));
-        s->r29 = _mm_add_epi32(s->r29, _mm_set1_epi32(96));
-        s->w23 += 96; s->w29 += 96; s->q99 += 16; s->q97 += 16; s->q98 += 16;
+        lt7_finish(f, ls, k, s);
+        lt7_begin(f, ls, k, s, bad);
     }
     return done;
 }
@@ -539,43 +551,53 @@ typedef struct {
     uint32_t q30, q31;
 } lt8_st;
 
+/* finish light j: the six sums */
+LT_INL void lt8_finish(const int f, const lt8_k* k, lt8_st* s)
+{
+    const __m256 MN = _mm256_blendv_ps(s->NL, k->ONE, o_fcgt(f, s->NL, k->ONE));
+    const __m256 L = _mm256_and_ps(MN, _mm256_castsi256_ps(
+        _mm256_cmpgt_epi32(_mm256_castps_si256(s->NL), _mm256_setzero_si256())));
+    const __m256 VB = o_fm(f, s->CB, L), VR = o_fm(f, s->CR, L), VG = o_fm(f, s->CG, L);
+    const __m256 nVR = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VR), k->SGN));
+    const __m256 nVG = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VG), k->SGN));
+    const __m256 nVB = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VB), k->SGN));
+    s->PR = o_fa(f, s->PR, lt_pos(VR));
+    s->PG = o_fa(f, s->PG, lt_pos(VG));
+    s->PB = o_fa(f, s->PB, lt_pos(VB));
+    s->NR = o_fa(f, s->NR, lt_pos(nVR));
+    s->NG = o_fa(f, s->NG, lt_pos(nVG));
+    s->NB = o_fa(f, s->NB, lt_pos(nVB));
+}
+
+/* begin light j+1: its direction and colour from 0x7BB4's arrays, N.L */
+LT_INL void lt8_begin(const int f, const uint8_t* ls, const lt8_k* k, lt8_st* s, __m256i* bad)
+{
+    const __m256 LX = lt_ld2(ls, s->q30 + 0x00, s->q30 + 0x30), LY = lt_ld2(ls, s->q30 + 0x10, s->q30 + 0x40);
+    const __m256 LZ = lt_ld2(ls, s->q30 + 0x20, s->q30 + 0x50);
+    s->CR = lt_ld2(ls, s->q31 + 0x00, s->q31 + 0x30);
+    s->CG = lt_ld2(ls, s->q31 + 0x10, s->q31 + 0x40);
+    s->CB = lt_ld2(ls, s->q31 + 0x20, s->q31 + 0x50);
+    if (f)
+        *bad = _mm256_or_si256(*bad, _mm256_or_si256(
+            _mm256_or_si256(lt_e255(LX), _mm256_or_si256(lt_e255(LY), lt_e255(LZ))),
+            _mm256_or_si256(lt_e255(s->CR), _mm256_or_si256(lt_e255(s->CG), lt_e255(s->CB)))));
+    __m256 NL = o_fm(f, k->NX, LX);
+    NL = o_fma(f, k->NY, LY, NL);
+    s->NL = o_fma(f, k->NZ, LZ, NL);
+    s->r30 = _mm_add_epi32(s->r30, _mm_set1_epi32(96));
+    s->r31 = _mm_add_epi32(s->r31, _mm_set1_epi32(96));
+    s->r32 = _mm_add_epi32(s->r32, _mm_set1_epi32(1));
+    s->q30 += 96; s->q31 += 96;
+}
+
 /* as lt7_run: n iterations, fast (bad collects the loaded quadwords' exponent-255 lanes) or exact */
 LT_INL int lt8_run(const int f, spu_context* ctx, const uint8_t* ls, const lt8_k* k, lt8_st* s, int n, __m256i* bad)
 {
     int done = 0;
     for (; done < n; done++) {
         if (f && ctx->int_enable && (ctx->event_status & ctx->event_mask)) break;
-        /* ---- finish light j ---- */
-        const __m256 MN = _mm256_blendv_ps(s->NL, k->ONE, o_fcgt(f, s->NL, k->ONE));
-        const __m256 L = _mm256_and_ps(MN, _mm256_castsi256_ps(
-            _mm256_cmpgt_epi32(_mm256_castps_si256(s->NL), _mm256_setzero_si256())));
-        const __m256 VB = o_fm(f, s->CB, L), VR = o_fm(f, s->CR, L), VG = o_fm(f, s->CG, L);
-        const __m256 nVR = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VR), k->SGN));
-        const __m256 nVG = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VG), k->SGN));
-        const __m256 nVB = _mm256_castsi256_ps(_mm256_xor_si256(_mm256_castps_si256(VB), k->SGN));
-        s->PR = o_fa(f, s->PR, lt_pos(VR));
-        s->PG = o_fa(f, s->PG, lt_pos(VG));
-        s->PB = o_fa(f, s->PB, lt_pos(VB));
-        s->NR = o_fa(f, s->NR, lt_pos(nVR));
-        s->NG = o_fa(f, s->NG, lt_pos(nVG));
-        s->NB = o_fa(f, s->NB, lt_pos(nVB));
-        /* ---- begin light j+1 ---- */
-        const __m256 LX = lt_ld2(ls, s->q30 + 0x00, s->q30 + 0x30), LY = lt_ld2(ls, s->q30 + 0x10, s->q30 + 0x40);
-        const __m256 LZ = lt_ld2(ls, s->q30 + 0x20, s->q30 + 0x50);
-        s->CR = lt_ld2(ls, s->q31 + 0x00, s->q31 + 0x30);
-        s->CG = lt_ld2(ls, s->q31 + 0x10, s->q31 + 0x40);
-        s->CB = lt_ld2(ls, s->q31 + 0x20, s->q31 + 0x50);
-        if (f)
-            *bad = _mm256_or_si256(*bad, _mm256_or_si256(
-                _mm256_or_si256(lt_e255(LX), _mm256_or_si256(lt_e255(LY), lt_e255(LZ))),
-                _mm256_or_si256(lt_e255(s->CR), _mm256_or_si256(lt_e255(s->CG), lt_e255(s->CB)))));
-        __m256 NL = o_fm(f, k->NX, LX);
-        NL = o_fma(f, k->NY, LY, NL);
-        s->NL = o_fma(f, k->NZ, LZ, NL);
-        s->r30 = _mm_add_epi32(s->r30, _mm_set1_epi32(96));
-        s->r31 = _mm_add_epi32(s->r31, _mm_set1_epi32(96));
-        s->r32 = _mm_add_epi32(s->r32, _mm_set1_epi32(1));
-        s->q30 += 96; s->q31 += 96;
+        lt8_finish(f, k, s);
+        lt8_begin(f, ls, k, s, bad);
     }
     return done;
 }
@@ -675,7 +697,330 @@ void gowa_edge_light_7ed8(spu_context* ctx)
     }
 }
 
+/* ---------------------------------------------------------------------------
+ * The outer loop, LS 0x79B0, around the two above (GOWA_EDGE_NATIVE bit 2048). A pass takes
+ * eight vertices, those of the index entries at r103 (word 3: the offset):
+ *  - positions at r77 + offset, normals at r76 + offset, vertex k in lane k (0-3 group A, the
+ *    low half; 4-7 group B);
+ *  - light 0 begun as 0x7BB4 begins a light (its parameter r100 > 0), the sum of weights at
+ *    1e-4 and the summed directions at 0; then 0x7BB4's loop over the r83 lights;
+ *  - r = fi(WS, frest(WS)), 1/WS = fma(fnms(r, WS, 1), r, r); the light position
+ *    P = fma(A, 1/WS, V); the direction D = A * fi(d2, frsqest(d2)) with
+ *    d2 = fma(Az, Az, fma(Ay, Ay, fma(Ax, Ax, eps)));
+ *  - N.L of light 0 from 0x7BB4's arrays (r94, r95), the sums at 0; then 0x7ED8's loop;
+ *  - per vertex, in this order: (NR, NG, NB, w) at r73 + offset, w being what the SPU's
+ *    transpose leaves there (NR[3], NG[3], 0, 0 in each group), (Px, Py, Pz, Pz) at r75 +
+ *    offset, (PR, PG, PB, PB) at r74 + offset.
+ * (Mapped by simulating the lifted statements with every word a label.)
+ *
+ * The loop carries r103 (+128 a pass) and r114 (+8); everything else it reads is set before it.
+ * This takes every pass but the last, which the lifted loop runs: the registers end as it
+ * leaves them, and the arrays of 0x7BB4 too. Each pass runs fast first (one flag read a pass)
+ * and again exact when the flags or an exponent 255 show, before anything of it is stored but
+ * 0x7BB4's arrays, which must then lie apart from all a pass reads (else the pass runs exact).
+ * GOWA_EDGE_VERIFY=1 checks the whole stage, 0x73E0, against the stage with this off. */
+
+/* the two tables and the LS quadword the loop reads, as the job module has them */
+static const uint32_t lo_tab[12][4] = {
+    { 0x00010203u, 0x18191A1Bu, 0x04050607u, 0x10111213u },   /* r108 (F870) */
+    { 0x18191A1Bu, 0x10111213u, 0x00010203u, 0x04050607u },   /* r109 (F880) */
+    { 0x04050607u, 0x08090A0Bu, 0x18191A1Bu, 0x14151617u },   /* r110 (F890) */
+    { 0x10111213u, 0x14151617u, 0x18191A1Bu, 0x1C1D1E1Fu },   /* r104 (F8A0) */
+    { 0x0C0D0E0Fu, 0x00010203u, 0x10111213u, 0x1C1D1E1Fu },   /* r118 (F8B0) */
+    { 0x04050607u, 0x08090A0Bu, 0x14151617u, 0x18191A1Bu },   /* r119 (F8C0) */
+    { 0x04050607u, 0x18191A1Bu, 0x0C0D0E0Fu, 0x80808080u },   /* r120 (F8D0) */
+    { 0x1C1D1E1Fu, 0x00010203u, 0x0C0D0E0Fu, 0x80808080u },   /* r121 (F8E0) */
+    { 0x0C0D0E0Fu, 0x08090A0Bu, 0x14151617u, 0x10111213u },   /* r111 (F8F0) */
+    { 0x08090A0Bu, 0x0C0D0E0Fu, 0x1C1D1E1Fu, 0x18191A1Bu },   /* r112 (F900) */
+    { 0x04050607u, 0x00010203u, 0x10111213u, 0x14151617u },   /* r113 (F910) */
+    { 0x00010203u, 0x04050607u, 0x08090A0Bu, 0x0C0D0E0Fu },   /* LS F920, r3 each pass */
+};
+static const int lo_tab_reg[11] = { 108, 109, 110, 104, 118, 119, 120, 121, 111, 112, 113 };
+
+LT_INL __m256i lt_frest(__m256i x)      /* the runtime's frest bit-field rule (spu_frest_ref) */
+{
+    const __m256i exp = _mm256_and_si256(_mm256_srli_epi32(x, 23), _mm256_set1_epi32(0xFF));
+    const __m256i idx = _mm256_and_si256(_mm256_srli_epi32(x, 18), _mm256_set1_epi32(0x1F));
+    const __m256i frac = _mm256_and_si256(lt_lut(spu_frest_fraction_lut, 4, idx), _mm256_set1_epi32(0x7FFFFF));
+    __m256i rexp = _mm256_sub_epi32(_mm256_set1_epi32(253), exp);
+    rexp = _mm256_andnot_si256(_mm256_cmpgt_epi32(exp, _mm256_set1_epi32(252)), rexp);
+    rexp = _mm256_blendv_epi8(rexp, _mm256_set1_epi32(255), _mm256_cmpeq_epi32(exp, _mm256_setzero_si256()));
+    return _mm256_or_si256(_mm256_and_si256(x, _mm256_set1_epi32((int)0x80000000u)),
+                           _mm256_or_si256(_mm256_slli_epi32(rexp, 23), frac));
+}
+/* eight quadwords: words 0-2 of each as three eight-lane vectors (lane j: quadword j) */
+LT_INL void lt_soa3(const __m128i q[8], __m256* x, __m256* y, __m256* z)
+{
+    const __m256 r0 = lt_pair(q[0], q[4]), r1 = lt_pair(q[1], q[5]);
+    const __m256 r2 = lt_pair(q[2], q[6]), r3 = lt_pair(q[3], q[7]);
+    const __m256 t0 = _mm256_unpacklo_ps(r0, r1), t1 = _mm256_unpacklo_ps(r2, r3);
+    const __m256 t2 = _mm256_unpackhi_ps(r0, r1), t3 = _mm256_unpackhi_ps(r2, r3);
+    *x = _mm256_shuffle_ps(t0, t1, _MM_SHUFFLE(1, 0, 1, 0));
+    *y = _mm256_shuffle_ps(t0, t1, _MM_SHUFFLE(3, 2, 3, 2));
+    *z = _mm256_shuffle_ps(t2, t3, _MM_SHUFFLE(1, 0, 1, 0));
+}
+/* the reverse, four vectors: quadword j = lane j of each */
+LT_INL void lt_aos4(const __m256 in[4], __m128i q[8])
+{
+    const __m256 u0 = _mm256_unpacklo_ps(in[0], in[1]), u1 = _mm256_unpackhi_ps(in[0], in[1]);
+    const __m256 v0 = _mm256_unpacklo_ps(in[2], in[3]), v1 = _mm256_unpackhi_ps(in[2], in[3]);
+    const __m256 w0 = _mm256_shuffle_ps(u0, v0, _MM_SHUFFLE(1, 0, 1, 0));
+    const __m256 w1 = _mm256_shuffle_ps(u0, v0, _MM_SHUFFLE(3, 2, 3, 2));
+    const __m256 w2 = _mm256_shuffle_ps(u1, v1, _MM_SHUFFLE(1, 0, 1, 0));
+    const __m256 w3 = _mm256_shuffle_ps(u1, v1, _MM_SHUFFLE(3, 2, 3, 2));
+    q[0] = lt_lo(w0); q[1] = lt_lo(w1); q[2] = lt_lo(w2); q[3] = lt_lo(w3);
+    q[4] = lt_hi(w0); q[5] = lt_hi(w1); q[6] = lt_hi(w2); q[7] = lt_hi(w3);
+}
+
+typedef struct {
+    lt7_k k7;                /* ONE EPS HALF THREE TWO SIGN r93 r100 (the vertices set a pass) */
+    lt8_k k8;                /* ONE SGN (the direction set a pass) */
+    uint32_t pos, nrm, lp99, lp97, lp98, s23, s29, s94, s95, o73, o75, o74;
+    int32_t L;               /* the lights (r83; none when not above 0) */
+} lo_k;
+
+/* a pass up to its stores: P (x y z), the positive sums (r g b), the negative (r g b); fast
+ * (bad7, bad8 collect exponent-255 lanes) or exact */
+LT_INL void lo_pass(const int f, uint8_t* ls, const lo_k* K, const uint32_t off[8], __m256 out[9],
+                    __m128i* bad7, __m256i* bad8)
+{
+    __m128i p[8], n[8];
+    for (int j = 0; j < 8; j++) {
+        p[j] = lt_ls_rd(ls, K->pos + off[j]);
+        n[j] = lt_ls_rd(ls, K->nrm + off[j]);
+    }
+    lt7_k k = K->k7;
+    lt_soa3(p, &k.VX, &k.VY, &k.VZ);
+    lt_soa3(n, &k.NX, &k.NY, &k.NZ);
+    if (f)
+        *bad8 = _mm256_or_si256(*bad8, _mm256_or_si256(
+            _mm256_or_si256(lt_e255(k.VX), _mm256_or_si256(lt_e255(k.VY), lt_e255(k.VZ))),
+            _mm256_or_si256(lt_e255(k.NX), _mm256_or_si256(lt_e255(k.NY), lt_e255(k.NZ)))));
+    lt7_st s;
+    memset(&s, 0, sizeof s);
+    s.WS = _mm256_castsi256_ps(_mm256_set1_epi32(0x38D1B717));     /* 1e-4 */
+    s.w23 = K->s23; s.w29 = K->s29; s.q99 = K->lp99; s.q97 = K->lp97; s.q98 = K->lp98;
+    if (K->L > 0) {
+        lt7_begin(f, ls, &k, &s, bad7);                               /* light 0 */
+        for (int32_t j = 0; j < K->L; j++) {
+            lt7_finish(f, ls, &k, &s);
+            if (j + 1 < K->L) lt7_begin(f, ls, &k, &s, bad7);
+        }
+    }
+    const __m256 WS = o_pz(f, s.WS);                                  /* frest and fi read its bits */
+    const __m256i wsi = _mm256_castps_si256(WS);
+    const __m256 r = _mm256_castsi256_ps(lt_fi(wsi, lt_frest(wsi)));
+    const __m256 inv = o_fma(f, o_fnms(f, r, WS, k.ONE), r, r);
+    out[0] = o_fma(f, s.AX, inv, k.VX);
+    out[1] = o_fma(f, s.AY, inv, k.VY);
+    out[2] = o_fma(f, s.AZ, inv, k.VZ);
+    for (int i = 3; i < 9; i++) out[i] = _mm256_setzero_ps();
+    if (K->L <= 0) return;
+    const __m256 d2 = o_pz(f, o_fma(f, s.AZ, s.AZ, o_fma(f, s.AY, s.AY, o_fma(f, s.AX, s.AX, k.EPS))));
+    const __m256 rs = lt_rsqrt(d2);
+    lt8_k k8 = K->k8;
+    k8.NX = o_fm(f, s.AX, rs);
+    k8.NY = o_fm(f, s.AY, rs);
+    k8.NZ = o_fm(f, s.AZ, rs);
+    const __m256 LX = lt_ld2(ls, K->s94 + 0x00, K->s94 + 0x30), LY = lt_ld2(ls, K->s94 + 0x10, K->s94 + 0x40);
+    const __m256 LZ = lt_ld2(ls, K->s94 + 0x20, K->s94 + 0x50);
+    lt8_st t;
+    memset(&t, 0, sizeof t);
+    t.CR = lt_ld2(ls, K->s95 + 0x00, K->s95 + 0x30);
+    t.CG = lt_ld2(ls, K->s95 + 0x10, K->s95 + 0x40);
+    t.CB = lt_ld2(ls, K->s95 + 0x20, K->s95 + 0x50);
+    if (f)
+        *bad8 = _mm256_or_si256(*bad8, _mm256_or_si256(
+            _mm256_or_si256(lt_e255(LX), _mm256_or_si256(lt_e255(LY), lt_e255(LZ))),
+            _mm256_or_si256(lt_e255(t.CR), _mm256_or_si256(lt_e255(t.CG), lt_e255(t.CB)))));
+    t.NL = o_fma(f, k8.NZ, LZ, o_fma(f, k8.NY, LY, o_fm(f, k8.NX, LX)));
+    t.q30 = K->s23 + 96; t.q31 = K->s29 + 96;
+    for (int32_t j = 0; j < K->L; j++) {
+        lt8_finish(f, &k8, &t);
+        if (j + 1 < K->L) lt8_begin(f, ls, &k8, &t, bad8);
+    }
+    out[3] = t.PR; out[4] = t.PG; out[5] = t.PB;
+    out[6] = t.NR; out[7] = t.NG; out[8] = t.NB;
+}
+
+/* a pass's stores, +0 applied, in the lifted order */
+LT_INL void lo_store(uint8_t* ls, const lo_k* K, const uint32_t off[8], const __m256 o[9])
+{
+    const __m256 PX = lt_pz(o[0]), PY = lt_pz(o[1]), PZ = lt_pz(o[2]);
+    const __m256 PR = lt_pz(o[3]), PG = lt_pz(o[4]), PB = lt_pz(o[5]);
+    const __m256 NR = lt_pz(o[6]), NG = lt_pz(o[7]), NB = lt_pz(o[8]);
+    /* r73's fourth words: NR[3], NG[3], 0, 0 in each group */
+    const __m256 W = _mm256_blend_ps(_mm256_blend_ps(_mm256_permute_ps(NR, 0x03), _mm256_permute_ps(NG, 0x0C), 0x22),
+                                     _mm256_setzero_ps(), 0xCC);
+    const __m256 a73[4] = { NR, NG, NB, W }, a75[4] = { PX, PY, PZ, PZ }, a74[4] = { PR, PG, PB, PB };
+    __m128i q[8];
+    lt_aos4(a73, q);
+    for (int j = 0; j < 8; j++) lt_ls_wr(ls, K->o73 + off[j], q[j]);
+    lt_aos4(a75, q);
+    for (int j = 0; j < 8; j++) lt_ls_wr(ls, K->o75 + off[j], q[j]);
+    lt_aos4(a74, q);
+    for (int j = 0; j < 8; j++) lt_ls_wr(ls, K->o74 + off[j], q[j]);
+}
+
+/* [a, a + n) inside the local store, apart from [b, b + m) (taken modulo the local store) */
+static int lo_apart(uint32_t a, uint32_t n, uint32_t b, uint32_t m)
+{
+    b &= SPU_LS_SIZE - 1;
+    return b + m <= SPU_LS_SIZE ? !lt_overlap(a, n, b, m) : (!lt_overlap(a, n, b, SPU_LS_SIZE - b) && !lt_overlap(a, n, 0, b + m - SPU_LS_SIZE));
+}
+
+static volatile long long s_lo_calls, s_lo_passes, s_lo_skipped, s_lo_redone, s_lo_exact;
+static void lo_stats(void)
+{
+    fprintf(stderr, "[edge-native] light 79B0: %lld calls, %lld native passes, %lld calls lifted, %lld passes redone exact, %lld passes exact (apart test)\n",
+            s_lo_calls, s_lo_passes, s_lo_skipped, s_lo_redone, s_lo_exact);
+}
+static SPU_THREAD_LOCAL spu_context* t_lo_ref;   /* GOWA_EDGE_VERIFY's reference run: off */
+static int lo_on(void)
+{
+    static int on = -1;
+    if (on < 0) { const char* e = getenv("GOWA_EDGE_NATIVE"); on = !e || (atoi(e) & 2048) != 0; }
+    return on;
+}
+
+void gowa_edge_light_79b0(spu_context* ctx)
+{
+    static int stats = -1;
+    if (stats < 0) { stats = getenv("GOWA_EDGE_NATIVE_STATS") ? 1 : 0; if (stats) atexit(lo_stats); }
+    if (!lo_on() || t_lo_ref == ctx) return;
+    /* the passes left: the loop is do-while, r114 += 8 a pass while r107 > r114 */
+    const uint32_t r107 = ctx->gpr[107]._u32[0], r114 = ctx->gpr[114]._u32[0];
+    if (r107 <= r114 || r107 - r114 > 0x40000u) return;
+    const uint32_t n = (r107 - r114 + 7) >> 3;
+    if (n < 2) return;
+    const uint32_t m = n - 1;
+    uint8_t* ls = ctx->ls;
+    const int32_t L = (int32_t)ctx->gpr[83]._u32[0], n100 = (int32_t)ctx->gpr[100]._u32[0];
+    int ok = (_mm_getcsr() & LT_MXCSR_RZFZ) == LT_MXCSR_RZFZ && L <= 4096 &&
+             ctx->gpr[116]._u32[0] == (L > 0 ? 0xFFFFFFFFu : 0u) &&
+             lt_all(ctx, 117, n100 > 0 ? ~0u : 0u, n100 > 0 ? ~0u : 0u, n100 > 0 ? ~0u : 0u, n100 > 0 ? ~0u : 0u) &&
+             lt_all(ctx, 85, ~0u, ~0u, 0, 0) && lt_all(ctx, 80, 0, ~0u, ~0u, 0) &&
+             lt_all(ctx, 96, 0, 0, ~0u, ~0u) && lt_all(ctx, 123, ~0u, 0, ~0u, 0) &&
+             lt_all(ctx, 59, 0x00010203u, 0x00010203u, 0x00010203u, 0x00010203u) &&
+             lt_all(ctx, 82, 0x04050607u, 0x04050607u, 0x04050607u, 0x04050607u) &&
+             lt_all(ctx, 81, 0x08090A0Bu, 0x08090A0Bu, 0x08090A0Bu, 0x08090A0Bu) &&
+             lt_all(ctx, 78, 0x0C0D0E0Fu, 0x0C0D0E0Fu, 0x0C0D0E0Fu, 0x0C0D0E0Fu);
+    for (int i = 0; ok && i < 11; i++)
+        ok = lt_all(ctx, lo_tab_reg[i], lo_tab[i][0], lo_tab[i][1], lo_tab[i][2], lo_tab[i][3]);
+    if (ok) {
+        const u128 f920 = lt_u(lt_ls_rd(ls, 0xF920));
+        ok = !memcmp(f920._u32, lo_tab[11], 16);
+    }
+    if (!ok) {
+        if (stats) __atomic_add_fetch(&s_lo_skipped, 1, __ATOMIC_RELAXED);
+        return;
+    }
+    if (stats) __atomic_add_fetch(&s_lo_calls, 1, __ATOMIC_RELAXED);
+
+    lo_k K;
+    memset(&K, 0, sizeof K);
+    K.k7.ONE = lt_dup(lt_ld(ctx, 33)); K.k7.EPS = lt_dup(lt_ld(ctx, 84)); K.k7.HALF = lt_dup(lt_ld(ctx, 72));
+    K.k7.THREE = lt_dup(lt_ld(ctx, 101)); K.k7.TWO = lt_dup(lt_ld(ctx, 102)); K.k7.SIGN = lt_dup(lt_ld(ctx, 44));
+    K.k7.r93 = ctx->gpr[93];
+    K.k7.r93m = _mm_castsi128_ps(lt_m(K.k7.r93));
+    K.k7.n100 = n100;
+    K.k8.ONE = K.k7.ONE;
+    K.k8.SGN = _mm256_castps_si256(K.k7.SIGN);
+    K.pos = ctx->gpr[77]._u32[0]; K.nrm = ctx->gpr[76]._u32[0];
+    K.lp99 = ctx->gpr[99]._u32[0]; K.lp97 = ctx->gpr[97]._u32[0]; K.lp98 = ctx->gpr[98]._u32[0];
+    K.s23 = ctx->gpr[105]._u32[0]; K.s29 = ctx->gpr[106]._u32[0];
+    K.s94 = ctx->gpr[94]._u32[0]; K.s95 = ctx->gpr[95]._u32[0];
+    K.o73 = ctx->gpr[73]._u32[0]; K.o75 = ctx->gpr[75]._u32[0]; K.o74 = ctx->gpr[74]._u32[0];
+    K.L = L > 0 ? L : 0;
+    uint32_t idx = ctx->gpr[103]._u32[0];
+
+    /* the fast pass's redo starts the pass over, so 0x7BB4's arrays (written in it) must lie
+     * apart from what it reads: the constants (all in range), the lights, the index entries
+     * (here), the vertices (each pass) */
+    const uint32_t sn = 96u * (uint32_t)K.L, ln = 16u * (uint32_t)K.L;
+    const __m256 kv[] = { K.k7.ONE, K.k7.EPS, K.k7.HALF, K.k7.THREE, K.k7.TWO };
+    __m256i kb = _mm256_inserti128_si256(_mm256_castsi128_si256(lt_e255q(lt_m(K.k7.r93))), _mm_setzero_si128(), 1);
+    for (unsigned i = 0; i < sizeof kv / sizeof kv[0]; i++) kb = _mm256_or_si256(kb, lt_e255(kv[i]));
+    static int force = -1;
+    if (force < 0) { const char* e = getenv("GOWA_EDGE_EXACT"); force = e && e[0] == '1'; }
+    const int fast_call = !force && _mm256_testz_si256(kb, kb) &&
+        K.s23 + sn <= SPU_LS_SIZE && K.s29 + sn <= SPU_LS_SIZE && (K.s23 & 15) == 0 && (K.s29 & 15) == 0 &&
+        lo_apart(K.s23, sn, K.lp99, ln) && lo_apart(K.s23, sn, K.lp97, ln) && lo_apart(K.s23, sn, K.lp98, ln) &&
+        lo_apart(K.s29, sn, K.lp99, ln) && lo_apart(K.s29, sn, K.lp97, ln) && lo_apart(K.s29, sn, K.lp98, ln) &&
+        lo_apart(K.s23, sn, idx, 128u * m) && lo_apart(K.s29, sn, idx, 128u * m);
+
+    const unsigned csr = _mm_getcsr();
+    uint32_t done = 0;
+    for (; done < m; done++, idx += 128) {
+        if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) break;
+        uint32_t off[8];
+        for (int j = 0; j < 8; j++) off[j] = (uint32_t)_mm_extract_epi32(lt_ls_rd(ls, idx + 16u * (uint32_t)j), 3);
+        int fast = fast_call;
+        for (int j = 0; fast && j < 8; j++)
+            fast = lo_apart(K.s23, sn, K.pos + off[j], 16) && lo_apart(K.s29, sn, K.pos + off[j], 16) &&
+                   lo_apart(K.s23, sn, K.nrm + off[j], 16) && lo_apart(K.s29, sn, K.nrm + off[j], 16);
+        if (fast_call && !fast && stats) __atomic_add_fetch(&s_lo_exact, 1, __ATOMIC_RELAXED);
+        __m256 out[9];
+        if (fast) {
+            __m128i b7 = _mm_setzero_si128();
+            __m256i b8 = _mm256_setzero_si256();
+            lt_fl_set(csr & ~0x3Fu);
+            lo_pass(1, ls, &K, off, out, &b7, &b8);
+            for (int i = 0; i < 9; i++) LT_FL_USE(out[i]);
+            const unsigned fl = lt_fl_read();
+            lt_fl_set(csr);
+            if ((fl & 0x09) || !_mm_testz_si128(b7, b7) || !_mm256_testz_si256(b8, b8)) {
+                fast = 0;
+                if (stats) __atomic_add_fetch(&s_lo_redone, 1, __ATOMIC_RELAXED);
+            }
+        }
+        if (!fast) lo_pass(0, ls, &K, off, out, NULL, NULL);
+        lo_store(ls, &K, off, out);
+    }
+    if (!done) return;
+    for (int i = 0; i < 4; i++) {
+        ctx->gpr[103]._u32[i] += 128u * done;
+        ctx->gpr[114]._u32[i] += 8u * done;
+    }
+    if (stats) __atomic_add_fetch(&s_lo_passes, (long long)done, __ATOMIC_RELAXED);
+}
+
+/* GOWA_EDGE_VERIFY=1 with the outer loop's routine on: the whole stage (0x73E0) on a copy with
+ * it against the stage on the real context without it (spu_edge_verify.h); its callees use no
+ * channel, so the copy runs it alone */
+extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0(spu_context* ctx);
+static SPU_THREAD_LOCAL spu_context* t_l73_guard;
+static edge_vstat s_vl73 = { "lighting 73E0 (outer loop 79B0 native)", 0, 0, 0, 0, 0, 0, 0, 1 };
+static void l73_report(void) { edge_vreport(&s_vl73); }
+static void l73_lifted(spu_context* ctx)
+{
+    t_lo_ref = ctx;
+    jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0(ctx);
+    t_lo_ref = NULL;
+}
+static int l73_native(spu_context* c)
+{
+    const uint32_t link = c->gpr[0]._u32[0];
+    t_l73_guard = c;
+    c->host_depth++;
+    jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0(c);
+    spu_drain_call(c, link);
+    c->host_depth--;
+    t_l73_guard = NULL;
+    return 1;
+}
+int gowa_edge_light_73e0(spu_context* ctx)
+{
+    if (t_l73_guard == ctx) return 0;
+    static int on = -1;
+    if (on < 0) { on = edge_verify_on() && lo_on(); if (on) atexit(l73_report); }
+    if (!on) return 0;
+    return edge_verify(ctx, &s_vl73, l73_native, l73_lifted, &t_l73_guard);
+}
+
 #else
 void gowa_edge_light_7bb4(spu_context* ctx) { (void)ctx; }
 void gowa_edge_light_7ed8(spu_context* ctx) { (void)ctx; }
+void gowa_edge_light_79b0(spu_context* ctx) { (void)ctx; }
+int gowa_edge_light_73e0(spu_context* ctx) { (void)ctx; return 0; }
 #endif

@@ -271,3 +271,43 @@ exact pass.
     reproduced.
 - A native would have to rebuild every stage's scratch bit for bit, for at most ~3-4% of the
   job time.
+
+## Lighting's outer loop, native (2026-11-04)
+
+`0x79B0`, the loop around the two native light loops, is native now (`spu_edge_light.c`,
+`GOWA_EDGE_NATIVE` bit 2048). It is the lighting stage's lifted rest (~10.7M of its ~47M cycles
+in the replay), plus the inner loops' last iterations that were left lifted (~3.3M).
+
+**Mapped by a symbolic run of the lifted statements.** Every word carries a label; `shufb` and
+`selb` run on the known word-granular controls; float ops become lanewise expressions.
+- Index entry k (`r103 + 16k`, word 3 the offset) is vertex k in lane k: group A lanes 0-3,
+  group B lanes 4-7.
+- Light 0 begins as `0x7BB4` begins a light. The sum of weights starts at 1e-4, the summed
+  directions at 0.
+- Between the loops:
+  - `1/WS` by `frest`/`fi`/`fnms`/`fma`;
+  - the light position `fma(A, 1/WS, V)`;
+  - the direction `A * rsqrt(|A|^2 + eps)`;
+  - N.L of light 0 from `0x7BB4`'s arrays.
+- Stores, each quadword at base + offset:
+  - `r73`: (NR, NG, NB, w), where w is what the SPU's transpose leaves (NR[3], NG[3], 0, 0 in
+    each group);
+  - `r75`: (Px, Py, Pz, Pz);
+  - `r74`: (PR, PG, PB, PB);
+  - all of `r73` first, then `r75`, then `r74`.
+- Of what the loop reads, only `r103` (+128) and `r114` (+8) change from pass to pass. The
+  routine takes every pass but the last, which stays lifted, so the registers end as the lifted
+  loop leaves them.
+- Each pass runs fast first (one flag read) and is redone exact before its stores when needed.
+  `0x7BB4`'s arrays are checked to lie apart from what a pass reads.
+
+**Checked.**
+- `GOWA_EDGE_VERIFY=1` runs the whole stage, `0x73E0`, on a copy with the routine and compares
+  it with the stage without it: local store and all 128 registers.
+  - Replay: 82 calls identical.
+  - Game: 278,529 calls identical.
+- Strict replay: 0 differences, both ways.
+
+**Results.**
+- Replay, the lit jobs: ~89 -> ~79 us (-11%).
+- Gate, same build, ABBA: off 16.01 -> on 16.80 flips/s (+4.9%).
