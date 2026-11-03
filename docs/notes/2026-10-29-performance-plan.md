@@ -1407,6 +1407,116 @@ r66/r62/r60, normals r52/r54/r56) and B (r65/r63/r61, r50/r53/r55).
 each frame, and what do those jobs wait for? That means the job graph's entries, with each
 job's start, end and workload against the main thread's waits.
 
+### 2.22 Update, 2026-11-03: EDGE off the SPUs, phase 0: what the gate would gain
+
+Option 3.3 (EDGE on the GPU) is weeks to months of work, so it was measured first. Gate as in
+2.19 (profile 2, copy of the saves), the default patches, Steady audio on unless said.
+
+**The gate is SPU-bound by throughput now.** Since Steady audio, SPU 5 runs the audio workload
+only, and the other five workers carry the rest. A 15 s `PS3_FTRACE` (`logs/edge-p0/gate3.ft`,
+202 frames, median 74.0 ms):
+
+| a frame | SPU busy | a run open | width |
+|---|---|---|---|
+| EDGE w14-16 | 227.6 ms | 65.5 ms | 3.48 |
+| General6 w2 | 66.8 ms | 37.8 ms | 1.78 |
+| audio w7 (SPU 5) | 34.3 ms | 34.3 ms | 1.00 |
+| RenderJobs w12 | 27.3 ms | 21.4 ms | 1.43 |
+| RenJobSet w8-11 | 25.1 ms | 14.4 ms | 1.97 |
+| MeshProc, Batch, the rest | 14.7 ms | | |
+| all | 395.7 ms | | |
+
+- 395.7 - 34.3 = 361 ms on five workers: 98% of 5 x 74 ms.
+- The main thread: 25.4 ms of its own work a frame. The rest is waiting on SPU work:
+  - 22.6 ms at `0x41DB50`, the frame's job-chain counter (mostly EDGE);
+  - 13.8 ms in the job-graph scan;
+  - 9.0 ms on the progress counters.
+- The frame clock thread: 33-35 ms of CPU a frame (48% of a core at 14 flips/s).
+- The host is a Ryzen 5 4600H, 6 cores and 12 threads. The six workers, the main thread and the
+  frame clock thread are eight busy threads.
+
+**Measured: EDGE's lighting stage skipped.**
+- How: an experiment build, not kept. `GOWA_EDGE_SKIP_LIGHT=1` returned at `0x73E0`'s entry.
+  - Its caller `0x51D0` calls it last, and `0x4B14` overwrites the result (r3) before `0x9080`.
+  - So only the lit colours go. The draws and their triangles stay.
+- Same executable both sides, one round each (`logs/edge-p0/skiplight`, `logs/edge-p0/steadyoff`).
+  The first round differed by more than the bench's early-stop threshold.
+
+| | flips/s | EDGE's SPU time a frame | policy modules |
+|---|---|---|---|
+| Steady audio on | 14.00 -> 16.02 (+14.4%), every window above | 216 -> 171.5 ms (-20.6%) | 535% -> 533% |
+| Steady audio off | 14.84 -> 16.47 (+11.0%) | 234 -> 185 ms (-20.8%) | 593% -> 587% |
+
+- The workers stayed full. The time EDGE gave up became frames.
+- A throughput model: a frame is the SPU work of a frame over the workers that carry it, plus
+  ~2% (1.2% with six). It predicts 16.05 and 16.9; measured 16.02 and 16.47.
+- 2.20's native loops (-6.6% of EDGE) gave +0.6-1.3% where this model says ~+4%. That is
+  within the gate's 4-6% spread between runs. General6's noise for free (2.21) gave less than the
+  model: EDGE took part of the freed time in its own runs.
+- Steady audio costs more here than in the fight: 14.84 -> 14.00 (-5.7%, one run a side; 2.5%
+  there).
+
+**EDGE at k times its SPU time now** (the model, Steady audio on):
+
+| k | what | flips/s |
+|---|---|---|
+| 1.0 | now | 14.0 |
+| 0.79 | lighting skipped (measured) | 16.0 |
+| 0.5 | a native EDGE job, 2x | ~20 |
+| 0.33 | a native EDGE job, 3x | ~24 |
+| ~0.1 | EDGE on the GPU, a stub job filling the hole | ~31 by the SPUs |
+
+- Other limits:
+  - The frame clock thread's 33-35 ms of CPU a frame stops it at ~29-30.
+  - The main thread's 25 ms stops it at ~39.
+- A whole-job native EDGE is ~2-3x:
+  - the runtime's ~30% of a run (2.2) goes;
+  - the stages run at the loops' measured 1.4-2.1x.
+  - That is ~+45-70% at the gate.
+- On the GPU: ~+95-115%, with the frame clock thread next.
+
+**A job-level oracle (EDGE for free) was tried; it needs phase 1 first.** What it found:
+- **The job's parameters.** 120 gate jobs of the three lists agree:
+  - The crt0 stores the job context at LS `0x10B00`.
+  - The parameters are 96 bytes at [context + 0x20] (LS `0xC40`). The main (`0x5110`) copies
+    them to LS `0x10650` before its first job-manager call.
+  - +0x04: the command-buffer hole's EA (the job's one fenced PUT).
+  - +0x4A: the hole's size in 16-byte units.
+  - +0x40: the viewport (1280 x 720).
+  - +0x00: the output ring's descriptor (its atomic line at +0x80).
+- **The output.** Index and vertex PUTs go into the ring, allocated with GETLLAR / PUTLLUC.
+  - Then the job fills the whole hole: state, the draw, a semaphore release, then a
+    non-incrementing NOP (method 0x100) whose data runs to the hole's end.
+  - The PPU started the hole with a self-JUMP.
+- **The job and the Wws job manager**, the same in every job traced:
+  - The main calls API +0x34 (`0x2FD8`) with (0, 1, 0, 1), which also fetches the next job.
+  - Then `0x9990` (set-up), then a tail call to `0x44E0`.
+  - `0x44E0` calls `0x2FD8` (0, 1, 0, 1), `0x2FD8` (0, 2, 0, 0), +0x3C (`0x17B8`) (1, 2) and
+    +0x40 (`0x17C0`) (0x1E, 0).
+  - Then the work: `0x51D0` (lighting last), `0x9080`, and the rest.
+  - At the end +0x44 (`0x17E0`) with (0, label `0x20000C80` or `0xC90`, a ring position).
+- **Why the cuts failed.**
+  - A job that returned at the main's entry, or after its first call without `0x44E0`'s calls,
+    left the job manager repeating one job-loading transfer until the SPU was halted.
+  - One that skipped only `0x9990` failed an assertion in `0x44E0`'s LS allocator.
+  - A skipped job has to make the calls a real one makes. Phase 1 has to work that out anyway:
+    the GPU path's stub job is the same thing.
+
+**Two notes on the tools.**
+- `GOWA_WWS_TRACE` (the job lists' line events) slowed the main thread ~4x under `PS3_FTRACE`
+  (110 ms of its own a frame). For frame timings, use `PS3_FTRACE` alone.
+- Adding or removing a `native/` file changes CMake's glob.
+  - `cmake --build` from a shell without clang-cl on the PATH then reconfigures with no compiler
+    found.
+  - The cache keeps empty `CMAKE_*_FLAGS`, so later builds have no /O2 (the gate at 8.7 flips/s).
+  - `gowa.py build` configures with the right environment. The cache was repaired from a good
+    one.
+
+**Next, on a branch** (`edge` here, `gowa-edge` in the fork, once phase 1 touches it):
+1. Phase 1: the job manager calls and EDGE's job format.
+2. A whole-job native EDGE (2a), behind a switch, bit-exact by replay.
+3. Then the GPU (2b).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -1780,6 +1890,8 @@ Each item is small and is measured on its own.
     streams the RSX draws.
   - Its culling is there to spare the RSX, and this GPU has room.
   - First question: does anything but the RSX read what EDGE writes?
+  - Phase 0 (2.22): at the gate, ~+95-115% on the GPU, ~+45-70% for a native job; the frame
+    clock thread is next at ~29-30 flips/s.
 - **3.4 Vertex and index data read by the GPU from guest memory**, without upload copies:
   `ID3D12Device3::OpenExistingHeapFromAddress`, or upload rings filled by the walker only for the
   ranges a draw uses.
