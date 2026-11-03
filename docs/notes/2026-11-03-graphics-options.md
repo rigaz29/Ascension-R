@@ -74,3 +74,21 @@ top left corner, made 2026-11-03 at the user's asking.
 - **Cost:** GDI draws the panel at most ten times a second. The fight ran 29.98 flips/s with it,
   against 30.10 without (`logs/overlay1`, `logs/combo1`).
 - **Screenshots:** they show it (F12, `display.screenshot = output`).
+
+## The shader build indicator
+
+`display.shader_hint` (on by default; the launcher's "Shader build indicator", Display) draws an
+indicator in the bottom left corner, as RPCS3 does, while the backend builds shaders:
+- **"Compiling shaders"** and a turning ring: while guest shader jobs are queued for the build
+  workers or being built (`graphics.async_shaders`). The ring stays 0.6 s after the last one, so
+  a short burst does not flicker.
+- **"Building pipelines N / M"** and a ring filled to N of M: while the pipeline cache builds its
+  file's pipelines at the start (~1 s for ~1,000).
+
+How it is drawn:
+- The overlay's texture has a band of its own for it, re-uploaded on its own each frame it
+  shows.
+- The ring is computed per pixel (a track, an arc with a fading tail, a pixel of antialiasing);
+  GDI draws the text.
+- Seen with an empty shader cache, in the parasites' checkpoint 12 s after the load
+  (`logs/parasite/hint`).

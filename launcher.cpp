@@ -132,6 +132,8 @@ static Opt s_opt[] = {
       "An even pace instead of the highest rate the PC reaches." },
     { T_DISPLAY, "display", "show_fps", "title", "Frame rate display", 0, LIST(k_fps, k_fps_n), k_fps_s,
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
+    { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
+      "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
     { T_GRAPHICS, "graphics", "scaling", "bilinear", "Scaling", 0, LIST(k_scale, k_scale_n), k_scale_s,
       "How the 720p picture is scaled up to the window." },
     { T_GRAPHICS, "graphics", "sharpening", "high", "FSR 1 sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
