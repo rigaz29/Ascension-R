@@ -124,3 +124,36 @@ there.
 
 `gowa.py bench --menu-fps N` (new) sets the median that counts as stuck on a menu (default 30).
 The fight runs above 30 without shadows.
+
+## The combination, and on by default
+
+The user asked to test the recommended set and, if it held, make it the default. The set:
+Disable MLAA on, Disable Mesh Trimming off, Disable Motion Blur on, Disable Shadows on. It was
+tested against the user's settings until then (Disable MLAA and Disable Mesh Trimming on), one
+run each:
+
+| | the user's settings | the set |
+|---|---|---|
+| Megaera's checkpoint: the opening cinematic, the fight (`logs/combo1`) | 21.31 flips/s | 30.10 (windows 28.2-31.1) |
+| the gate, walking and jumping on for ~4 min (`logs/combo2`) | 17.61 | 22.06 |
+
+- **Hitches of 150 ms or more:**
+  - the level's load (~600 ms, 330 textures) in every run;
+  - one of 894 ms at the opening movie's close, with no backend work in it. The title closes its
+    video decoder there.
+  - None in play.
+- **Logs:** no error.
+- **Render targets:** 27-29 held, none evicted.
+- **Screenshots:** right, in the cinematic, the fight, the gate, the jumping area and the yard
+  after it.
+
+**Made default.**
+
+- The catalog's `"default": true` is new. `gowa.py` writes it into the header; `patches.cpp` uses
+  it as the setting's default; the launcher shows it and its Defaults button sets it.
+- Disable MLAA, Disable Motion Blur and Disable Shadows have it. Disable Mesh Trimming and Disable
+  Depth of Field stay off.
+- A value in `gowa.ini` still wins. So the user's `[patches]` lines were set to the new set, with
+  a copy of the file kept beside it.
+- Disable MLAA costs the bloom: in the title's path without MLAA, bloom and the motion blur are
+  drawn and then overwritten ([FSR 3 note](2026-11-03-fsr3.md), section 3).

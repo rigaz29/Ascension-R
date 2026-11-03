@@ -71,6 +71,10 @@ below was read back from our `GOWA.elf` (scratchpad `patch_sites.py`, `flag_xref
   shown off and then saved so.
 - Everything is off by default. The guards are read by the lifted code, so they only change
   before the guest starts.
+  - 2026-11-03: a patch with `"default": true` in the catalog is on unless switched off.
+  - Disable MLAA, Disable Motion Blur and the new Disable Shadows are so
+    ([shadows note](2026-11-03-disable-shadows.md)). The launcher's checkboxes and its Defaults
+    button follow the catalog.
 
 ## 3. Adding a patch
 

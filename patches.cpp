@@ -12,7 +12,8 @@
  *   --set patches.disable_mlaa=on     on the command line
  *   GOWA_PATCH_DISABLE_MLAA=1         in the environment
  *
- * Every patch is off unless switched on. A data edit whose bytes in guest
+ * Every patch is off unless switched on, or, with "default": true in the
+ * catalog, on unless switched off (= off). A data edit whose bytes in guest
  * memory are not the ones the patch expects refuses the whole patch, guard
  * included: the patch was made for another build of the title. The lifted code
  * reads the guards, so they change only here, before the guest starts.
@@ -39,6 +40,7 @@ struct gowa_title_patch {
     int* guard;
     int ppu_edits;          /* instructions lifted both ways: PPU ones, */
     int spu_edits;          /* and SPU ones in job modules */
+    int def_on;             /* on unless switched off */
 };
 
 #define GOWA_TITLE_GUARD(g) extern "C" { int g = 0; }
@@ -48,7 +50,7 @@ struct gowa_title_patch {
 /* recompiled/ from a lift older than this file: no patches. `gowa.py lift`
  * writes the header. */
 static const gowa_title_data k_title_data[] = { { -1, 0, 0, { 0 }, { 0 } } };
-static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0, 0 } };
+static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0, 0, 0 } };
 #endif
 
 extern "C" void gowa_title_patches_apply(void)
@@ -59,7 +61,7 @@ extern "C" void gowa_title_patches_apply(void)
         for (const char* c = p->id; *c && k + 1 < sizeof env; c++)
             env[k++] = (char)toupper((unsigned char)*c);
         env[k] = 0;
-        if (!ps3_settings_bool("patches", p->id, env, 0))
+        if (!ps3_settings_bool("patches", p->id, env, p->def_on))
             continue;
         const int self = (int)(p - k_title_patches);
         int refused = 0;
@@ -95,3 +97,4 @@ extern "C" int gowa_title_patch_count(void)
 }
 extern "C" const char* gowa_title_patch_id(int i)   { return k_title_patches[i].id; }
 extern "C" const char* gowa_title_patch_name(int i) { return k_title_patches[i].name; }
+extern "C" int gowa_title_patch_default(int i)      { return k_title_patches[i].def_on; }

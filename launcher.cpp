@@ -30,6 +30,7 @@ extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
 extern "C" int  gowa_title_patch_count(void);
 extern "C" const char* gowa_title_patch_id(int i);
 extern "C" const char* gowa_title_patch_name(int i);
+extern "C" int  gowa_title_patch_default(int i);
 
 /* ---------------------------------------------------------------------------
  * What the window offers
@@ -106,9 +107,10 @@ static Opt s_opt[] = {
 #undef LIST
 enum { N_OPT = sizeof s_opt / sizeof s_opt[0] };
 
-/* The Game patches group: a checkbox per patch, [patches] <id> = on/off, all
- * off by default. Built from the patches the build has, so a patch added to
- * scripts/title_patches.json shows up here with the next lift. */
+/* The Game patches group: a checkbox per patch, [patches] <id> = on/off, off
+ * by default unless the catalog says "default": true. Built from the patches
+ * the build has, so a patch added to scripts/title_patches.json shows up here
+ * with the next lift. */
 enum { MAX_POPT = 32 };
 static Opt s_popt[MAX_POPT];
 static int s_npopt;
@@ -120,7 +122,8 @@ static void popt_init(void)
     for (int i = 0; i < n && s_npopt < MAX_POPT; i++) {
         Opt& o = s_popt[s_npopt++];
         o = Opt();
-        o.group = 4; o.section = "patches"; o.key = gowa_title_patch_id(i); o.def = "off";
+        o.group = 4; o.section = "patches"; o.key = gowa_title_patch_id(i);
+        o.def = gowa_title_patch_default(i) ? "on" : "off";
         o.label = gowa_title_patch_name(i); o.check = 1; o.values = k_onoff; o.n = 2;
     }
 }

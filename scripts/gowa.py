@@ -764,9 +764,10 @@ def write_title_patches_header(out_dir, patches):
                 i, int(str(e["addr"]), 0), len(o), ", ".join("0x%02X" % b for b in o),
                 ", ".join("0x%02X" % b for b in n), p["id"]))
     L += ["    { -1, 0, 0, { 0 }, { 0 } }", "};", "static const gowa_title_patch k_title_patches[] = {"]
-    L += ['    { "%s", "%s", &%s, %d, %d },' % (p["id"], p["name"], p["guard"], len(p.get("ppu", [])),
-                                           len(p.get("spu", []))) for p in patches]
-    L += ["    { NULL, NULL, NULL, 0, 0 }", "};", ""]
+    L += ['    { "%s", "%s", &%s, %d, %d, %d },' % (p["id"], p["name"], p["guard"], len(p.get("ppu", [])),
+                                               len(p.get("spu", [])), 1 if p.get("default") else 0)
+          for p in patches]
+    L += ["    { NULL, NULL, NULL, 0, 0, 0 }", "};", ""]
     open(os.path.join(out_dir, TITLE_PATCHES_HEADER), "w", encoding="utf-8", newline="\n").write("\n".join(L))
 
 
