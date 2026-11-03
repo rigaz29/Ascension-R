@@ -50,3 +50,27 @@ the executable's own arguments, `--set section.key=value`; `gowa.ini` is not cha
   - Each run's screenshot is of a slightly different moment.
   - So the variants were compared by crops of the same features (the HUD text, the floor's rim,
     the chains), not pixel by pixel.
+
+## The frame rate on screen
+
+`display.show_fps = overlay` (the launcher's "On screen, with CPU/GPU load") draws a panel in the
+top left corner, made 2026-11-03 at the user's asking.
+
+| row | what it is |
+|---|---|
+| FPS, MS | presents a second, and their mean interval, over the last half second |
+| CPU | the process's CPU time, of all the machine's logical processors |
+| GPU | the frames' GPU time, from their timestamps, over their wall time |
+| PPU | the host thread "ppu main" |
+| SPU | the "spurs ..." and "spu ..." threads; six of them make 100% |
+| RSX | the "frame clock" thread: the FIFO walk, the recording and the present |
+| graph | the last 96 frame times, 0-66.7 ms, with a line at 33.3 ms (30 frames a second) |
+
+- **Look:** labels in colour, values in white, on a rounded box of 80% near-black. The text is
+  1/60 of the window's height (12-28 pixels).
+- **Sampling:** a thread of its own ("overlay stats", below normal priority) reads the threads'
+  CPU times every half second. The GPU timestamps are now taken with the panel, not only with
+  `RSX_CENSUS`.
+- **Cost:** GDI draws the panel at most ten times a second. The fight ran 29.98 flips/s with it,
+  against 30.10 without (`logs/overlay1`, `logs/combo1`).
+- **Screenshots:** they show it (F12, `display.screenshot = output`).
