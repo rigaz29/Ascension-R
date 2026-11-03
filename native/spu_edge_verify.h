@@ -7,7 +7,8 @@
  * lifted function on the real one (its own hook lets it through, by the thread's guard), runs
  * the native routine on the copy, and compares them:
  *  - the local store, but for the stack below the caller's r1 (the lifted function's frame);
- *  - r0, r1 and the callee-saved r80-r127, and r3 for a function with a result.
+ *  - r0, r1 and the callee-saved r80-r127, and r3 for a function with a result (all 128 for a
+ *    routine that leaves every register as the lifted function does: all_regs).
  * The game goes on with the lifted result. The counts and the first differences are printed
  * about every 4096 calls and at exit.
  */
@@ -28,6 +29,7 @@ typedef struct {
     int has_result;           /* r3 is the function's result */
     volatile long long calls, declined, ls_differ, reg_differ;
     volatile long printed;
+    int all_regs;             /* compare all 128 registers (a leaf whose callers spill what it leaves) */
 } edge_vstat;
 
 static int edge_verify_on(void)
@@ -101,7 +103,7 @@ static int edge_verify(spu_context* ctx, edge_vstat* st, int (*native)(spu_conte
             }
         }
         for (int r = 0; r < 128; r++) {
-            if (!(r == 0 || r == 1 || r >= 80 || (r == 3 && st->has_result))) continue;
+            if (!st->all_regs && !(r == 0 || r == 1 || r >= 80 || (r == 3 && st->has_result))) continue;
             if (memcmp(ctx->gpr[r]._u32, copy->gpr[r]._u32, 16)) {
                 if (!reg_bad) {
                     uint8_t w[16], g[16];
