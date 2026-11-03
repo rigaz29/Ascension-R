@@ -84,3 +84,60 @@ Each stage becomes native whole, behind a switch, exact:
 2. Lighting's lifted rest (`0x73E0` around the native loops, `0x6AC8`): ~10.6%.
 3. The output stage (`0x9080`): 21%.
 4. `0xDBF8`, `0xE4D0`, `0xF538`, the pieces.
+
+## Phase 2a, first results (2026-11-03)
+
+**The check.** A native routine can now take a whole lifted function: a `?name` hook in
+`scripts/spu_native_hooks.json` returns from it when the routine did the work.
+`GOWA_EDGE_VERIFY=1` (`native/spu_edge_verify.h`) checks every call:
+- it runs the lifted function on the context and the native routine on a copy;
+- it compares the local store (but the frame) and r0, r1, r80-r127.
+
+**Culling's vertex pass `0xD250`, native** (`native/spu_edge_cull.c`, `GOWA_EDGE_NATIVE` bit 128,
+off by default for now).
+- What it does, per vertex:
+  - the matrix product A * B;
+  - x', y', z', W by fused chains;
+  - 1/W by frest, fi and a Newton step;
+  - the projection with W's sign, the viewport scale and offset;
+  - seven bound tests packed into flags;
+  - a record (sx, sy, flags, 0) out.
+- Eight vertices a pass, with the SPU's exact float forms.
+- Checked: identical on 82 calls in the gate replay and 675,840 in the game.
+- Replay: the gate's jobs -2.3%, the lit ones -3.1%. The pass is ~3.3x faster.
+
+**Culling's triangle loop `0xD92C`.**
+- Four triangles a pass, pipelined three deep:
+  - twelve gathers;
+  - snapping `cflts(x * s + 0.5)` with s 1.0 or 2.0;
+  - the degenerate tests, the facing test, the outcode tests;
+  - the Mesh Trimming patch.
+- It packs the kept indexes with shuffle controls from 16-entry tables, picked by the 4-bit keep
+  mask.
+- Its stores merge whole quadwords, so the bytes past the last kept index come from the pipeline.
+  A native loop that is to stay exact by replay has to make the same stores. Left for later
+  (~7% of EDGE).
+
+**Lighting's `0x6AC8`: point lights over vertices gathered by index.**
+- Eight vertices a pass. Per light:
+  - distance, frsqest/fi and Newton;
+  - t = distance / radius, clamped;
+  - a = 1 - t, then a^2 (3 - 2a), squared;
+  - times the light's colour, added up.
+- Then colour = fma(colour, scale, sum).
+- ~2.7% of EDGE in the game, the rest of the lighting (`0x73E0` itself) ~6.1%.
+
+**The fused form's slow path is 1.8% of EDGE.** `spu__x8_fma_redo` redoes, lane by lane, every
+vector whose result leaves the native range. EDGE makes such values on purpose (extended-range
+masks, `x * 0xFFFFFFFF`). An exact wide form for extended-range operands would serve all SPU
+code.
+
+**What it adds up to.** EDGE's time is spread over many routines:
+- the output stage 21% (replay);
+- lighting ~9% lifted plus 10% native;
+- culling ~11%;
+- `0xDBF8` ~11%, `0xE4D0` ~6%, `0xF538` ~5%;
+- the pieces ~16%, the runtime ~23%.
+
+Each native stage at ~3x is worth 1-7% of the gate's frame rate. The phase 0 estimate for a whole
+native EDGE (2-3x, +45-70%) needs most of them done.
