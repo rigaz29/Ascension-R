@@ -37,7 +37,8 @@ by at least that much (default 6%: 3 of the 123 same-executable pairs did,
 none by 7%), and the rest of the rounds are skipped.
 
 A run that never reaches the level (fewer than 3 windows, or a median of 30
-flips/s or more: stuck on a menu or loading screen) or freezes in it (median
+flips/s or more: stuck on a menu or loading screen; --menu-fps sets that
+figure, as the fight runs above 30 with Disable Shadows) or freezes in it (median
 of 3 or less, or no flips for a minute) is reported as failed and run once
 more. Variants are run in ABBA order (a b, then b a, ...), the way A/Bs are
 judged: compare medians, two runs a side at least. In plain alternation
@@ -76,6 +77,8 @@ def add_args(p):
                         '"--set graphics.antialiasing=smaa"; gowa.ini is not changed); repeat for an A/B')
     p.add_argument("--runs", type=int, default=1, help="runs per variant, alternated (default 1)")
     p.add_argument("--env", action="append", default=[], help="K=V for every variant")
+    p.add_argument("--menu-fps", type=float, default=30.0,
+                   help="a median of this many flips/s or more counts as stuck on a menu (default 30)")
     p.add_argument("--profile", type=int, default=1,
                    help="the profile the menu route continues (default 1): Down that many times "
                         "less one on the profiles, between the first two Crosses")
@@ -362,8 +365,9 @@ def run_once(exe, env_extra, a, out, tag):
         rec["failed"] = "frozen: no flips for a minute"
     elif exited and t() < anchor + a.until:
         rec["failed"] = "exited at %.0f s" % t()
-    elif len(vals) < 3 or not 3 < statistics.median(vals) < 30:
-        rec["failed"] = "never reached the level" if len(vals) < 3 or statistics.median(vals) >= 30 else "frozen"
+    elif len(vals) < 3 or not 3 < statistics.median(vals) < a.menu_fps:
+        rec["failed"] = ("never reached the level" if len(vals) < 3 or statistics.median(vals) >= a.menu_fps
+                         else "frozen")
     return rec
 
 

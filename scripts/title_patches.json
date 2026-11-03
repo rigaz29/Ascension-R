@@ -49,6 +49,16 @@
      "optional": true,
      "note": "the same in the other EDGE module, a second build of it the level does not run. Its lift ends at 0xB90C (no entry found reaches the function, 0xE35C, the same code as the first module's 0xD92C), so this is applied once that code is lifted (gowa.py jobmods-entries); until then the lift reports it"}
    ]
+  },
+  {
+   "id": "disable_shadows",
+   "name": "Disable Shadows",
+   "guard": "g_gowa_patch_disable_shadows",
+   "note": "Not one of RPCS3's. The title's dynamic shadows are its fxNewShadows effect (RTTI 12fxNewShadows, vtable 0x6A5940; per-frame update func_00376748, slot 2). Its update reads the effect's enable at +0x20, as Depth of Field's and Motion Blur's do (the same base: bl 0x3B69B8 on this+16 just before); when it is 0 the title clears the renderer's shadow parameter block (memset 0x982F08, 120 bytes) instead of copying the effect's parameters into it. The edit makes that read 0 (docs/notes/2026-11-03-disable-shadows.md). Skipping the whole update instead (its vtable slot pointed at a bare blr) left no shadow map either, but the fight then drew giant copies of Megaera's wings where the sky is.",
+   "ppu": [
+    {"addr": "0x00376894", "orig": "0x809F0020", "new": "0x38800000",
+     "note": "func_00376748: lwz r4,0x20(r31) -> li r4,0"}
+   ]
   }
  ]
 }
