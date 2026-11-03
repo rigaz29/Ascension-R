@@ -55,7 +55,7 @@ stuttered too.
   main thread waits on them (performance plan 2.21). That is the machine.
 - **Audio under full load.** Workload 7's worker already runs above normal
   (`SPURS_BOOST_WID=7`). Its blocks are late when it waits for a free worker or shares a core.
-  Not fixed here.
+  The next section measures that wait and keeps SPU 5 for it ("Steady audio").
 - **For a capture of a later stutter:** `build/GowARecomp-debug.bat` now also logs the audio ring
   (`AUDIO_RATE=1`) and the SPU workloads (`SPURS_WID_PROF=10`).
 
