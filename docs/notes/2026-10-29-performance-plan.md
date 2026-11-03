@@ -1255,6 +1255,108 @@ unchanged after the ten runs).
 
 The fight was not probed again with the default patches.
 
+### 2.20 Update, 2026-11-03: EDGE's two lighting loops as native code
+
+**Where in `73E0` the time is.** The gate profile's samples in `73E0` (19,148), mapped to the
+lifted lines. There is no `--spu-lines` build: the module was compiled again with the build's
+own flags plus line tables (DWARF), and its 7,660 instructions were checked against the exe's,
+one for one.
+- The loop at `7BB4`: 57.1% of the function.
+- The loop at `7ED8`: 24.2%.
+- The blocks around them: the rest, none above 6.1%.
+- By operation: fm 19%, fma 17%, selb 8%, LS reads 7%, fa 7%, shufb 6%, fcgt 4%.
+- So the two loops were ~19% of EDGE at the gate (13.1% and 5.6%).
+
+**What they compute.** Both are software-pipelined: an iteration finishes one light and begins
+the next. Each takes one light for eight vertices, two groups of four in SoA form: A (positions
+r66/r62/r60, normals r52/r54/r56) and B (r65/r63/r61, r50/r53/r55).
+- `7BB4` reads the lights from three arrays (position, colour, direction: r99, r97, r98).
+  - It begins a light: `v = P.xyz - vertex`, `sq = v.x^2 + 1e-4 + v.y^2 + v.z^2`,
+    `rs = fi(sq, frsqest(sq))`, `k = P.w`, `c' = r93 * C`.
+  - It finishes it: `d = sq * rs`, `n = v * rs`. L is n, or the light's own direction where
+    r100 > 16 * index (shufb by r9, which is one of two module constants: LS 0xF920 takes the
+    first operand, 0xF8A0 the second).
+  - Then `att = (t*t*(3 - 2t))^2 * c'.w` with `t = 1 - min(d*k, 1)`, and
+    `h = min(|N.L * 0.5 + 0.5|, 1)`.
+  - It stores L and `att * c'.xyz` (96 bytes a light each), and sums `|att|*h` and `L*|att|*h`
+    (eight sums).
+- `7ED8` takes the lights again from those two arrays, with a normal made from the sums:
+  `l = (N.L > 0 as a word) ? min(N.L, 1) : 0`. It sums the positive and negative parts of
+  `colour * l` (twelve sums). It only reads.
+- A and B take the same operations on different registers, in the same order.
+
+**Native** (`native/spu_edge_light.c`, `GOWA_EDGE_NATIVE` bits 32 and 64, hooks in
+`scripts/spu_native_hooks.json`).
+- A and B share one 256-bit register, so one op stands for two lifted ones, with their operands.
+- The SPU float ops run under the SPU code's MXCSR with the +0 rule. A result at or past
+  FLT_MAX has that op done again by the exact forms; frsqest and fi are spu_edge_decode.c's
+  256-bit ports.
+- It runs only where:
+  - the splat controls, the two choices and r9 are what the module sets;
+  - the MXCSR is the SPU code's;
+  - the arrays are whole quadwords inside the local store;
+  - `7BB4`'s two outputs miss each other and the light arrays read on the way.
+- An interrupt the lifted loop would take stops it at that iteration.
+- The last iteration stays lifted, from the registers each loop carries (31 and 23), written
+  back as the lifted loop has them.
+
+**Checked.**
+- `tests/native/test_edge_native.py`: each loop cut out of its standalone lifted function up to
+  the back edge, 3000 cases each, identical registers and local store.
+  - Half the cases have plausible floats, half random bits (which take the exact forms).
+  - Some cases break a control, misalign an output, put an output on a light array or have an
+    interrupt pending.
+- Mutants:
+  - `7BB4`: 16 of 18 caught (one as a hang). The two left are a pending interrupt taken later
+    (the same end state) and fcgt as >=, which is the same where r33 is 1.0, as it always is.
+  - `7ED8`: 8 of 8 caught.
+- Replay of 120 EDGE jobs captured at the gate with the loops lifted (`logs/jobcap-gate`, three
+  runs each): 0 differ with them native. The loops ran there (36,939 native iterations each) and
+  no exact op was needed.
+- In the game: ~245M native iterations of each loop a run, no call left to the lifted loop,
+  ~33K exact ops.
+
+**The first build was slower** (gate, ABBA, two runs each: 14.70 -> 14.16 flips/s).
+- clang-cl had not inlined `lt_fm` & co., which held their exact fallbacks.
+- On Windows x64 a `__m256` argument goes through memory, so every float op was a call with
+  its operands stored and loaded again. In the profile `lt_fm` alone was 7.3% of EDGE.
+- Fix: the helpers are forced inline, and the fallbacks are cold functions of their own.
+
+**Measured after the fix.**
+
+| gate, ABBA, two runs each (`logs/light-gate2`) | flips/s |
+|---|---|
+| both lifted (`GOWA_EDGE_NATIVE=31`) | 14.85 (14.90 / 14.55) |
+| `7BB4` native (`=63`) | 15.04 (15.16 / 14.75) |
+| both native | 14.94 (14.80 / 14.94) |
+
+- The profile (`logs/prof-light2`):
+  - the two native routines are 12.1% of EDGE, against the lifted loops' 18.7%: 1.4x for
+    `7BB4`, 1.9x for `7ED8`;
+  - an EDGE run is 6.6-6.9 ms, against 7.8-8.2;
+  - EDGE's SPU time a frame is 239 ms, against 256: -6.6%.
+- The replay: the median job -6.8% (w14), -9.9% (w15), -2.3% (w16).
+- The frame rate moved within the spread: +0.6% to +1.3%. The probe's slope (2.19) predicted
+  ~+3%.
+- **Kept, on by default.** The loops are exact, and they take ~7% of EDGE's work off the six
+  SPU threads.
+
+**What it teaches for the next native routines.**
+- The lifted code of a loop is not much slower than hand-written code: a float op costs the
+  same range check and +0 rule either way, and two groups to a 256-bit register saved less
+  than half.
+- What the native routines still pay:
+  - the check after each op (and, compare, test, branch: ~22% of `7BB4`'s samples sit after
+    those branches);
+  - spills, with more live values than the sixteen YMM registers;
+  - a statistics counter (`lock xadd` on one line from six threads, ~4% of the routine; now
+    counted only with `GOWA_EDGE_NATIVE_STATS`).
+- One check an iteration, with the work redone exactly when it fails (as `--float-spec` does
+  for lifted functions), would take most of the first away.
+- What a routine like this gains here is ~1.5x on its own time, ~1% flips/s at the gate. Of
+  the native list in 2.19, General6's `4F00`/`4AB0` count for more per ms (General6 is on the
+  frame's chain); EDGE's next functions are 4-9% each.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
