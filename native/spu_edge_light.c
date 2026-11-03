@@ -227,6 +227,36 @@ LT_INL __m256 o_fnms(int f, __m256 a, __m256 b, __m256 c) { return f ? _mm256_fn
 LT_INL __m256 o_fcgt(int f, __m256 a, __m256 b) { return f ? _mm256_cmp_ps(a, b, _CMP_GT_OQ) : lt_fcgt(a, b); }
 LT_INL __m256 o_pz(int f, __m256 r) { return f ? lt_pz(r) : r; }
 
+/* MXCSR around a fast pass, ordered against its ops by the values they carry (as
+ * spu_edge_simd.h's ec_fl_*: the compiler takes the ops for pure and may move them across a
+ * plain _mm_getcsr/_mm_setcsr) */
+LT_INL void lt_fl_set(unsigned csr) { __asm__ volatile("ldmxcsr %0" : : "m"(csr) : "memory"); }
+LT_INL unsigned lt_fl_read(void)
+{
+    unsigned v;
+    __asm__ volatile("stmxcsr %0" : "=m"(v) : : "memory");
+    return v;
+}
+#define LT_FL_KEEP(v) __asm__ volatile("" : "+x"(v))
+#define LT_FL_USE(v) __asm__ volatile("" : : "x"(v))
+/* GOWA_EDGE_VERIFY=1: each fast call checked against the exact pass from the same start */
+static int lt_verify_on(void)
+{
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("GOWA_EDGE_VERIFY"); v = e && e[0] == '1'; }
+    return v;
+}
+static volatile long long s_lt_vcalls, s_lt_vbad, s_l2_vcalls, s_l2_vbad;
+static void lt_verify_report(void)
+{
+    fprintf(stderr, "[edge-verify] light 7BB4: %lld fast calls checked, %lld different; light 7ED8: %lld checked, %lld different\n",
+            s_lt_vcalls, s_lt_vbad, s_l2_vcalls, s_l2_vbad);
+}
+static int lt_same256(__m256 a, __m256 b)
+{
+    return _mm256_movemask_epi8(_mm256_cmpeq_epi8(_mm256_castps_si256(a), _mm256_castps_si256(b))) == -1;
+}
+
 /* 0x7BB4's constants and what it carries */
 typedef struct {
     __m256 VX, VY, VZ, NX, NY, NZ, ONE, EPS, HALF, THREE, TWO, SIGN;
@@ -419,10 +449,17 @@ void gowa_edge_light_7bb4(spu_context* ctx)
         for (unsigned i = 0; i < sizeof vq / sizeof vq[0]; i++) bad = _mm_or_si128(bad, lt_e255q(vq[i]));
     }
     lt7_st s = s0;
-    _mm_setcsr(csr & ~0x3Fu);
+    lt_fl_set(csr & ~0x3Fu);
+    LT_FL_KEEP(s.SQ); LT_FL_KEEP(s.RS); LT_FL_KEEP(s.DX); LT_FL_KEEP(s.DY); LT_FL_KEEP(s.DZ);
+    LT_FL_KEEP(s.WS); LT_FL_KEEP(s.AX); LT_FL_KEEP(s.AY); LT_FL_KEEP(s.AZ);
+    LT_FL_KEEP(s.K); LT_FL_KEEP(s.QX); LT_FL_KEEP(s.QY); LT_FL_KEEP(s.QZ);
+    LT_FL_KEEP(s.CX); LT_FL_KEEP(s.CY); LT_FL_KEEP(s.CZ); LT_FL_KEEP(s.CW);
     const int done = lt7_run(1, ctx, ls, &k, &s, iters, &bad);
-    const unsigned flags = _mm_getcsr();
-    _mm_setcsr(csr);
+    LT_FL_USE(s.SQ); LT_FL_USE(s.RS); LT_FL_USE(s.DX); LT_FL_USE(s.DY); LT_FL_USE(s.DZ);
+    LT_FL_USE(s.WS); LT_FL_USE(s.AX); LT_FL_USE(s.AY); LT_FL_USE(s.AZ);
+    LT_FL_USE(s.CX); LT_FL_USE(s.CY); LT_FL_USE(s.CZ); LT_FL_USE(s.CW);
+    const unsigned flags = lt_fl_read();
+    lt_fl_set(csr);
     if (!done) return;
     static int force = -1;                                   /* GOWA_EDGE_EXACT=1: always (tests the exact pass) */
     if (force < 0) { const char* e = getenv("GOWA_EDGE_EXACT"); force = e && e[0] == '1'; }
@@ -430,6 +467,29 @@ void gowa_edge_light_7bb4(spu_context* ctx)
         s = s0;
         lt7_run(0, ctx, ls, &k, &s, done, NULL);
         if (stats) __atomic_add_fetch(&s_lt_redone, 1, __ATOMIC_RELAXED);
+    } else if (lt_verify_on()) {
+        /* the exact pass from the same start; it stays (stores and registers) */
+        static int once;
+        if (!once) { once = 1; atexit(lt_verify_report); }
+        static SPU_THREAD_LOCAL uint8_t* keep;
+        const uint32_t nb = 96u * (uint32_t)done;
+        if (!keep) keep = (uint8_t*)malloc(2 * 96 * 4096);
+        if (keep) {
+            memcpy(keep, ls + o23, nb);
+            memcpy(keep + nb, ls + o29, nb);
+            const lt7_st f = s;
+            s = s0;
+            lt7_run(0, ctx, ls, &k, &s, done, NULL);
+            const __m256 fv[] = { f.SQ, f.RS, f.DX, f.DY, f.DZ, f.WS, f.AX, f.AY, f.AZ };
+            const __m256 ev[] = { s.SQ, s.RS, s.DX, s.DY, s.DZ, s.WS, s.AX, s.AY, s.AZ };
+            int same = !memcmp(keep, ls + o23, nb) && !memcmp(keep + nb, ls + o29, nb) &&
+                       !memcmp(&f.K, &s.K, 16) && !memcmp(&f.CX, &s.CX, 16) && !memcmp(&f.CY, &s.CY, 16) &&
+                       !memcmp(&f.CZ, &s.CZ, 16) && !memcmp(&f.CW, &s.CW, 16) && f.param == s.param;
+            for (int i = 0; i < 9; i++) same = same && lt_same256(lt_pz(fv[i]), ev[i]);
+            __atomic_add_fetch(&s_lt_vcalls, 1, __ATOMIC_RELAXED);
+            if (!same && __atomic_add_fetch(&s_lt_vbad, 1, __ATOMIC_RELAXED) <= 4)
+                fprintf(stderr, "[edge-verify] light 7BB4: the fast pass differs (%d iterations)\n", done);
+        }
     }
     lt_st(ctx, 25, lt_lo(lt_pz(s.SQ))); lt_st(ctx, 24, lt_hi(lt_pz(s.SQ)));
     lt_st(ctx, 10, lt_lo(s.RS)); lt_st(ctx, 12, lt_hi(s.RS));
@@ -569,10 +629,14 @@ void gowa_edge_light_7ed8(spu_context* ctx)
         for (unsigned i = 0; i < sizeof vk / sizeof vk[0]; i++) bad = _mm256_or_si256(bad, lt_e255(vk[i]));
     }
     lt8_st s = s0;
-    _mm_setcsr(csr & ~0x3Fu);
+    lt_fl_set(csr & ~0x3Fu);
+    LT_FL_KEEP(s.NL); LT_FL_KEEP(s.CR); LT_FL_KEEP(s.CG); LT_FL_KEEP(s.CB);
+    LT_FL_KEEP(s.PR); LT_FL_KEEP(s.NR); LT_FL_KEEP(s.PG); LT_FL_KEEP(s.NG); LT_FL_KEEP(s.PB); LT_FL_KEEP(s.NB);
     const int done = lt8_run(1, ctx, ls, &k, &s, iters, &bad);
-    const unsigned flags = _mm_getcsr();
-    _mm_setcsr(csr);
+    LT_FL_USE(s.NL); LT_FL_USE(s.PR); LT_FL_USE(s.NR); LT_FL_USE(s.PG); LT_FL_USE(s.NG);
+    LT_FL_USE(s.PB); LT_FL_USE(s.NB);
+    const unsigned flags = lt_fl_read();
+    lt_fl_set(csr);
     if (!done) return;
     static int force = -1;                                   /* GOWA_EDGE_EXACT=1: always (tests the exact pass) */
     if (force < 0) { const char* e = getenv("GOWA_EDGE_EXACT"); force = e && e[0] == '1'; }
@@ -580,6 +644,19 @@ void gowa_edge_light_7ed8(spu_context* ctx)
         s = s0;
         lt8_run(0, ctx, ls, &k, &s, done, NULL);
         if (stats) __atomic_add_fetch(&s_l2_redone, 1, __ATOMIC_RELAXED);
+    } else if (lt_verify_on()) {
+        static int once;
+        if (!once) { once = 1; atexit(lt_verify_report); }
+        const lt8_st f = s;
+        s = s0;
+        lt8_run(0, ctx, ls, &k, &s, done, NULL);
+        const __m256 fv[] = { f.NL, f.CR, f.CG, f.CB, f.PR, f.NR, f.PG, f.NG, f.PB, f.NB };
+        const __m256 ev[] = { s.NL, s.CR, s.CG, s.CB, s.PR, s.NR, s.PG, s.NG, s.PB, s.NB };
+        int same = 1;
+        for (int i = 0; i < 10; i++) same = same && lt_same256(i >= 1 && i <= 3 ? fv[i] : lt_pz(fv[i]), ev[i]);
+        __atomic_add_fetch(&s_l2_vcalls, 1, __ATOMIC_RELAXED);
+        if (!same && __atomic_add_fetch(&s_l2_vbad, 1, __ATOMIC_RELAXED) <= 4)
+            fprintf(stderr, "[edge-verify] light 7ED8: the fast pass differs (%d iterations)\n", done);
     }
     lt_st(ctx, 12, lt_lo(lt_pz(s.NL))); lt_st(ctx, 5, lt_hi(lt_pz(s.NL)));
     lt_st(ctx, 56, lt_lo(s.CR)); lt_st(ctx, 53, lt_hi(s.CR));

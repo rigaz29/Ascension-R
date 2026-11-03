@@ -141,9 +141,14 @@ static int d250_native(spu_context* ctx)
     const __m256 kv[] = { kk.sxs, kk.sys, kk.szs, kk.oxs, kk.oys, kk.ozs, kk.zmin, kk.zmax };
     for (unsigned i = 0; i < sizeof kv / sizeof kv[0]; i++) kbad = _mm256_or_si256(kbad, ec_e255(kv[i]));
     const int all_exact = ec_force_exact() || !_mm256_testz_si256(kbad, kbad);
+    /* the records apart from the positions (the set-up refuses a partial overlap): one flag
+     * read a call, the whole pass redone exact when it shows; in place, a read each pass */
+    const int whole = !all_exact && out_a != in_a;
+    int redo_all = 0;
+    __m256i wbad = _mm256_setzero_si256();
     const unsigned csr = _mm_getcsr();
-    _mm_setcsr(csr & ~0x3Fu);
-
+    ec_fl_clear(csr);
+again:
     for (uint32_t g = 0; g < groups; g += 2) {
         const uint32_t a = in_a + 64 * g;
         const __m256 r0 = ec_pair(ec_ldq(ls, a), ec_ldq(ls, a + 64));
@@ -158,18 +163,23 @@ static int d250_native(spu_context* ctx)
 
         __m256 sx, sy;
         __m256i f;
-        int fast = !all_exact;
-        if (fast) {
+        int fast = !all_exact && !redo_all;
+        if (fast && whole) {
+            d250_pass(1, &kk, X, Y, Z, &sx, &sy, &f);
+            wbad = _mm256_or_si256(wbad, _mm256_or_si256(_mm256_or_si256(ec_e255(X), ec_e255(Y)), ec_e255(Z)));
+        } else if (fast) {
             d250_pass(1, &kk, X, Y, Z, &sx, &sy, &f);
             const __m256i bad = _mm256_or_si256(_mm256_or_si256(ec_e255(X), ec_e255(Y)), ec_e255(Z));
-            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+            EC_FL_USE(sx); EC_FL_USE(sy); EC_FL_USE(f);
+            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
                 fast = 0;
                 __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
             }
         }
         if (!fast) {
             d250_pass(0, &kk, X, Y, Z, &sx, &sy, &f);
-            _mm_setcsr(csr & ~0x3Fu);
+            EC_FL_USE(sx); EC_FL_USE(sy); EC_FL_USE(f);
+            ec_fl_clear(csr);
         }
 
         /* records (sx, sy, flags, 0): vertices 0-3 in the low lanes' order, 4-7 in the high */
@@ -192,7 +202,13 @@ static int d250_native(spu_context* ctx)
             ec_stq(ls, o + 112, ec_hi(q3));
         }
     }
-    _mm_setcsr(csr);
+    /* every result went to a store, which the read's memory clobber keeps above it */
+    if (whole && !redo_all && ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(wbad, wbad))) {
+        redo_all = 1;
+        __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+        goto again;
+    }
+    ec_fl_set(csr);
     __atomic_add_fetch(&s_d250_verts, (long long)n, __ATOMIC_RELAXED);
     return 1;
 }
@@ -416,14 +432,18 @@ static int d618_native(spu_context* ctx)
         if (fast) {
             const unsigned csr = _mm_getcsr();
             __m256i bad = _mm256_setzero_si256();
-            _mm_setcsr(csr & ~0x3Fu);
-            for (uint32_t g = 0; g < groups; g += 2)
+            uint32_t all = 0;                               /* every mask, for the flags' order */
+            ec_fl_clear(csr);
+            for (uint32_t g = 0; g < groups; g += 2) {
                 d618_masks2(1, ls, ibase, r29, g, s39, r63, r55, &masks[g], &masks[g + 1], &bad);
-            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+                all |= masks[g] | masks[g + 1];
+            }
+            EC_FL_USEI(all);
+            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
                 fast = 0;
                 __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
             }
-            _mm_setcsr(csr);
+            ec_fl_set(csr);
         }
         if (!fast)
             for (uint32_t g = 0; g < groups; g += 2)

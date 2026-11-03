@@ -211,6 +211,32 @@ EC_INL __m256i ec_e255(__m256 x)
     return _mm256_cmpeq_epi32(_mm256_and_si256(_mm256_castps_si256(x), e), e);
 }
 #define EC_FLAGS_BAD 0x09u       /* MXCSR: invalid, overflow */
+/* MXCSR around a fast pass. The compiler takes these ops for pure and may move them across a
+ * plain _mm_getcsr/_mm_setcsr (it did: a result computed after its flags were read), so the
+ * flags go through volatile asm, ordered against the ops by the values they carry:
+ *  - ec_fl_clear before the pass loads its inputs (memory clobber: no load moves above it);
+ *  - EC_FL_KEEP(v) on every register value the pass starts from, after the clear: no op on v
+ *    moves above it;
+ *  - EC_FL_USE(v) on every result of the pass (EC_FL_USEI for an integer), then ec_fl_read:
+ *    no op moves below it. Volatile asm keeps its order. */
+EC_INL void ec_fl_clear(unsigned csr)
+{
+    unsigned v = csr & ~0x3Fu;
+    __asm__ volatile("ldmxcsr %0" : : "m"(v) : "memory");
+}
+EC_INL void ec_fl_set(unsigned csr)
+{
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr) : "memory");
+}
+EC_INL unsigned ec_fl_read(void)
+{
+    unsigned v;
+    __asm__ volatile("stmxcsr %0" : "=m"(v) : : "memory");
+    return v;
+}
+#define EC_FL_KEEP(v) __asm__ volatile("" : "+x"(v))
+#define EC_FL_USE(v) __asm__ volatile("" : : "x"(v))
+#define EC_FL_USEI(v) __asm__ volatile("" : : "r"(v))
 /* GOWA_EDGE_EXACT=1: the exact pass always (to test it) */
 static int ec_force_exact(void)
 {

@@ -88,7 +88,16 @@ static int xf_native(spu_context* ctx)
     const int all_exact = ec_force_exact() ||
         !_mm256_testz_si256(_mm256_or_si256(_mm256_or_si256(ec_e255(c0), ec_e255(c1)), _mm256_or_si256(ec_e255(c2), ec_e255(c3))),
                             _mm256_set1_epi32(-1));
-    _mm_setcsr(csr & ~0x3Fu);
+    /* the output apart from the input (both whole inside the local store): one flag read a
+     * call, every pass redone exact when it shows; else a read each pass */
+    const uint32_t s0a = src & (SPU_LS_SIZE - 16), d0a = dst & (SPU_LS_SIZE - 16);
+    const uint32_t nin = 128u * passes, nout = 128u * (passes - 1);
+    const int whole = !all_exact && s0a + nin <= SPU_LS_SIZE && d0a + nout <= SPU_LS_SIZE &&
+                      (d0a + nout <= s0a || s0a + nin <= d0a);
+    int redo_all = 0;
+    __m256i wbad = _mm256_setzero_si256();
+    ec_fl_clear(csr);
+again:
     for (uint32_t p = 0; p + 1 < passes; p++) {
         const uint32_t in = src + 128u * p, out = dst + 128u * (p ? p - 1 : 0);
         for (int j = 0; j < 4; j++)
@@ -97,14 +106,21 @@ static int xf_native(spu_context* ctx)
             ec_stq(ls, out + 32u * (uint32_t)j, ec_lo(prev[j]));
             ec_stq(ls, out + 32u * (uint32_t)j + 16, ec_hi(prev[j]));
         }
-        int fast = !all_exact;
-        if (fast) {
+        int fast = !all_exact && !redo_all;
+        if (fast && whole) {
+            for (int j = 0; j < 4; j++) {
+                wbad = _mm256_or_si256(wbad, ec_e255(v[j]));
+                xf_vertex(1, v[j], c0, c1, c2, c3, &part[j], &prev[j]);
+                prev[j] = ec_pz(prev[j]);
+            }
+        } else if (fast) {
             __m256i bad = _mm256_setzero_si256();
             for (int j = 0; j < 4; j++) {
                 bad = _mm256_or_si256(bad, ec_e255(v[j]));
                 xf_vertex(1, v[j], c0, c1, c2, c3, &part[j], &prev[j]);
             }
-            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+            for (int j = 0; j < 4; j++) EC_FL_USE(prev[j]);
+            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
                 fast = 0;
                 __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
             } else
@@ -112,10 +128,21 @@ static int xf_native(spu_context* ctx)
         }
         if (!fast) {
             for (int j = 0; j < 4; j++) xf_vertex(0, v[j], c0, c1, c2, c3, &part[j], &prev[j]);
-            _mm_setcsr(csr & ~0x3Fu);
+            for (int j = 0; j < 4; j++) EC_FL_USE(prev[j]);
+            ec_fl_clear(csr);
         }
     }
-    _mm_setcsr(csr);
+    if (whole && !redo_all) {
+        /* the last pass's results are not stored yet: they go through the barrier */
+        for (int j = 0; j < 4; j++) { EC_FL_USE(prev[j]); EC_FL_USE(part[j]); }
+        if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(wbad, wbad)) {
+            redo_all = 1;
+            prev[0] = z; prev[1] = prev[2] = prev[3] = f0;
+            __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
+            goto again;
+        }
+    }
+    ec_fl_set(csr);
 
     /* the last pass with the runtime's SPU forms, which leaves every register as the lifted
      * loop does (callers spill some of them): its loads, pass passes - 2's stores, then its

@@ -149,7 +149,7 @@ static int pt_native(spu_context* ctx)
     const pt_k k = { inten, ec_m(inten), lpos, lpar, first, lights, init, blend, one, half, two, three };
     const int force = ec_force_exact();
     const unsigned csr = _mm_getcsr();
-    _mm_setcsr(csr & ~0x3Fu);
+    ec_fl_clear(csr);
     for (int32_t done = 0; done < count; done += 8) {
         uint32_t off[8];
         __m128i p[8], c[8];
@@ -167,20 +167,22 @@ static int pt_native(spu_context* ctx)
             __m128i bad = _mm_setzero_si128();
             pt_pass(1, ls, &k, P, old, out, &bad);
             for (int j = 0; j < 8; j++) bad = _mm_or_si128(bad, _mm_or_si128(ec_e255q(p[j]), ec_e255q(c[j])));
-            if ((_mm_getcsr() & EC_FLAGS_BAD) || !_mm_testz_si128(bad, bad)) {
+            for (int q = 0; q < 4; q++) EC_FL_USE(out[q]);
+            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm_testz_si128(bad, bad)) {
                 fast = 0;
                 __atomic_add_fetch(&s_ec_redone, 1, __ATOMIC_RELAXED);
             }
         }
         if (!fast) {
             pt_pass(0, ls, &k, P, old, out, NULL);
-            _mm_setcsr(csr & ~0x3Fu);
+            for (int q = 0; q < 4; q++) EC_FL_USE(out[q]);
+            ec_fl_clear(csr);
         }
         __m128i q[8];
         lp_aos(out, q);
         for (int j = 0; j < 8; j++) ec_stq(ls, colors + off[j], q[j]);
     }
-    _mm_setcsr(csr);
+    ec_fl_set(csr);
     __atomic_add_fetch(&s_pt_verts, (long long)count, __ATOMIC_RELAXED);
     return 1;
 }
