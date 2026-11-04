@@ -86,19 +86,62 @@ The job manager double-buffers jobs.
 So a stand-in has to take a job's inputs from main memory, through the job's own DMA list. It
 also has to keep the job manager's prefetch going for the job after.
 
-The elements below are those of a fetched list (the next job's):
+### A job's input set
 
-- A 16-byte job entry, a 160-byte job descriptor, and a 176-byte DMA list.
-- The list's elements are fetched with `GETL`:
-  - a 736-byte parameter block;
-  - the code pieces (`0x755B80`, `0x75BD10`, `0x75FE80`, ...);
-  - the index stream;
-  - the vertex stream (the 18-byte records of `0x75BD10`/`0x764D10`, or the fixed-point
-    formats of `0x758590`/`0x75EB40`);
-  - the 16-byte EDGE context header (`c + 0x00`);
-  - attribute descriptors (32 + 80 bytes);
-  - the 272-byte viewport block, and a 64-byte matrix;
-  - for lit jobs, lighting data, the fragment program object and its constants.
+Mapped from 160 consecutive jobs captured at the gate (`logs/jobcap-seq`: w14 and w15, every
+job, from 60 s on). Each capture holds the input set of the job after it on its SPU.
+- The **job descriptor**: 160 bytes, to LS `0x0C00`.
+- The **DMA list**: 176 bytes, up to 22 `(size, EA)` pairs, to LS `0x1CF50` or `0x28F50`.
+- The list's **elements**, fetched with `GETL` one after another from LS `0x11000` or
+  `0x1D000`, the two buffer sets of the double buffering. In every set they matched the list.
+
+| element | what | size |
+|---|---|---|
+| 0 | the parameter block (below) | 448-880 |
+| 1 | the output packer piece (`0x765B70`, `0x755B80`, `0x762470`, ...) | 336-848 |
+| 2 | the input unpacker piece (`0x764D10`, `0x75BD10`, `0x75EB40`, `0x758590`, ...) | 672-1552 |
+| 3 | the attribute-method piece (`0x7661C0`, `0x75FE80`, ...) | 192-448 |
+| 4 | a 16-byte control word (`0x41`, `0xF1`, `0x3F7F...`) | 16 |
+| 5 | the index stream (the header of [the index decompression](2026-11-03-edge-stages.md)) | 32-1328 |
+| 6 | the vertex stream (records; for example 432 vertexes x 18 = 7776) | 64-9648 |
+| 7 | the segment header (copied to `c`) | 16 |
+| 8 | the input vertex format | 32-80 |
+| 9 | the output vertex format | 64-80 |
+| 10 | the viewport block, one per frame (the same EA in every set) | 272 |
+| 11 | the local-to-world matrix (4x4) | 48-80 |
+| 12-14 | lit jobs: more blocks, and a second matrix | 64-272 |
+
+**The job descriptor.** Most of it is the same in every job.
+- Word 9 is the DMA list's EA.
+- Word 16 is the ring lines' descriptor (`0x73254300`).
+- Word 17 is the hole's EA in the command buffer.
+- Words 18, 34 and 36-38 change from job to job:
+  - 18: a count in its high halfword;
+  - 34: `0x0213xxyy`;
+  - 36-38: three signed integers, zero for some jobs.
+- The first words pair LS addresses with flags (`0x200 / 0x10340100`, `0x220 / 0x44300200`, ...):
+  the job manager's buffer layout.
+
+**The parameter block** (element 0) starts with four offsets of sub-blocks (`0x90`, `0x120`,
+`0x1B0`, `0x240`, 144 bytes each but the last), then eight counts (for example 2, 4, 3, 0, 9, 1,
+9, 0). The sub-blocks read as the lights:
+- positions (-681.7, -98.7, 0), with what looks like an attenuation in w (1/6, 2/9);
+- HDR colours (3.33, 2.74, 2.01);
+- unit directions (0.649, 0.658, -0.381).
+The lighting stage takes them. Which word goes where is still to map, from its native code.
+
+**The vertex formats** (elements 8 and 9) are a 4-byte header (attributes, stride) and an 8-byte
+entry per attribute: offset, type, components, attribute id, size.
+- The types are the RSX's vertex types: 1 I16N, 2 F32, 3 F16, 6 X11Y11Z10. So a format turns
+  straight into the hole's `VERTEX_DATA_ARRAY_FORMAT` words.
+- For example, one output format:
+  - 7 attributes, stride 58;
+  - id 1 F32x3 at +0;
+  - id 2 X11Y11Z10 at +12;
+  - id 27 F32x3 at +16;
+  - ids 28-30 F16x3 at +28, +34, +40;
+  - id 31 F32x3 at +46.
+- With that, the unpack and pack pieces could be one generic routine driven by the formats.
 
 ## The segment header, and the pieces each format takes
 
