@@ -1707,6 +1707,11 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
 - **The expected gain.** About -30% of EDGE's SPU time in the SPU job, so 10-15% at the gate.
   The job manager's 10-12 µs a job, mostly its prefetch DMA, is a separate target in the
   runtime's MFC path.
+- **Progress.** The harness (the replay's state compare mode, a hook at the job's entry) and
+  the output stage `0x9080` are done. The output stage is native and on by default
+  (`GOWA_EDGE_NATIVE` bit 131072): 640 replayed jobs with 0 differences and about 2 µs less a
+  job in replay. At the gate it is within the noise (18.83 off, 18.86 on, ABBA). Details are in
+  the host reference's progress section.
 
 ## 3. The budget for 33 ms
 

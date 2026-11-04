@@ -1136,6 +1136,9 @@ def cmd_replay(args):
     env["SPU_JOB_REPLAY_REPS"] = str(args.reps)
     if args.only:
         env["SPU_JOB_REPLAY_ONLY"] = args.only
+    env["SPU_JOB_REPLAY_CMP"] = args.cmp
+    if args.cmp == "state":
+        env["SPU_JOB_REPLAY_STATE"] = args.state
     p = subprocess.run([exe, "--no-launcher"], cwd=os.path.dirname(exe), env=env,
                        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
     for line in p.stderr.splitlines():
@@ -1411,6 +1414,14 @@ def main():
     p.add_argument("--only", help="only files whose name contains this, e.g. _w15_")
     p.add_argument("--exe", help="the executable (default build/GowARecomp.exe; built with --jobcap, "
                                   "the same runtime as the capture)")
+    p.add_argument("--cmp", choices=("state", "strict"), default="state",
+                   help="state (default): the requests, PUT and mailbox bytes, the local store in --state "
+                        "and r0 r1 r3 r80-r127, what a job leaves; strict: also the frames below the job's "
+                        "main frame and every register (native code that replaces lifted calls leaves "
+                        "those frames and the scratch registers as it likes)")
+    p.add_argument("--state", default="0-3E000,3F780-40000",
+                   help="local-store ranges, hex lo-hi, that --cmp state compares (default all but "
+                        "0x3E000-0x3F780, the frames below the job's main frame)")
     p = sub.add_parser("frames", help="frame report of a PS3_FTRACE trace (workloads, waits, the RSX, a grid)")
     frames.add_args(p)
     args = ap.parse_args()

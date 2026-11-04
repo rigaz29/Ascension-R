@@ -1,11 +1,13 @@
 /*
  * EDGE's output stage, 0x9080 of the job module (e8f44fbc6dbf), as native code: the C job's first
- * piece (docs/notes/2026-11-04-edge-host-reference.md). GOWA_EDGE_OUT=1 turns it on (off by default
- * until proven); GOWA_EDGE_NATIVE_STATS=1 counts.
+ * piece (docs/notes/2026-11-04-edge-host-reference.md). GOWA_EDGE_NATIVE bit 131072, on unless
+ * GOWA_EDGE_NATIVE leaves it out; GOWA_EDGE_NATIVE_STATS=1 counts.
  *
  * What the stage does, for a job that draws:
  *  - the ring allocation: round128(round16(vertexes * stride) + 2 * round8(indexes)) bytes of the
- *    SPU's main ring (0xC628, kept lifted: it holds the ring line protocol and the wait for the GPU);
+ *    SPU's main ring (0xC628): the ring line's GETLLAR and PUTLLUC around the room check (0xB700),
+ *    native when the GPU's position is known and there is room, else the lifted 0xB700 (the label
+ *    read and the wait);
  *  - the index PUT (0xC340) and the vertex PUT(s) (0xC490), through the DMA helper 0xAF38 (pieces
  *    of at most 16 KB), each between a read of SPU_RdMachStat and interrupts back on;
  *  - the vertex packing (0xD158): the output piece, called through c + 0x8C;
@@ -13,7 +15,8 @@
  *    at a time: the method piece (0x5D68, lifted), the program binding (0x84C0, lifted, when there
  *    is one), and per pass the viewport (0xB3D0), the scissor (0xB2D0), 0x1EFC x5 (0xB1A8),
  *    INVALIDATE_VERTEX_FILE, INDEX_ARRAY_ADDRESS, BEGIN_END and DRAW_INDEX_ARRAY;
- *  - the end of the hole and its fenced PUT (0xCC98, kept lifted).
+ *  - the end of the hole (0xCC98): the labels, the methods split at 128-byte lines, a NOP over the
+ *    rest, and its fenced PUT.
  * The words the stage does not write keep what the local store held: so does this.
  *
  * Its arithmetic is the lifted code's, op for op, with the same SPU helpers on locals: it leaves
@@ -22,8 +25,8 @@
  * manager's handler has never run during this stage in 280 captured jobs) and with no stride
  * callback (c + 0x88). Its channel operations are the lifted code's, in its order.
  *
- * Checked by the replay's state mode: SPU_JOB_REPLAY_CMP=state
- * SPU_JOB_REPLAY_STATE=0-3E000,3F780-40000 (all but the frames below the job's main frame).
+ * Checked by the replay's state mode (`gowa.py replay`, its default: SPU_JOB_REPLAY_CMP=state
+ * SPU_JOB_REPLAY_STATE=0-3E000,3F780-40000, all but the frames below the job's main frame).
  */
 #include "spu_context.h"
 #include "spu_helpers.h"
@@ -36,14 +39,13 @@ extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C628(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C9A8(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_00005D68(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000084C0(spu_context*);
-extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000CC98(spu_context*);
 
 #define LD(a)    spu_ls_read128(ctx, (uint32_t)(a))
 #define ST(a, v) spu_ls_write128(ctx, (uint32_t)(a), (v))
 #define W(x)     ((x)._u32[0])
 
 static volatile long long s_calls, s_draws, s_empty, s_declined_irq, s_declined_cb, s_declined_args,
-                          s_c9a8_lifted, s_program, s_halts;
+                          s_c9a8_lifted, s_c628_lifted, s_b700_lifted, s_program, s_halts;
 static int s_stats;                     /* GOWA_EDGE_NATIVE_STATS: the counts (six threads share them) */
 #define EO_COUNT(v) do { if (s_stats) __atomic_add_fetch(&(v), 1, __ATOMIC_RELAXED); } while (0)
 
@@ -466,6 +468,489 @@ static int eo_b1a8(spu_context* ctx, u128 sp, u128 r3, u128 r4, u128 r5)
     return 0;
 }
 
+extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B700(spu_context*);
+extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B9D0(spu_context*);
+
+/* 0xB678: the ring's free space, from the line copy at `line` (word 6 the GPU's position, 0 = none;
+ * word 3 the current pointer; words 0 and 2 the ring's start and end). */
+static u128 eo_b678(spu_context* ctx, u128 r3)
+{
+    const u128 r8 = spu_ori(r3, 0);
+    const u128 r6 = spu_ai(r8, 24), r7 = spu_ai(r8, 12);
+    const u128 r4 = LD(W(r6));
+    const u128 r2 = spu_rotqby(r4, r6);
+    if (W(r2) == 0) return spu_fsmbi(0x0);
+    const u128 r9 = spu_ai(r8, 8);
+    const u128 r12 = LD(W(r6)), r11 = LD(W(r7));
+    const u128 pos = spu_rotqby(r12, r6);
+    const u128 r10 = spu_rotqby(r11, r7);
+    if (W(spu_clgt(r10, pos)) != 0) {
+        const u128 r14 = spu_rotqby(LD(W(r9)), r9);
+        const u128 r15 = spu_rotqby(LD(W(r7)), r7);
+        const u128 r9b = spu_rotqby(LD(W(r6)), r6);
+        const u128 r13 = spu_rotqby(LD(W(r8)), r8);
+        return spu_a(spu_sf(r15, r14), spu_sf(r13, r9b));
+    }
+    const u128 r8b = spu_rotqby(LD(W(r6)), r6);
+    const u128 r20 = spu_rotqby(LD(W(r7)), r7);
+    return spu_sf(r20, r8b);
+}
+
+/* 0xB700's first pass when it needs no channel at all: the GPU's position known (line word 6 not
+ * 0), no refresh asked (c + 0x190 byte 2, bit 7), and the space there. Then the line's current
+ * pointer and local words 0-2 (EA, RSX offset, line word 4), and 1; else -1, nothing written, and
+ * the caller runs the lifted 0xB700 (its label reads and its wait). */
+static int eo_b700(spu_context* ctx, u128 r3, u128 r4, u128 r5, u128 r6, u128 r7, u128 sp)
+{
+    if ((int32_t)W(spu_xswd(sp)) == -1) return -1;   /* the stack check: the lifted code halts */
+    const u128 r19 = spu_ai(r4, 8);
+    const u128 r17 = LD(W(r4));
+    const u128 r11 = spu_ai(r4, 20);
+    const u128 r14 = spu_shlqbyi(r5, 0);
+    const u128 r5b = LD(W(r11));
+    const u128 r13 = spu_shlqbyi(r4, 0);
+    const u128 r9 = spu_a(r14, r14);
+    const u128 r4b = LD(W(r19));
+    const u128 r12a = spu_ai(r13, 12);
+    const u128 r15 = spu_rotqby(r17, r13);
+    const u128 r18 = LD(W(r12a));
+    const u128 c = r3;
+    const u128 r16 = spu_rotqby(r4b, r19);
+    const u128 r10a = spu_rotqby(r5b, r11);
+    const u128 local = r7;
+    const u128 r3b = spu_sf(r15, r16);
+    const u128 r8 = spu_rotqby(r18, r12a);
+    const u128 r9b = spu_clgt(r9, r3b);
+    const u128 r18b = spu_a(r15, r14);
+    u128 r12 = r8;
+    (void)r10a; (void)r6;
+    if (W(r9b) != 0) return -1;                    /* 0xB9BC: more than half the ring */
+    const u128 r28 = spu_ai(r13, 24);
+    const u128 r27 = LD(W(r28));
+    u128 r10 = spu_a(r12, r14);
+    const u128 r25 = spu_rotqby(r27, r28);
+    const u128 r7b = spu_sfi(spu_ceqi(r25, 0), 0);
+    if (((uint16_t)W(spu_xsbh(spu_ceqbi(r7b, 0)))) == 0) return -1;     /* no position: a label read */
+    {
+        const u128 r36 = LD(W(c) + 0x190);
+        const u128 r35 = spu_rotqbyi(r36, 15);
+        if (((uint16_t)W(spu_xsbh(spu_cgtbi(r35, -1)))) == 0) return -1;  /* a refresh asked */
+    }
+    /* 0xB85C: does [cur, cur + size) clear the GPU's position (wrapping to the start when it would
+     * run past the end)? */
+    const u128 r76 = spu_ai(r13, 24);
+    const u128 r78 = spu_clgt(r10, r16);
+    const u128 r56 = spu_il(0);
+    const u128 r75 = LD(W(r76));
+    const u128 r77 = spu_nor(r78, r78);
+    const u128 r71 = spu_sfi(r77, 0);
+    const u128 r70 = spu_rotqby(r75, r76);
+    const u128 r74 = spu_clgt(r70, r18b);
+    const u128 r73 = spu_clgt(r70, r10);
+    const u128 r72 = spu_sfi(r74, 0);
+    const u128 r69 = spu_nor(r73, r73);
+    const u128 r67 = spu_or(r71, r72);
+    const u128 r68 = spu_clgt(r70, r12);
+    const u128 r66 = spu_sfi(r69, 0);
+    const u128 r65 = spu_sfi(r68, 0);
+    const u128 r64 = spu_ceqbi(r67, 0);
+    const u128 r63 = spu_and(r65, r66);
+    const u128 r62 = spu_nor(r64, r64);
+    const u128 r61 = spu_ceqbi(r63, 0);
+    const u128 r59 = spu_fsm(r62);
+    const u128 r60 = spu_xsbh(r61);
+    const u128 r57 = spu_ceqhi(r60, 0);
+    const u128 r58 = spu_sfi(r59, 0);
+    const u128 r55 = spu_selb(r58, r56, r57);
+    const u128 r53 = spu_xsbh(spu_ceqbi(r55, 0));
+    if (((uint16_t)W(r53)) != 0) return -1;       /* 0xB8F4: no room yet, the wait */
+    if (W(spu_clgt(r10, r16)) != 0) {             /* past the end: from the start */
+        r12 = spu_ori(r15, 0);
+        const u128 r5c = LD(W(local) + 0x10);
+        r10 = spu_ori(r18b, 0);
+        ST(W(local) + 0x10, spu_shufb(spu_il(1), r5c, spu_cbd(sp, 12)));
+    }
+    /* 0xB94C, the pass's end */
+    const u128 r21 = spu_cwd(r13, 12);
+    const u128 r24 = spu_ai(r13, 4);
+    const u128 r7c = spu_cwd(sp, 0);
+    const u128 r17b = spu_sf(r15, r12);
+    const u128 r27b = LD(W(r13) + 12);
+    const u128 r19b = spu_cwd(sp, 4), r9c = spu_cwd(sp, 8);
+    ST(W(r13) + 12, spu_shufb(r10, r27b, r21));
+    const u128 r20 = LD(W(local));
+    const u128 r16b = spu_shufb(r12, r20, r7c);
+    ST(W(local), r16b);
+    const u128 r23 = LD(W(r24));
+    const u128 r15b = spu_rotqby(r23, r24);
+    const u128 r10b = spu_a(r15b, r17b);
+    const u128 r18c = spu_shufb(r10b, r16b, r19b);
+    ST(W(local), r18c);
+    const u128 r12b = LD(W(r13) + 0x10);
+    const u128 r8b = spu_rotqby(r12b, r13);
+    ST(W(local), spu_shufb(r8b, r18c, r9c));
+    return 1;
+}
+
+/* 0xC628: the ring allocation (r3 c, r4 the descriptor's ring quadword, r5 the size, r6 local, r7 the
+ * SPU). Its r3 (1, or 0 when it could not) is not used by 0x9090: returns nonzero after a halt. `fb`
+ * is the caller's frame. */
+static int eo_c628(spu_context* ctx, u128 fb, u128 r3, u128 r4, u128 r5, u128 r6, u128 r7)
+{
+    if (W(spu_andi(r4, 2)) != 0) {                /* an EA of its own, not the ring: lifted */
+        ctx->gpr[1] = fb;
+        ctx->gpr[3] = r3; ctx->gpr[4] = r4; ctx->gpr[5] = r5; ctx->gpr[6] = r6; ctx->gpr[7] = r7;
+        EO_COUNT(s_c628_lifted);
+        eo_call(ctx, 0x9260, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C628);
+        return 0;
+    }
+    const u128 r80 = spu_ori(r6, 0), r82 = spu_ori(r4, 0), r83 = spu_ori(r3, 0);
+    const u128 reloc = spu_sf(spu_ila(0x8660), spu_link(0xC660));
+    const u128 sp = spu_ai(fb, -224);
+    if ((int32_t)W(spu_xswd(sp)) == -1) return eo_halt(ctx, 0x0C69C);
+    {
+        const u128 r10 = LD(W(r80) + 0x10);
+        const u128 z = spu_il(0);
+        const u128 a = spu_shufb(z, r10, spu_cbd(sp, 13));
+        const u128 b = spu_shufb(z, a, spu_cbd(sp, 12));
+        ST(W(r80) + 0x10, spu_shufb(z, b, spu_cbd(sp, 14)));
+    }
+    const u128 r90 = spu_cbd(sp, 14);
+    const u128 r85 = spu_andi(spu_ai(r5, 127), -128);
+    const u128 r89 = spu_rdch(ctx, SPU_RdMachStat);
+    ctx->int_enable = 0;
+    const u128 r49 = spu_a(spu_ila(0xCC00), reloc);
+    const u128 r47 = spu_a(spu_shli(r7, 7), spu_ai(r82, 128));
+    const u128 r42 = spu_sfi(spu_ceqi(spu_andi(r49, 127), 0), 0);
+    const u128 r84 = spu_shlqbyi(spu_rotqmbyi(r47, -4), 4);
+    const u128 r41 = spu_sfi(spu_ceqi(spu_andi(r84, 127), 0), 0);
+    const u128 r86 = spu_and(r42, r41);
+    if ((int32_t)W(r86) == 0) return eo_halt(ctx, 0x0C758);
+    const u128 r88 = spu_a(spu_ila(0xCC00), reloc);
+    spu_wrch(ctx, MFC_LSA, r88);
+    spu_wrch(ctx, MFC_EAH, spu_il(0));
+    spu_wrch(ctx, MFC_EAL, spu_shlqbyi(r84, 0));
+    spu_wrch(ctx, MFC_Size, spu_il(128));
+    spu_wrch(ctx, MFC_TagID, spu_fsmbi(0x0));
+    spu_wrch(ctx, MFC_Cmd, spu_il(208));                    /* GETLLAR */
+    (void)spu_rdch(ctx, MFC_RdAtomicStat);
+    {
+        const u128 fr = eo_b678(ctx, spu_shlqbyi(r88, 0));
+        const u128 r33 = LD(W(r80) + 0x10);
+        ST(W(r80) + 0x10, spu_shufb(fr, spu_shufb(fr, r33, spu_cwd(sp, 4)), spu_cwd(sp, 8)));
+    }
+    u128 r81;
+    int r5f = 0;
+    const u128 r29 = LD(0x10C00);
+    if (W(spu_ceq(spu_rotqbyi(r29, 8), r29)) != 0) {       /* line word 2 == word 0: 0xB9D0 */
+        ctx->gpr[1] = sp;
+        ctx->gpr[3] = r83; ctx->gpr[4] = r82; ctx->gpr[5] = r85; ctx->gpr[6] = r80;
+        eo_call(ctx, 0xC7E8, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B9D0);
+        r81 = spu_ori(ctx->gpr[3], 0);
+        goto l878;
+    }
+    {
+        const u128 line = spu_a(spu_ila(0xCC00), reloc);
+        int ok = eo_b700(ctx, r83, line, r85, spu_fsmbi(0x0), r80, spu_ai(sp, -288));
+        if (ok < 0) {
+            EO_COUNT(s_b700_lifted);
+            ctx->gpr[1] = sp;
+            ctx->gpr[3] = spu_shlqbyi(r83, 0); ctx->gpr[5] = spu_ori(r85, 0); ctx->gpr[6] = spu_fsmbi(0x0);
+            ctx->gpr[4] = line; ctx->gpr[7] = spu_shlqbyi(r80, 0);
+            eo_call(ctx, 0xC80C, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B700);
+            r81 = spu_shlqbyi(ctx->gpr[3], 0);
+        } else {
+            r81 = spu_il(ok);
+        }
+        if (((uint16_t)W(spu_xsbh(spu_ceqbi(r81, 0)))) != 0) {   /* failed: 0xB9D0, then 0xB700 again */
+            ctx->gpr[1] = sp;
+            ctx->gpr[4] = spu_ori(r82, 0); ctx->gpr[3] = spu_shlqbyi(r83, 0); ctx->gpr[5] = spu_ori(r85, 0);
+            ctx->gpr[6] = spu_shlqbyi(r80, 0);
+            eo_call(ctx, 0xC834, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B9D0);
+            r81 = spu_ori(ctx->gpr[3], 0);
+            if (((uint16_t)W(spu_xsbh(spu_ceqbi(ctx->gpr[3], 0)))) == 0) goto l878;
+            ctx->gpr[1] = sp;
+            ctx->gpr[3] = spu_ori(r83, 0); ctx->gpr[5] = spu_shlqbyi(r85, 0); ctx->gpr[4] = line;
+            ctx->gpr[7] = spu_shlqbyi(r80, 0); ctx->gpr[6] = spu_il(1);
+            eo_call(ctx, 0xC860, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000B700);
+            r81 = spu_ori(ctx->gpr[3], 0);
+            ST(W(r80) + 0x10, spu_shufb(spu_il(1), LD(W(r80) + 0x10), r90));
+        }
+    }
+    {   /* 0xC904: the line back, with the new current pointer */
+        const u128 fr = eo_b678(ctx, spu_a(spu_ila(0xCC00), reloc));
+        ST(W(r80) + 0x10, spu_shufb(fr, LD(W(r80) + 0x10), spu_cwd(sp, 8)));
+        if ((int32_t)W(r86) == 0) return eo_halt(ctx, 0x0C924);
+        spu_wrch(ctx, MFC_LSA, spu_ori(r88, 0));
+        spu_wrch(ctx, MFC_EAH, spu_il(0));
+        spu_wrch(ctx, MFC_EAL, spu_shlqbyi(r84, 0));
+        spu_wrch(ctx, MFC_Size, spu_il(128));
+        spu_wrch(ctx, MFC_TagID, spu_il(0));
+        spu_wrch(ctx, MFC_Cmd, spu_il(176));                /* PUTLLUC */
+        (void)spu_rdch(ctx, MFC_RdAtomicStat);
+        r5f = 1;
+    }
+l878:
+    if (W(spu_andi(r89, 1)) != 0) ctx->int_enable = 1;
+    if (((uint16_t)W(spu_xsbh(spu_ceqbi(r81, 0)))) != 0) return 0;
+    if (r5f) {
+        const u128 r74 = LD(0x10C10);
+        ST(W(r80) + 0x10, spu_shufb(spu_rotqbyi(r74, 4), LD(W(r80) + 0x10), spu_cwd(sp, 0)));
+    } else {
+        ST(W(r80) + 0x10, spu_shufb(spu_il(0), LD(W(r80) + 0x10), spu_cwd(sp, 0)));
+    }
+    {
+        const u128 r82b = LD(W(r80));
+        ST(W(r80), spu_shufb(spu_a(r82b, r85), r82b, spu_cwd(sp, 12)));
+    }
+    return 0;
+}
+
+/* 0xCC98: the hole's end (r3 c, r4 cursor, r5 hole EA, r6 local, r7 entries):
+ *  - per entry with a label: SEMAPHORE_OFFSET / TEXTURE_READ_SEMAPHORE_RELEASE (the template at
+ *    LS 0xF930, its offset and the ring's new current pointer), merged at the write pointer;
+ *  - a method whose arguments would cross a 128-byte line is split there (a header of its own for
+ *    the rest), the rest of the hole moved one word on (0xCDBC, 0xCE60);
+ *  - a NOP over what is left, to the reserved size;
+ *  - between SPU_RdMachStat and interrupts back on, the fenced PUT of the whole hole. */
+static void eo_cc98(spu_context* ctx, u128 sp, u128 r3in, u128 r4in, u128 r5in, u128 r6in, u128 r7in)
+{
+    const u128 r31 = spu_ori(r5in, 0), r30 = spu_ori(r3in, 0), r14 = spu_shlqbyi(r4in, 0);
+    if (W(r31) == 0) return;
+    u128 r3 = spu_ai(r4in, 8);
+    u128 r15 = spu_il(0);
+    const u128 r20c = spu_cwd(sp, 4);
+    const u128 r18c = spu_il(4080);
+    u128 r2 = LD(W(r3));
+    const u128 r17m = spu_il(-1);
+    const u128 r19c = spu_cwd(sp, 12);
+    u128 r8 = spu_rotqby(r2, r3);
+    u128 r6 = r6in;
+    const u128 r7n = r7in;
+    for (;;) {                                     /* 0xCD1C / 0xCCD0 */
+        const u128 r29 = spu_andi(r8, 15);
+        const u128 r28 = spu_ceq(r15, r7n);
+        u128 r9 = LD(0xF930);
+        const u128 r11 = spu_sfi(r29, 0);
+        const u128 r13 = spu_shlqbyi(r8, 0);
+        const u128 r12 = spu_ai(r6, 12);
+        const u128 r10 = spu_rotqmby(r17m, r11);
+        const u128 r16 = spu_sfi(r29, 16);
+        r15 = spu_ai(r15, 1);
+        if (W(r28) != 0) break;
+        const u128 r21 = LD(W(r6) + 0x10);
+        const u128 r4 = spu_rotqby(r21, r6);
+        r6 = spu_ai(r6, 32);
+        r9 = spu_shufb(spu_and(r4, r18c), r9, r20c);
+        if (W(r4) == 0) continue;
+        const u128 r27 = LD(W(r12));
+        const u128 r22 = LD(W(r8));
+        const u128 r24 = LD(W(r8) + 0x10);
+        r8 = spu_ai(r8, 16);
+        const u128 r26 = spu_rotqby(r27, r12);
+        const u128 r25 = spu_shufb(r26, r9, r19c);
+        const u128 r12b = spu_rotqmby(r25, r11);
+        const u128 r23 = spu_shlqby(r25, r16);
+        ST(W(r13), spu_selb(r22, r12b, r10));
+        ST(W(r13) + 0x10, spu_selb(r23, r24, r10));
+    }
+    u128 r7, r21;
+    {
+        const u128 r16 = spu_ai(r14, 8);
+        const u128 r32 = spu_cwd(r14, 8);
+        r7 = spu_il(0);
+        const u128 r20 = LD(W(r14) + 8);
+        ST(W(r14) + 8, spu_shufb(r8, r20, r32));
+        const u128 r17 = LD(W(r14));
+        const u128 r15b = LD(W(r16));
+        const u128 r6s = spu_rotqby(r17, r14);
+        const u128 r13 = spu_rotqby(r15b, r16);
+        r21 = spu_sf(r6s, r13);
+        if (W(r21) != 0) {
+            const u128 r17t = LD(0xF980);
+            u128 r18 = spu_il(0);
+            const u128 r33 = spu_fsmbi(0xFFF);
+            const u128 r24 = spu_iohl(spu_ilhu(0xE003), 0xFFFF);
+            u128 r9 = spu_shlqbyi(r6s, 0);
+            const u128 r7a = spu_andi(r21, -4);
+            u128 r22 = spu_shlqbyi(r21, 0);
+            const u128 r34 = spu_ila(0x10203);
+            u128 r5 = spu_shlqbyi(r18, 0);
+            u128 r3c = spu_shlqbyi(r18, 0);
+            const u128 r29 = spu_selb(r34, r17t, r33);
+            u128 r26 = spu_shlqbyi(r18, 0);
+            const u128 r32b = spu_il(8188);
+            u128 r25 = spu_shlqbyi(r18, 0);
+            u128 r20b = spu_a(r6s, r7a);
+            for (;;) {                             /* 0xCDBC */
+                const u128 r6b = LD(W(r9));
+                const u128 r35 = spu_clgt(r20b, r5);
+                r3c = spu_ceq(r18, r3c);
+                r18 = spu_andi(r9, -128);
+                if (W(r35) == 0) { r7 = spu_ori(r22, 0); break; }
+                const u128 r19 = spu_ori(r25, 0);
+                const u128 r10 = spu_ori(r5, 0);
+                r25 = spu_rotqby(r6b, r9);
+                const u128 r36 = spu_ori(r3c, 0);
+                const u128 r44 = spu_rotqmbyi(r19, -3);
+                const u128 r45 = spu_ai(r10, 128);
+                const u128 r43 = spu_ai(r10, 4);
+                const u128 r16b = spu_andi(r45, -128);
+                const u128 r40 = spu_rotqmbyi(r25, -2);
+                r5 = spu_ori(r9, 0);
+                const u128 r42 = spu_rotqmbii(r44, -4);
+                const u128 r8b = spu_sf(r43, r16b);
+                const u128 r39 = spu_rotqmbii(r8b, -2);
+                const u128 r41 = spu_andi(r42, 4);
+                const u128 r27 = spu_sf(r8b, r26);
+                const u128 r38 = spu_xori(r41, 4);
+                r26 = spu_and(r32b, r40);
+                const u128 r28 = spu_mpyu(r38, r39);
+                const u128 r37 = spu_a(r9, r26);
+                const u128 r11 = spu_shli(r8b, 16);
+                r3c = spu_andi(r37, -128);
+                r9 = spu_ai(r37, 4);
+                if (W(r36) != 0) continue;
+                const u128 r54 = spu_ceqi(r8b, 0);
+                const u128 r53 = spu_selb(r11, r19, r24);
+                const u128 r50 = LD(W(r10));
+                const u128 r52 = spu_sf(r16b, r20b);
+                const u128 r51 = spu_cwd(r10, 0);
+                const u128 r49 = spu_andc(r53, r54);
+                const u128 r48 = spu_andi(r52, -128);
+                const u128 r23 = spu_ai(r16b, -128);
+                u128 r6c = spu_a(r48, r16b);
+                ST(W(r10), spu_shufb(r49, r50, r51));
+                u128 r15c;
+                for (;;) {                         /* 0xCE60: the rest one word on, a line at a time from the last */
+                    const u128 r56 = spu_ori(r6c, 0);
+                    r15c = LD(W(r6c));
+                    const u128 r61 = LD(W(r6c) + 0x10), r72 = LD(W(r6c) + 0x20), r71 = LD(W(r6c) + 0x30);
+                    const u128 r70 = LD(W(r6c) + 0x40), r62 = LD(W(r6c) + 0x50), r63 = LD(W(r6c) + 0x60);
+                    const u128 r65 = LD(W(r6c) + 0x70), r64 = LD(W(r6c) - 0x10);
+                    r6c = spu_ai(r6c, -128);
+                    const u128 r69 = spu_shufb(r61, r72, r17t), r68 = spu_shufb(r72, r71, r17t);
+                    const u128 r67 = spu_shufb(r71, r70, r17t);
+                    const u128 r55 = spu_ceq(r6c, r23);
+                    const u128 r66 = spu_shufb(r70, r62, r17t), r60 = spu_shufb(r63, r65, r17t);
+                    const u128 r59 = spu_shufb(r64, r15c, r17t), r58 = spu_shufb(r62, r63, r17t);
+                    const u128 r57 = spu_shufb(r15c, r61, r17t);
+                    ST(W(r56) + 0x20, r69); ST(W(r56) + 0x30, r68); ST(W(r56) + 0x40, r67); ST(W(r56) + 0x50, r66);
+                    ST(W(r56) + 0x70, r60); ST(W(r56), r59); ST(W(r56) + 0x60, r58); ST(W(r56) + 0x10, r57);
+                    if (W(r55) != 0) break;
+                }
+                const u128 r77 = spu_shli(r27, 16);
+                r9 = spu_shlqbyi(r16b, 0);
+                const u128 r79 = spu_ai(r20b, 4);
+                r5 = spu_shlqbyi(r16b, 0);
+                const u128 r78 = spu_ai(r22, 4);
+                r3c = spu_shlqbyi(r18, 0);
+                r20b = spu_ori(r79, 0);
+                const u128 r76 = spu_selb(r77, r19, r24);
+                r22 = spu_ori(r78, 0);
+                const u128 r75 = spu_a(r76, r28);
+                ST(W(r16b), spu_shufb(r75, r15c, r29));
+            }
+        }
+    }
+    u128 r11, r13;
+    {   /* 0xCF10: a NOP over the rest */
+        const u128 r20 = spu_ai(r14, 8);
+        r13 = spu_cwd(r14, 8);
+        const u128 r33 = spu_sf(r21, r7);
+        const u128 r34 = LD(W(r30));
+        const u128 r32 = LD(W(r20));
+        const u128 r10 = spu_andi(r33, -4);
+        const u128 r21b = spu_ai(r14, 4);
+        const u128 r24 = spu_il(4);
+        const u128 r7b = spu_rotqbyi(r34, 14);
+        const u128 r8b = spu_rotqby(r32, r20);
+        const u128 r18 = spu_ceqbi(r7b, 0);
+        u128 r9 = spu_a(r10, r8b);
+        const u128 r15b = spu_xsbh(r18);
+        const u128 r17 = spu_andi(r7b, 255);
+        const u128 r26 = spu_shufb(r9, r32, r13);
+        const u128 r29 = spu_ceqhi(r15b, 0);
+        const u128 r22 = spu_shli(r17, 4);
+        const u128 r5 = spu_fsm(r29);
+        ST(W(r14) + 8, r26);
+        const u128 r4 = LD(W(r21b));
+        r11 = spu_selb(r24, r22, r5);
+        const u128 r3e = spu_rotqby(r4, r21b);
+        const u128 r2b = spu_rotmai(spu_sf(r9, r3e), -2);
+        if (W(r2b) != 0) {
+            const u128 r43 = spu_ai(r2b, -1);
+            const u128 r28 = LD(W(r10) + W(r8b));
+            const u128 r39 = spu_cwx(r10, r8b);
+            const u128 r38 = spu_or(spu_shli(r43, 18), spu_ori(spu_ilhu(0x4000), 256));
+            const u128 r27 = spu_a(spu_shli(r43, 2), r9);
+            ST(W(r10) + W(r8b), spu_shufb(r38, r28, r39));
+            r9 = spu_ai(r27, 4);
+            ST(W(r14) + 8, spu_shufb(r9, LD(W(r14) + 8), r13));
+        }
+    }
+    /* 0xCFB4: the fenced PUT */
+    const u128 ms = spu_rdch(ctx, SPU_RdMachStat);
+    ctx->int_enable = 0;
+    const u128 r45 = LD(W(r14));
+    const u128 r12 = LD(W(r30) + 0x150);
+    const u128 r5 = spu_rotqmbyi(r31, -4);
+    const u128 r10 = spu_rotqby(r45, r14);
+    u128 size, tag;
+    if (W(spu_clgti(r11, 15)) == 0) {
+        const u128 r67 = spu_ai(r11, -1);
+        const u128 r69 = spu_ceqi(r11, 4);
+        const u128 r68 = spu_clgti(r67, 1);
+        const u128 ea = spu_shlqbyi(r5, 4);
+        const u128 r65 = spu_sfi(r69, 0);
+        const u128 r66 = spu_nor(r68, r68);
+        const u128 r57 = spu_and(r10, r67);
+        const u128 r64 = spu_sfi(r66, 0);
+        const u128 r59 = spu_ceqi(r11, 8);
+        const u128 r63 = spu_or(r64, r65);
+        const u128 r60 = spu_andi(r10, 15);
+        const u128 r62 = spu_ceqbi(r63, 0);
+        const u128 r61 = spu_andi(ea, 15);
+        const u128 r58 = spu_xsbh(r62);
+        const u128 r56 = spu_clgti(r12, 31);
+        const u128 r55 = spu_ceq(r60, r61);
+        const u128 r54 = spu_sfi(r59, 0);
+        const u128 r53 = spu_ceqhi(r58, 0);
+        const u128 r51 = spu_ceqi(r57, 0);
+        const u128 r50 = spu_nor(r56, r56);
+        const u128 r23 = spu_sfi(r55, 0);
+        const u128 r49 = spu_selb(r54, spu_il(1), r53);
+        const u128 r6s = spu_sfi(r51, 0);
+        const u128 r48 = spu_sfi(r50, 0);
+        const u128 r25 = spu_and(spu_and(r23, r49), spu_and(r6s, r48));
+        if ((int32_t)W(r25) == 0) { eo_halt(ctx, 0x0D050); return; }
+        spu_wrch(ctx, MFC_LSA, r10);
+        spu_wrch(ctx, MFC_EAH, spu_il(0));
+        spu_wrch(ctx, MFC_EAL, ea);
+    } else {
+        const u128 ea = spu_shlqbyi(r5, 4);
+        const u128 r15a = spu_ceqi(spu_andi(r10, 15), 0);
+        const u128 r26 = spu_clgt(r11, spu_il(16384));
+        const u128 r29 = spu_ceqi(spu_andi(ea, 15), 0);
+        const u128 r22 = spu_clgti(r12, 31);
+        const u128 r78 = spu_and(spu_sfi(r15a, 0), spu_sfi(r29, 0));
+        const u128 r79 = spu_sfi(spu_nor(r26, r26), 0);
+        const u128 r76 = spu_sfi(spu_ceqi(spu_andi(r11, 15), 0), 0);
+        const u128 r77 = spu_sfi(spu_nor(r22, r22), 0);
+        const u128 r73 = spu_and(spu_and(r78, r79), spu_and(r76, r77));
+        if ((int32_t)W(r73) == 0) { eo_halt(ctx, 0x0D0C4); return; }
+        spu_wrch(ctx, MFC_LSA, r10);
+        spu_wrch(ctx, MFC_EAH, spu_il(0));
+        spu_wrch(ctx, MFC_EAL, ea);
+    }
+    size = spu_ori(r11, 0);
+    tag = spu_ori(r12, 0);
+    spu_wrch(ctx, MFC_Size, size);
+    spu_wrch(ctx, MFC_TagID, tag);
+    spu_wrch(ctx, MFC_Cmd, spu_il(34));                     /* PUTF */
+    if (W(spu_andi(ms, 1)) != 0) ctx->int_enable = 1;
+}
+
 /* The hole's own overflow test in 0x9090: the callback at cursor + 12, called as the lifted code
  * calls it. Nonzero = give up this pass. */
 static int eo_cb(spu_context* ctx, u128 cursor, int32_t words, uint32_t link, u128 sp)
@@ -714,9 +1199,9 @@ int gowa_edge_out_9080(spu_context* ctx)
 {
     static int on = -1;
     if (on < 0) {
-        const char* e = getenv("GOWA_EDGE_OUT");
+        const char* e = getenv("GOWA_EDGE_NATIVE");
         s_stats = getenv("GOWA_EDGE_NATIVE_STATS") != NULL;
-        on = e && e[0] == '1';
+        on = !e || (atoi(e) & 131072) != 0;
         if (on && s_stats) atexit(eo_stats);
     }
     if (!on) return 0;
@@ -766,12 +1251,7 @@ int gowa_edge_out_9080(spu_context* ctx)
         eo_call(ctx, 0x9164, jobmod_e8f44fbc6dbf_e6D98_spu_func_000084C0);
         ctx->gpr[1] = sp;
         const u128 r12 = LD(W(desc));
-        ctx->gpr[3] = spu_shlqbyi(c, 0);
-        ctx->gpr[4] = spu_shlqbyi(r80, 0);
-        ctx->gpr[5] = spu_rotqbyi(r12, 4);
-        ctx->gpr[6] = spu_il(0);
-        ctx->gpr[7] = spu_il(0);
-        eo_call(ctx, 0x9190, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000CC98);
+        eo_cc98(ctx, sp, spu_shlqbyi(c, 0), spu_shlqbyi(r80, 0), spu_rotqbyi(r12, 4), spu_il(0), spu_il(0));
         goto done;
     }
     EO_COUNT(s_draws);
@@ -796,12 +1276,9 @@ int gowa_edge_out_9080(spu_context* ctx)
             size = spu_andi(spu_a(spu_andi(spu_ai(r5b, 15), -16), r80), -128);
         }
         const u128 local = spu_ai(sp, 112);
-        ctx->gpr[3] = spu_shlqbyi(c, 0);
-        ctx->gpr[4] = LD(W(desc));
-        ctx->gpr[5] = spu_ori(size, 0);
-        ctx->gpr[6] = spu_shlqbyi(local, 0);
-        ctx->gpr[7] = spu_shlqbyi(spu, 0);
-        eo_call(ctx, 0x9260, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C628);   /* the ring allocation */
+        if (eo_c628(ctx, sp, spu_shlqbyi(c, 0), LD(W(desc)), spu_ori(size, 0), spu_shlqbyi(local, 0),
+                    spu_shlqbyi(spu, 0)))                                /* the ring allocation */
+            goto done;
         ctx->gpr[1] = sp;
         if (eo_put(ctx, 0, c, icount, local, spu_ai(sp, 96), spu_ai(sp, -144))) goto done;
         eo_d158(ctx, c, spu_ai(sp, -80));
@@ -843,13 +1320,8 @@ int gowa_edge_out_9080(spu_context* ctx)
         eo_passes(ctx, sp, cursor, desc, icount);
         {   /* 0xCC98: the hole's end and its fenced PUT */
             const u128 r87 = LD(W(desc));
-            ctx->gpr[1] = sp;
-            ctx->gpr[7] = spu_il(1);
-            ctx->gpr[3] = spu_shlqbyi(c, 0);
-            ctx->gpr[4] = spu_shlqbyi(cursor, 0);
-            ctx->gpr[6] = spu_ori(local, 0);
-            ctx->gpr[5] = spu_rotqbyi(r87, 4);
-            eo_call(ctx, 0x97F4, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000CC98);
+            eo_cc98(ctx, sp, spu_shlqbyi(c, 0), spu_shlqbyi(cursor, 0), spu_rotqbyi(r87, 4),
+                    spu_ori(local, 0), spu_il(1));
         }
     }
 done:
@@ -864,6 +1336,7 @@ done:
 static void eo_stats(void)
 {
     fprintf(stderr, "[edge-native] output 9080: %lld calls (%lld draws, %lld empty), declined %lld (interrupt) %lld (stride callback) %lld (arguments), "
-            "hole set-up lifted %lld, with a program %lld, halts %lld\n",
-            s_calls, s_draws, s_empty, s_declined_irq, s_declined_cb, s_declined_args, s_c9a8_lifted, s_program, s_halts);
+            "hole set-up lifted %lld, allocation lifted %lld, room check lifted %lld, with a program %lld, halts %lld\n",
+            s_calls, s_draws, s_empty, s_declined_irq, s_declined_cb, s_declined_args, s_c9a8_lifted, s_c628_lifted,
+            s_b700_lifted, s_program, s_halts);
 }

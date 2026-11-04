@@ -225,11 +225,21 @@ The core is built bottom-up:
     - 3 skinned lit (`0x758590`);
     - 1 of `0x762470`.
 
-**2. The output stage, `0x9080` (first part, done; `native/spu_edge_out.c`, `GOWA_EDGE_OUT=1`,
-off by default).** It is the most valuable common block of glue: 4.4 µs of a position-only job
+**2. The output stage, `0x9080` (done; `native/spu_edge_out.c`, `GOWA_EDGE_NATIVE` bit 131072,
+on by default).** It is the most valuable common block of glue: 4.4 µs of a position-only job
 and ~7 µs of a lit job, in the game.
 - **What it does.** Mapped from the lifted code (`0x9090` and its helpers):
-  - the ring allocation: round128(round16(vertexes x stride) + 2 x round8(indexes)) bytes;
+  - the ring allocation (`0xC628`), round128(round16(vertexes x stride) + 2 x round8(indexes))
+    bytes of the SPU's main ring:
+    - the SPU's ring line (the descriptor's ring EA + 128 + 128 x the SPU) by `GETLLAR` into LS
+      `0x10C00`;
+    - the room check (`0xB700`): with the GPU's position known (line word 6) and no refresh
+      asked (`c + 0x190` byte 2, bit 7), the block must not pass the GPU's position; a block
+      that would run past the ring's end starts again at its start;
+    - the line's current pointer (word 3) moves past the block, and the line goes back by
+      `PUTLLUC`;
+    - the local block gets the block's EA, its RSX offset (line word 1 plus the block's offset),
+      line words 4 and 5, and the block's end;
   - the index PUT and the vertex PUT(s), through `0xAF38`'s pieces (16 KB, then the 16-byte
     multiple, then 8/4/2/1), each between a `SPU_RdMachStat` read and interrupts back on;
   - the vertex packing through the piece at `c + 0x8C`;
@@ -243,36 +253,73 @@ and ~7 µs of a lit job, in the game.
       - `BEGIN_END` 5 and `DRAW_INDEX_ARRAY`: up to the index data's first 128-byte boundary,
         then 2047 x 256 indexes under one non-increment header, then the rest;
       - `BEGIN_END` 0;
-  - the hole's end and its fenced PUT.
-- **What is native.** All of it but four parts, which it calls as the lifted code calls them
+  - the hole's end (`0xCC98`):
+    - per local entry with a label, a 16-byte block from the template at LS `0xF930`:
+      `SET_SEMAPHORE_OFFSET` (`0x1D6C`) with the label's offset, then
+      `TEXTURE_READ_SEMAPHORE_RELEASE` (`0x1D74`) with the ring's new current pointer, the
+      value the room check later reads back as the GPU's position;
+    - a method whose arguments would cross a 128-byte line is cut at the line, and the rest gets
+      a header of its own: the rest of the hole moves one word on, line by line from the last;
+    - a NOP (`0x40000100 | (n - 1) << 18`) over what is left of the reserved size (16 x `c`
+      byte 1);
+    - the fenced PUT (`PUTF`, tag `c + 0x150`), between a `SPU_RdMachStat` read and interrupts
+      back on.
+- **What is native.** All of it but two parts, which it calls as the lifted code calls them
   (same link, then the drain):
-  - the ring allocation `0xC628`, with the ring line protocol and the wait for the GPU;
   - the method piece through `0x5D68`;
-  - the program binding `0x84C0`, when there is one;
-  - the hole's end `0xCC98`.
-  The hole set-up's 4-byte label read is handed to the lifted `0xC9A8` (never seen).
+  - the program binding `0x84C0`, when there is one.
+
+  Handed to the lifted code, and never seen in the game:
+  - the room check's label read and wait (the lifted `0xB700`), when the GPU's position is not
+    known, a refresh is asked, or there is no room yet;
+  - `0xB9D0`, when the ring line's start and end are equal or there is still no room;
+  - an allocation at an EA of its own (bit 1 of the descriptor's ring word, the lifted `0xC628`);
+  - the hole set-up's 4-byte label read (the lifted `0xC9A8`).
+
+  A ring wrap is not one of them: it is the room check's own path, done as the lifted code does
+  it (seen once in the captures).
 - **How it is written.** Its arithmetic is the lifted code's, op for op, with the same SPU helpers
   on locals. It drops the register file, the interrupt checks at every label, and the
   dispatcher's round trip at every interrupt enable and disable.
 - **When it declines.** With an interrupt pending, or a stride callback at `c + 0x88`.
-- **Checked.**
-  - Replay, state mode with `SPU_JOB_REPLAY_STATE=0-3E000,3F780-40000` (all but the frames
-    below the job's main frame): the 120 gate jobs and the 160 consecutive ones, 0 differences
-    (560 calls).
-  - Strict mode: the PUT and atomic bytes are the same; only 109 bytes of callee frames and
-    scratch registers differ.
-  - In the game: 2,686,976 calls (63,433 of them empty draws), none declined. Then 180 jobs
-    captured with it on were replayed with it off, and the lifted code gives the same output
-    (state mode, 0 differences).
+- **Checked, first part** (`0xC628` and `0xCC98` still lifted):
+  - replay, state mode: the 120 gate jobs and the 160 consecutive ones, 0 differences;
+  - strict mode: the PUT and atomic bytes the same; only 109 bytes of callee frames and scratch
+    registers differ;
+  - in the game: 2,686,976 calls, none declined; 180 jobs captured with it on, replayed with it
+    off: 0 differences.
+- **Checked, whole** (`0xC628` and `0xCC98` native too):
+  - replay, state mode (`0-3E000,3F780-40000`, all but the frames below the job's main frame):
+    640 jobs, 0 differences (the gate's 120, 160 consecutive, and two sets of 180 from the
+    game);
+  - the paths the first 460 of them take: a label block in every draw, a method cut at a line
+    502 times, the NOP in every job, the wrap once. Never: a PUT under 16 bytes, `0xB9D0`, the
+    lifted `0xB700`;
+  - negative tests: the RSX offset + 16, or the NOP's header + 4, made every draw job differ;
+  - strict mode: no PUT, atomic or mailbox byte differs; up to 170 bytes of callee frames
+    (`0x3F3B0`-`0x3F5C3`) and the scratch registers do;
+  - in the game: 2,752,514 calls (64,338 of them empty draws), none declined, none handed to
+    the lifted code, no halt. 180 jobs captured with it on, replayed with it off: 0 differences.
 - **Speed.**
-  - Replay: about 2 µs a job less (w15 25.0 -> 23.1 µs).
-  - Gate, ABBA, 2 runs each: 18.19 -> 18.70 flips/s (+2.8%). Both runs on are above both
-    runs off, though the spread is about ±0.3.
-  - A first A/B had shown -3%. The stats test called `getenv` on every call; the CRT's
-    environment lock, taken from six SPU threads, cost more than the native saved. The flag is
-    now read once, and the counts run only with the stats on.
-- **Next.** The ring allocation and the hole's end as native code. Then this goes on by
-  default, as a `GOWA_EDGE_NATIVE` bit, with the replay check in state mode.
+  - Replay, the gate's jobs, best of 10, ABBA, off -> on: w14 63.2 -> 61.6 µs, w15
+    22.2 -> 20.3, w16 23.6 -> 21.1 (one run on at 25.1).
+  - Of that, `0xC628` and `0xCC98` give little: lifted against native in one build, three runs
+    each, w15 20.8 -> 20.4 µs, w16 21.9 -> 21.6. Their lifted overhead was one interrupt
+    disable and enable each; their channel operations (the ring line's atomics, the hole's
+    PUT) are the same either way.
+  - Gate, ABBA, 2 runs each, `GOWA_EDGE_NATIVE=131071` against the default: 18.83 -> 18.86
+    flips/s (runs 18.12 / 19.04 against 19.50 / 18.41). That is no difference above the noise,
+    which is about ±0.5 between runs of one variant; two runs each cannot resolve what ~2 µs a
+    job is worth at the gate.
+  - The first part, earlier: 18.19 -> 18.70 flips/s (+2.8%). A first A/B had shown -3%: the
+    stats test called `getenv` on every call, and the CRT's environment lock, taken from six
+    SPU threads, cost more than the native saved. The flag is read once now, and the counts
+    run only with the stats on.
+- **On by default**, as `GOWA_EDGE_NATIVE` bit 131072 (`GOWA_EDGE_NATIVE=131071` leaves out only
+  it). `gowa.py replay` now compares in state mode by default (`--cmp strict` for the whole
+  local store and every register): with this native on, the strict check reports every EDGE
+  job for its callee frames.
+- **Next.** The rest of the glue, in the order above.
 
 Natives inside the job have one more rule than step 1's. Their channel operations must be the
 lifted code's, in its order: the glue reads `SPU_RdMachStat` around its critical sections, and
