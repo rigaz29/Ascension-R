@@ -291,6 +291,87 @@ int gowa_edge_cmp_755b80(spu_context* ctx)
     return 0;
 }
 
+/*
+ * The position-only output: the piece of EA 0x765B70 (lifted as pic_00765B70, entry 0x30000;
+ * called from 0xD1E0), GOWA_EDGE_NATIVE bit 8192.
+ *  - r3: the EDGE context c; r4: the vertex count n; r5: the output.
+ *  - It takes attribute 1 (the first match of id 1 in the list at c + 0x160, its array from the
+ *    table at c + 0x10) and copies x y z of (n + 1) & ~1 vertices, 12 bytes each.
+ *  - A pass does two vertices in three stores from its start rounded down: the bytes before
+ *    the start are kept (the previous pass's), and past the last vertex the last pass leaves
+ *    24 - ph bytes (ph = its start & 15) of: 8 zero bytes, the last vertex's y z, 8 zero bytes.
+ *    For n a multiple of 4 with the output 16-aligned, ph is 8: one quadword, 8 zero bytes and
+ *    the output's last 8.
+ *  - r3 = 0 after. No frame, no register above r44 touched; the others do not matter (strict
+ *    replay with r2-r79 scrambled after every call: no difference).
+ * (Mapped from the piece's code, its one constant the identity pattern; the whole local store
+ * after the call as predicted in 12 of 12 probed calls.) Declined, lifted instead:
+ *  - n not a multiple of 4 (none seen: every count a multiple of 8), fewer than 4, or the output
+ *    not 16-aligned;
+ *  - c not 16-aligned, or no id 1;
+ *  - the array or the context overlapping the output.
+ */
+extern void pic_00765B70_spu_func_00030000(spu_context* ctx);
+static SPU_THREAD_LOCAL spu_context* t_c8_guard;
+static volatile long long s_c8_calls, s_c8_verts, s_c8_declined;
+
+static int c8_native(spu_context* ctx)
+{
+    uint8_t* ls = ctx->ls;
+    const uint32_t c = ctx->gpr[3]._u32[0], n = ctx->gpr[4]._u32[0], out = ctx->gpr[5]._u32[0];
+    if ((c & 15) || c + 0x170 > SPU_LS_SIZE) return 0;
+    if (n < 4 || n > 0x4000 || (n & 3) || (out & 15)) return 0;
+    const uint32_t end = out + 12u * n;
+    if (end + 16 > SPU_LS_SIZE) return 0;
+    uint32_t idx = 16;
+    for (uint32_t k = 0; k < 16; k++)
+        if (ls[c + 0x160 + k] == 1) { idx = k; break; }
+    if (idx == 16) return 0;
+    /* the array and the piece's reads past it (6 vertices ahead) */
+    const uint32_t lo = ec_be32(ls + c + 0x10 + 4 * idx) & (SPU_LS_SIZE - 16), len = 16u * (n + 8);
+    if (lo + len > SPU_LS_SIZE || !c7_apart(lo, lo + len, out, end + 16) || !c7_apart(c, c + 0x170, out, end + 16))
+        return 0;
+    /* each store's last 4 bytes are the next vertex's first, written after */
+    for (uint32_t v = 0; v < n; v++)
+        _mm_storeu_si128((__m128i*)(ls + out + 12u * v), _mm_loadu_si128((const __m128i*)(ls + lo + 16u * v)));
+    uint8_t q[16] = { 0 };
+    memcpy(q + 8, ls + end - 8, 8);
+    memcpy(ls + end, q, 16);
+    for (int k = 0; k < 4; k++) ctx->gpr[3]._u32[k] = 0;
+    __atomic_add_fetch(&s_c8_verts, (long long)n, __ATOMIC_RELAXED);
+    return 1;
+}
+
+static void c8_stats(void)
+{
+    fprintf(stderr, "[edge-native] position output 765B70: %lld calls native, %lld vertices, %lld declined\n",
+            s_c8_calls, s_c8_verts, s_c8_declined);
+}
+static edge_vstat s_vc8 = { "position output 765B70", 0, 1, 0, 0, 0, 0, 0, 0 };
+static void c8_verify_report(void) { edge_vreport(&s_vc8); }
+
+int gowa_edge_pos_765b70(spu_context* ctx)
+{
+    if (t_c8_guard == ctx) return 0;
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("GOWA_EDGE_NATIVE");
+        on = !e || (atoi(e) & 8192) != 0;
+        if (on && getenv("GOWA_EDGE_NATIVE_STATS")) atexit(c8_stats);
+        if (on && edge_verify_on()) atexit(c8_verify_report);
+    }
+    if (!on) return 0;
+    if (edge_verify_on())
+        return edge_verify(ctx, &s_vc8, c8_native, pic_00765B70_spu_func_00030000, &t_c8_guard);
+    if (c8_native(ctx)) {
+        __atomic_add_fetch(&s_c8_calls, 1, __ATOMIC_RELAXED);
+        return 1;
+    }
+    __atomic_add_fetch(&s_c8_declined, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+
 #else
 int gowa_edge_cmp_755b80(spu_context* ctx) { (void)ctx; return 0; }
+int gowa_edge_pos_765b70(spu_context* ctx) { (void)ctx; return 0; }
 #endif

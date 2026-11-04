@@ -1634,6 +1634,14 @@ native and exact, and checked call by call, by strict replay and at the gate
 - The gate, one build, ABBA, two runs a side: off 16.87 (17.05 / 16.58) -> on 17.82
   (17.55 / 17.96) flips/s (+5.6%).
 
+**`0x765B70`, native** (bit 8192). The position-only output of the other two lists' jobs: x y z
+copied, 12 bytes a vertex.
+- Also reproduced: one junk quadword past the end (8 zero bytes, then the output's last 8).
+- Checked identical in 335,875 calls in the game, and by strict replay.
+- Replay: w15 -4.7%, w16 -3.6%.
+- The gate, ABBA: off 17.56 (17.70 / 17.48) -> on 17.91 (17.72 / 17.91) flips/s (+2.0%, within
+  the spread).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

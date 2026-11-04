@@ -370,3 +370,34 @@ the 3,344 vertices.
   vertices to the lifted piece (~3,300 cycles a call, mostly its set-up).
 - Gate, same build, ABBA: off 16.87 (17.05 / 16.58) -> on 17.82 (17.55 /
   17.96) flips/s (+5.6%).
+
+## The position-only output, native (2026-11-04)
+
+The piece `0x765B70` is native now (`spu_edge_cmp.c`, `GOWA_EDGE_NATIVE` bit 8192). The output
+stage calls it from `0xD1E0` for the other two lists' jobs (w15 and w16).
+
+**Mapped from its code, then checked on probed calls.**
+- It finds attribute 1 by id, as `0x755B80` does. It copies x y z of `(n + 1) & ~1` vertices,
+  12 bytes each.
+- A pass does two vertices in three stores, from its start rounded down:
+  - the bytes before the start are kept, from what the previous pass wrote;
+  - past the last vertex, the last pass leaves `24 - ph` bytes, where `ph` is its start's low 4
+    bits: 8 zero bytes, the last vertex's y z, then 8 zero bytes.
+- With the output 16-aligned and n a multiple of 4, `ph` is 8. What is left is one quadword:
+  8 zero bytes, then the output's last 8 bytes.
+- Its one constant is the identity pattern.
+- r3 is 0 after the call. There is no frame, and no register above r44 is touched.
+- A first reading of the code gave the wrong junk: `r24` is built from `r8` before `r8` is
+  overwritten. The captures showed it, and the rule above then held for the whole local store
+  in 12 of 12 calls.
+- The strict replay with r2-r79 scrambled after every call gave 0 differences.
+
+**Checked.**
+- Replay: 156 calls identical.
+- Game: 335,875 calls identical, none declined.
+- Strict replay: 0 differences.
+
+**Results.**
+- Replay: w15 26.8-27.1 -> 25.4-25.9 us a job (-4.7%), w16 27.5 -> 26.4-26.6 (-3.6%).
+- Gate, same build, ABBA: off 17.56 (17.70 / 17.48) -> on 17.91 (17.72 /
+  17.91) flips/s (+2.0%, within the spread; both rounds the same way).
