@@ -12,6 +12,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 | 2b.2 | culling on the GPU: the RSX's own face culling, no compute | done, off by default (the frame clock thread) | fork `825afdcd` |
 | 2b.3 | the other stages, back to front | not started | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
+| fc.1 | the frame clock thread, first round: per-draw work shared along runs of draws | done | fork `43a1386f` |
 | later | zero-copy rings: the GPU reads EDGE's ring bytes where the SPU wrote them | when the frame clock thread binds | |
 
 The steps were renumbered after 2b.0 (see its results): the native draw it planned first, the
@@ -314,6 +315,48 @@ supposed. The stage's own path for no culling (mode 0) leaves the whole index li
   by default until that thread has room. The frame clock thread is the next wall in any case:
   at ~75% at 20.6 flips/s it allows ~27 at the gate, below what 2b.3 and 2b.4 aim at.
 
+### The frame clock thread, first round (2026-11-05)
+
+After 2b.2 the frame clock thread (the FIFO walk, the D3D12 backend's recording, the presents)
+is the next limit: ~76% of a core at 20.6 flips/s, ~27 flips/s at most at the gate, and 2b.2's
+switch takes it to ~91%.
+
+**Where its time goes** (the sampler, 75 s of the gate, `logs/edge-ana/fc-now.rvas`; % of the
+thread's samples, idle 23%):
+- the prepass, textures and pipeline lookups ~23% (`rf_prepass` 8, `vp_upload_tex_slot` 5.6, the
+  texture layouts ~3, `vp_get_fp_pso` 1.8, the programs' hash 1.2);
+- the FIFO walk and the RSX methods ~16%;
+- the vertex and index uploads ~15% (the ring bytes' `memcpy` 8.5);
+- the draws' recording ~11% (the per-draw constants' copy 3.1);
+- ZPASS ~2.4%; the vertex pass's CPU lighting for draws off the raw path 1.4%.
+
+**Done** (`rsx_d3d12_backend.c`), work a run of draws repeated:
+- **The constant slot.** Every draw wrote its whole constant bank (8 KB) to the upload heap,
+  ~20 MB a frame. It is made in host memory now, and a draw takes the slot of the last one written
+  in its batch when the two are the same: 84% of the draws at the gate. `VP_CB_SHARE=0` writes
+  every slot. (The projection fallback's read of the bank no longer reads the upload heap.)
+- **The prepass's units.** A draw whose texture state, depth-read mask and program are the last
+  draw's takes its window and its units' targets and copies, without resolving its sixteen units
+  again: 33% of the draws. Not from a draw whose window the draw pass rewrites: a depth plane
+  (its view becomes null while its surface is the draw's own) or a unit reading the draw's own
+  target (`RT_FEEDBACK`'s copy). The lit draws read targets, so these are the rules that let
+  them share. `PREPASS_SHARE=0` resolves every draw's.
+- **EDGE's spread draws on the raw path.** A first batch whose indexes spread much wider than its
+  count went to the ix path, where the vertex pass lights the block on the CPU; one the pass
+  lights stays on the raw path. The ring draws off the raw path went to 0, the CPU lighting too.
+
+**Measured** (the gate, ABBA, two runs a side, the thread table every 10 s,
+`logs/edge-ana/fc-share2-ab`): the thread 76.8% -> 72.5% (every new reading below every old),
+flips 20.55 -> 20.76; the same screenshots. With `GOWA_EDGE_NOCULL=1` on top: 21.27 flips/s,
+the thread ~82.6%.
+
+**Next on this thread:**
+- the ring bytes' copy (8.5%): a job's pieces copy overlapping index ranges (the ranges add up to
+  ~1.7 times the distinct vertexes), so one copy a job would do;
+- the FIFO walk (~16%);
+- a walk thread and a render thread (the prepass, the recording and the presents on a thread of
+  their own): the larger step, for when the rest is not enough.
+
 ### 2b.3 The other stages, back to front
 
 - The normals (`0xA950`), the renormalization (`0xBBC8`).
@@ -358,6 +401,9 @@ supposed. The stage's own path for no culling (mode 0) leaves the whole index li
 - 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
   EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
   same screenshots, +6.6% at the gate. On by default in the game.
+- 2026-11-05: the frame clock thread, first round: the constant slots and the prepass's units
+  shared along runs of draws, EDGE's spread draws kept on the raw path. The thread 76.8% ->
+  72.5% of a core at the gate.
 - 2026-11-05: 2b.2 done as a switch. EDGE's draws are drawn with the RSX's face culling on, so
   the SPU's culling can simply be left out (`GOWA_EDGE_NOCULL=1`): +2.6% at the gate, but the
   frame clock thread ~75% -> ~91%, so off by default. The backend's frame index buffer doubled
