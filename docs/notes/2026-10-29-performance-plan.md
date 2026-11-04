@@ -1696,6 +1696,18 @@ Step 2 so far ([output contract](2026-11-04-edge-output-contract.md)):
 - **Still open:** a few descriptor words and records that reach no output, and some stages'
   insides (`0x67C0`, `0x61B0`, `0x9A60`, the skinning formats).
 
+The design for a C implementation of the whole job ([host reference](2026-11-04-edge-host-reference.md)):
+- **The measurement.** At the gate in the game, a position-only job is 35.8 µs: natives 8, the
+  job manager 10.5, glue ~17. A lit job is 113 µs: natives 57, the job manager 12, glue ~42. Lit
+  jobs are 77% of EDGE's time.
+- **The design.** One core works on a local-store image in the job's own layout and calls the
+  existing natives. It is used in the SPU job (exact, junk included), in the replay with a new
+  compare mode, and later as step 3's oracle.
+- **The order of work.** It is built bottom-up, glue function by function, as in step 1.
+- **The expected gain.** About -30% of EDGE's SPU time in the SPU job, so 10-15% at the gate.
+  The job manager's 10-12 µs a job, mostly its prefetch DMA, is a separate target in the
+  runtime's MFC path.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
