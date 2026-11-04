@@ -1009,9 +1009,13 @@ static int l73_native(spu_context* c)
     t_l73_guard = NULL;
     return 1;
 }
+extern int edge_gpul_capture(spu_context* ctx);
 int gowa_edge_light_73e0(spu_context* ctx)
 {
     if (t_l73_guard == ctx) return 0;
+    /* phase 2b.1 (spu_edge_gpulight.c): the record for the GPU's lighting; GOWA_EDGE_GPU=2 skips
+     * the stage */
+    if (t_lo_ref != ctx && edge_gpul_capture(ctx)) return 1;
     static int on = -1;
     if (on < 0) { on = edge_verify_on() && lo_on(); if (on) atexit(l73_report); }
     if (!on) return 0;

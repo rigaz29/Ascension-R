@@ -8,7 +8,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 | step | what | status | commits |
 |---|---|---|---|
 | 2b.0 | measure: EDGE's draws, vertex bytes and backend time a frame; the GPU's load | done | fork `b1121f5d` |
-| 2b.1 | the backend's compute, and the first stage on the GPU: lighting | not started | |
+| 2b.1 | the backend's compute, and the first stage on the GPU: lighting | done | fork `ab93538e` |
 | 2b.2 | culling on the GPU, with indirect draws | not started | |
 | 2b.3 | the other stages, back to front | not started | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
@@ -133,27 +133,146 @@ path off.
   way to find EDGE's draws.
 - **Done when:** the numbers are in this note and the baseline is set.
 
-### 2b.1 The backend's compute, and lighting on the GPU
+### 2b.1 The backend's compute, and lighting on the GPU (done)
 
-- **The compute.** A compute root signature and pipelines in `rsx_d3d12_backend.c`, the barriers
-  between a dispatch and the draws that read its output, and a per-draw record that tells the
-  backend what the GPU has to do for an EDGE draw.
-- **Where the GPU reads.** The raw fetch copies the draw's ring bytes into the vertex upload
-  buffer. The compute shader reads them there and writes the lit attributes before the draw.
-- **Why lighting first.**
-  - ~15% of the EDGE workers' time: `0x73E0`, its native loops, the point lights `0x6AC8` and
-    the set-up.
-  - Its outputs (attributes 27-30) are read only by the GPU.
-  - Its inputs are in the ring data (position, normal, tangent) and the light set.
-  - The index count does not change.
-  - Plan 2.22: skipping lighting gave +14% at the gate, when its share was larger.
-- **How.**
-  - The SPU job skips lighting.
-  - The output stage native publishes a record for the draw: its ring address and a copy of
-    the light set and parameters.
-  - A compute shader writes attributes 27-30 into the GPU copy of the draw's vertices.
-- **Check:** the dual-run mode against the native lighting (tolerance), and screenshots.
-- **Expected:** ~+8-10% at the gate.
+**Sub-steps.**
+
+| sub-step | what | status |
+|---|---|---|
+| a | map the lighting stage: its inputs, its outputs, its math, checked by a float model | done |
+| b | the SPU side: the record, the skip, the publish | done |
+| c | the backend's compute: lit segments, the dispatches, the draws reading the lit copy | done |
+| d | the check: the GPU's attributes against the SPU's, within a tolerance; screenshots | done |
+| e | default on, or not, from the bench | done: on |
+
+**What the stage reads and writes** (a probe dumped the 41 lit calls of the gate replay: the
+registers at entry, the local store before and after; `logs/edge-ana/probe73`, not kept).
+- Its arguments: r3 the context `c`; r4-r7 the arrays of ids 27, 28, 29, 30; r9 the positions
+  (id 1); r10 the eighth array of the pool (`c + 0x2C`), r11 the vertex count, r12 the light
+  set, r13 flags, r14 the intensity (a byte over 255, in all four words). r8 is 0 at the gate.
+- The eighth array holds a unit vector a vertex, perpendicular to the normal (id 3) and the
+  tangent (id 4): `S = id3.w * normalize(cross(id3, id4))` within 2e-4. The stage reads it as
+  the normal. Its fourth word is the list the stage builds: the offsets of the vertices that the
+  culled indices use, rising. Only those vertices are lit; the others keep what the arrays held.
+- Outputs, x y z of each (the w words are not put out):
+  - id 27: `V + A / WS`, a light position for the vertex, where `A` is the weighted sum of the
+    lights' directions and `WS` the sum of the weights (from 1e-4);
+  - id 28: the sum of the positive parts of each light's colour, times `min(D.L, 1)` where
+    `D.L > 0` and `D = A / |A|`; id 29: the same for the negative parts;
+  - id 30: the point lights' colour.
+- A light `j` (of the first n0 + n1 of the light set): `C' = intensity * colour`;
+  `d = P.xyz - V`, `L` its direction for the first n0 lights, else `d / |d|`;
+  `t = 1 - min(|d| P.w, 1)`, `att = (t^2 (3 - 2t))^2 C'.w`; the weight
+  `|att| min(|S.L / 2 + 1/2|, 1)`; its colour `C'.xyz att`.
+- A point light (the last n2): `a = 1 - min(|d| P.w, 1)`, the colour
+  `sum (a^2 (3 - 2a))^2 C'.w C'.xyz`, from 0.5 when the flags have bit 0x100 (never at the gate).
+- **The model.** In plain float math (as a GPU would do it), against the SPU's results for the
+  41 calls (2,345 lit vertices):
+  - with the stage's own `S`: ids 28-30 as F16, 87.8% identical, 11.0% one unit apart, the rest
+    further, all where values are small or the summed direction is ill-conditioned (`|A|` small);
+    id 27 within 9e-6;
+  - with `S` rebuilt from the ring's normal (I16N) and tangent (X11Y11Z10): 86.3% identical,
+    11.5% one unit apart; the largest absolute errors 5e-3 (ids 28-29, HDR colours up to ~10).
+  - So the GPU needs only the ring's bytes and the light set.
+
+**The design.**
+- **The SPU side** (`GOWA_EDGE_GPU`: 2 on, the default in the game; 1 check; 0 off, the default
+  in a replay or a capture).
+  - The hook at `0x73E0` copies a record: the three counts, the flags, the intensity and the
+    lights (position, colour, direction), as host floats. With 2 it skips the stage.
+  - The output stage native publishes the record after the vertex PUT, keyed by the IO offset of
+    the vertexes, which is the hole's `VERTEX_DATA_ARRAY_OFFSET` for slot 0 (bit 31 off). The
+    hole is put after it, so the backend sees the record before the draw.
+  - When the output stage runs lifted (an interrupt pending, about never), a skipped stage runs
+    there first, from the saved registers: nothing between the two reads what lighting writes.
+  - Only the gate's path is taken: flags without 0x800, r8 = 0, the lit layout (stride 54,
+    ids 1, 3, 4, 27-30), at most 64 lights. Anything else runs on the SPU, with no record.
+- **The backend** (`rsx_d3d12_backend.c`): a vertex pass, a compute shader the port registers.
+  - A draw whose attribute 0 lies at a published key gets its raw copy lit: the segment's
+    vertexes are copied on the GPU into a default-heap buffer (`vp_lit`), with ids 27-30
+    computed, and the segment's draws read that copy.
+  - The dispatches go in a compute command list of their own, recorded as the draws are recorded
+    (record-ahead included), and executed before the batch's command list: no barrier between
+    draws.
+  - One thread group a segment, a thread two vertexes (108 bytes, 27 words).
+  - Fallbacks: a draw that does not take the raw fetch, or a full `vp_lit`, gets the record's
+    lighting on the CPU, the port's C model.
+- **The check** (1): the SPU lights as before and the record is published; the GPU's attributes
+  are read back and compared with the SPU's, as F16 units and absolute errors per attribute.
+- **Expected:** ~+8-10% at the gate (b measures the bound: lighting skipped, colours wrong).
+
+**Progress.**
+- **b, the SPU side** (`native/spu_edge_gpulight.c`, the hooks in `spu_edge_light.c` and
+  `spu_edge_out.c`).
+  - The record is taken in `0x73E0`'s hook: 32 bytes and 48 a light, at most 32 lights.
+  - With 2 the stage is skipped. Besides ids 27-30, it writes one thing that is put out: the
+    index list padded to a multiple of 8 with its first index (for its own marking loop). The
+    skip pads it too.
+  - The output stage native publishes the record after the vertex PUT. The key, the vertexes' IO
+    offset, comes from the ring line (start EA, IO offset, end EA).
+  - A skipped stage that the output stage cannot publish for runs there, before the packing.
+    `GOWA_EDGE_GPU_DEFER=1` does that for every skipped stage: the gate, l1, l3 and l5 corpora
+    replay with 0 differences (state mode). With 1, 0 differences as well.
+- **c, the backend** (`rsx_d3d12_backend.c`, "The vertex pass").
+  - The records: a pool of 4,096 slots, and an index per registered ring (a word per 128 bytes;
+    each 128-byte block of a ring holds at most one job's vertexes).
+  - A raw segment whose attribute 0 is a published key gets a lit copy in `vp_lit` (default heap,
+    2 x 40 MB). The segment is copied whole and attribute 0's array is rewritten: EDGE's lit draws
+    keep 1-3 arrays enabled from earlier draws (8-10 in all), so their raw copies have more than
+    one group.
+  - The pass is a compute command list executed before the batch's: a group a segment, about 600
+    instructions, no indexable temporaries.
+  - Fallbacks on the CPU, the port's C model: a draw on another path (its vertexes lit in guest
+    memory, once a record), no room, no pipeline.
+  - At the gate: ~33,000 lit segments a second (5.7 M vertexes); ~570 a second of the lit layout
+    in a ring had no record (captures declined).
+- **d, the check** (`GOWA_EDGE_GPU=1 VTX_LIT_CHECK=1`, the gate; `logs/edge-ana/2b1-check3`).
+  - Every lit segment of a batch (up to 64) is read back after the batch and compared with the
+    SPU's bytes, for the vertexes the segment's first batch names. The vertexes of culled
+    triangles inside a batch's index range are lit on the GPU only: the SPU's arrays keep what
+    they held there (counted at first, they made 38% of the values look 16 units or more apart).
+  - At the gate, 1.4 M vertexes: ids 28-30 as F16 96.1% the same, 3.0% one unit apart, 0.3% two
+    or three, 0.4% 4-15, 0.16% more (values near the F16 rule's flush to 0, where a unit is tiny).
+    The largest absolute errors: id 29 0.009 (HDR colours up to ~10), ids 28 and 30 0; id 27
+    0.04 (a light position near the vertex, where the summed weights are small). Over the menus and
+    the load: 91-93% the same, at most 0.03.
+  - Screenshots at 40 and 80 s, the GPU's attributes drawn (`VTX_LIT_DRAW=1`) against the SPU's:
+    the same lighting.
+  - **The largest differences, explained.** Later in the gate (`logs/edge-ana/2b1-check6`) 87% of
+    the values are the same and 0.5% 16 units or more apart, and a few vertexes of one job (lights
+    6 + 14 + 1) come out at about half the SPU's id 29, frame after frame (1.32 against 0.63).
+    The layout of those draws is the usual one. The model shows the same on the replay's dumps
+    (l3, call 4, vertex 16: the SPU 0.096, the model with the ring's normal and tangent 0.046, with
+    the stage's own S 0.113): the term is a light almost square to the summed direction D
+    (D.L = 0.008), and `min(D.L, 1)` is that light's whole share. The ring's tangent
+    (X11Y11Z10) turns S by ~1e-3 rad, which moves D by a few 1e-3 and halves such a term. The
+    SPU's own rounding has the same reach there, so there is no exact value to match; the
+    screenshots show no difference. If one ever shows, the cure is S itself on the GPU (6 bytes a
+    vertex next to the record), not a closer formula.
+- **e, the bench and the default.**
+  - The gate, ABBA, `GOWA_EDGE_GPU` 0 against 2 (`logs/edge-ana/2b1-ab1`): 19.57 and 19.34
+    against 20.27, 21.09 and 21.05 flips/s, 19.45 -> 20.80 (+6.9%); every run with the GPU's
+    lighting ahead of every run without. A third run without it was left out: a build and replays
+    ran beside it (17.25).
+  - Again after the stale-record fix below (`logs/edge-ana/2b1-ab2`, two runs a side): 19.77 and
+    18.94 against 20.41 and 20.62, +6.0%. All nine clean runs: 19.41 -> 20.69 (+6.6%).
+  - So 2 is the default in the game. A replay or a capture (`SPU_JOB_REPLAY`, `SPU_JOB_CAPTURE`)
+    defaults to 0: a replay is compared with the SPU's lighting, and a capture records it. With
+    the defaults the gate, l2, l5 and out2 corpora replay with 0 differences.
+  - `GOWA_EDGE_VERIFY`'s check of the lighting natives needs `GOWA_EDGE_GPU=0`: with 2 the stage
+    does not run.
+  - The C version of the pass (the fallbacks) was checked in the replay against the SPU
+    (`GOWA_EDGE_GPU=1 GOWA_EDGE_GPU_SELFTEST=1`, the gate, l1, l3 and l5 corpora, 47,407 vertexes):
+    83-85% the same as F16, 11-12% one unit apart; the largest absolute error 0.4 (id 29, on large
+    HDR values, one or two units).
+  - The records: a pool of 8,192 slots; `VTX_STATS=1` counts the records written over before
+    their draw (none expected: a ring set holds far fewer jobs).
+  - **Stale records.** The first run with the default found, ~70 times a second, the record of an
+    older job at the same place in a ring, for a job that had none (its capture declined, so the
+    SPU lit it). Taken, it would have lit that job with another job's lights. Now every job's output
+    stage writes its key (the record, or a clear), and a record carries the first 16 bytes its job
+    put out there: the backend takes it only while guest memory holds them (that also covers an
+    output stage run lifted, which writes no key).
 
 ### 2b.2 Culling on the GPU
 
@@ -200,3 +319,8 @@ path off.
 - 2026-11-04: 2b.0 done. EDGE's draws already take the raw fetch, so the native draw step was
   folded in, and the steps were renumbered: 2b.1 is now the compute with lighting. Zero-copy
   rings moved to later.
+- 2026-11-04: 2b.1 started. The lighting stage mapped (its arguments, the vector it reads as the
+  normal, its outputs) and checked by a float model against 41 calls; the design written above.
+- 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
+  EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
+  same screenshots, +6.6% at the gate. On by default in the game.

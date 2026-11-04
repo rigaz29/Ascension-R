@@ -41,6 +41,10 @@ extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_00005D68(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000084C0(spu_context*);
 /* The D3D12 backend's list of vertex rings (libs/video/rsx_d3d12_backend.c), for phase 2b */
 extern void rsx_d3d12_register_vertex_ring(uint32_t io_offset, uint32_t size);
+/* Phase 2b.1, the lighting stage's record (spu_edge_gpulight.c) */
+extern void edge_gpul_unskip(spu_context* ctx);
+extern int edge_gpul_defer_test(void);
+extern void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride);
 
 #define LD(a)    spu_ls_read128(ctx, (uint32_t)(a))
 #define ST(a, v) spu_ls_write128(ctx, (uint32_t)(a), (v))
@@ -1216,19 +1220,23 @@ int gowa_edge_out_9080(spu_context* ctx)
         on = !e || (atoi(e) & 131072) != 0;
         if (on && s_stats) atexit(eo_stats);
     }
-    if (!on) return 0;
+    /* the stage runs lifted, below: a skipped lighting stage (phase 2b.1) runs first */
+    if (!on) { edge_gpul_unskip(ctx); return 0; }
     if (ctx->int_enable && (ctx->event_status & ctx->event_mask)) {
         EO_COUNT(s_declined_irq);
+        edge_gpul_unskip(ctx);
         return 0;
     }
     const u128 c = ctx->gpr[3], desc = ctx->gpr[4], r5 = ctx->gpr[5], st = ctx->gpr[6], mpiece = ctx->gpr[8];
     const u128 r0e = ctx->gpr[0], sp0 = ctx->gpr[1], r126e = ctx->gpr[126];
     if (W(c) != 0x107A0 || W(desc) != 0x10650) {
         EO_COUNT(s_declined_args);
+        edge_gpul_unskip(ctx);
         return 0;
     }
     if (W(spu_rotqbyi(LD(W(c) + 0x80), 8)) != 0) {           /* a stride callback (0xD118) */
         EO_COUNT(s_declined_cb);
+        edge_gpul_unskip(ctx);
         return 0;
     }
     const long long n = s_stats ? __atomic_add_fetch(&s_calls, 1, __ATOMIC_RELAXED) : 1;
@@ -1249,6 +1257,7 @@ int gowa_edge_out_9080(spu_context* ctx)
     }
     if (!draw) {                                             /* 0x9128 */
         EO_COUNT(s_empty);
+        edge_gpul_unskip(ctx);
         const u128 r80 = spu_ai(sp, 48);
         const u128 r13 = LD(W(desc));
         ctx->gpr[3] = c;
@@ -1293,8 +1302,22 @@ int gowa_edge_out_9080(spu_context* ctx)
             goto done;
         ctx->gpr[1] = sp;
         if (eo_put(ctx, 0, c, icount, local, spu_ai(sp, 96), spu_ai(sp, -144))) goto done;
+        /* Phase 2b.1 (spu_edge_gpulight.c): the vertexes go to the cursor; their IO offset from the
+         * ring line (start EA, IO offset, end EA). A skipped lighting stage that cannot be
+         * published for runs now, before the packing (GOWA_EDGE_GPU_DEFER=1: every one, a test). */
+        const uint32_t vea = W(LD(W(local)));
+        uint32_t vio = 0;
+        {
+            const u128 line = LD(0x10C00);
+            if (vea >= line._u32[0] && vea < line._u32[2]) vio = line._u32[1] + (vea - line._u32[0]);
+            if (!vio || edge_gpul_defer_test()) edge_gpul_unskip(ctx);
+        }
         eo_d158(ctx, c, spu_ai(sp, -80));
         if (eo_put(ctx, 1, c, icount, local, spu_ai(sp, 32), spu_ai(sp, -176))) goto done;
+        if (vio && W(LD(W(local))) != vea)
+            edge_gpul_publish(ctx, vio, W(spu_rotqbyi(LD(W(c)), 6)) & 0xFFFFu, W(eo_d118(ctx, c)));
+        else
+            edge_gpul_unskip(ctx);
         const u128 cursor = spu_ai(sp, 64);
         const u128 r32 = LD(W(desc));
         if (eo_c9a8(ctx, c, cursor, spu_rotqbyi(r32, 4), local, 1, spu_ai(sp, -144))) {

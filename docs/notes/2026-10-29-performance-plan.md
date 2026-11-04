@@ -1762,6 +1762,9 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
     time, lighting first.
   - A stage on the GPU is checked against its native routine within a tolerance (agreed
     2026-11-04).
+  - 2b.1, lighting on the GPU, done 2026-11-04: the D3D12 backend's vertex pass lights EDGE's
+    draws, the SPUs skip the stage. Gate, ABBA, two rounds: 19.41 -> 20.69 flips/s (+6.6%). On by
+    default (`GOWA_EDGE_GPU=0` turns it off).
 
 ## 3. The budget for 33 ms
 
