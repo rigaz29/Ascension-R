@@ -74,6 +74,20 @@ jobs); the hole is put together a quadword at a time.
 
 ## What a job reads
 
+The job manager double-buffers jobs.
+- The GETs in a job's capture are mostly the **next** job's inputs: its descriptor, DMA list and
+  buffers, fetched while this job runs.
+- A job's own inputs are already in the local store when it starts. They come in the context
+  snapshot of its capture, not as events.
+- The context at `c` is filled during the job, by `0x88B0`.
+- One example of the trap this sets: `job_w14_0002`'s GETs carry a 544-vertex segment, but the
+  job itself draws 48 vertices.
+
+So a stand-in has to take a job's inputs from main memory, through the job's own DMA list. It
+also has to keep the job manager's prefetch going for the job after.
+
+The elements below are those of a fetched list (the next job's):
+
 - A 16-byte job entry, a 160-byte job descriptor, and a 176-byte DMA list.
 - The list's elements are fetched with `GETL`:
   - a 736-byte parameter block;
