@@ -39,6 +39,8 @@ extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C628(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000C9A8(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_00005D68(spu_context*);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000084C0(spu_context*);
+/* The D3D12 backend's list of vertex rings (libs/video/rsx_d3d12_backend.c), for phase 2b */
+extern void rsx_d3d12_register_vertex_ring(uint32_t io_offset, uint32_t size);
 
 #define LD(a)    spu_ls_read128(ctx, (uint32_t)(a))
 #define ST(a, v) spu_ls_write128(ctx, (uint32_t)(a), (v))
@@ -642,6 +644,16 @@ static int eo_c628(spu_context* ctx, u128 fb, u128 r3, u128 r4, u128 r5, u128 r6
     u128 r81;
     int r5f = 0;
     const u128 r29 = LD(0x10C00);
+    {   /* Phase 2b: the backend learns this SPU's main ring (line words 0-2: its start EA, its RSX
+         * offset, its end EA), once per ring and thread. */
+        static SPU_THREAD_LOCAL uint32_t t_ring_io, t_ring_size;
+        const uint32_t start = r29._u32[0], io = r29._u32[1], end = r29._u32[2];
+        if (end > start && (io != t_ring_io || end - start != t_ring_size)) {
+            t_ring_io = io;
+            t_ring_size = end - start;
+            rsx_d3d12_register_vertex_ring(io, end - start);
+        }
+    }
     if (W(spu_ceq(spu_rotqbyi(r29, 8), r29)) != 0) {       /* line word 2 == word 0: 0xB9D0 */
         ctx->gpr[1] = sp;
         ctx->gpr[3] = r83; ctx->gpr[4] = r82; ctx->gpr[5] = r85; ctx->gpr[6] = r80;

@@ -1756,6 +1756,12 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
       (`build-ln`), each sample put on the nearest label above its lifted line.
     - Gate, ABBA, three runs a side, steps 2-4 off against on: 18.84 -> 19.19 flips/s (+1.9%),
       ahead in all three pairs; the first run (off) started slow, so likely nearer +1%.
+- **Phase 2b is planned** ([phase 2b plan](2026-11-04-phase-2b-plan.md)), and its progress is
+  kept there.
+  - Native draw in the backend comes first, then the stages move to compute shaders one at a
+    time, lighting first.
+  - A stage on the GPU is checked against its native routine within a tolerance (agreed
+    2026-11-04).
 
 ## 3. The budget for 33 ms
 
