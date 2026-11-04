@@ -9,7 +9,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 |---|---|---|---|
 | 2b.0 | measure: EDGE's draws, vertex bytes and backend time a frame; the GPU's load | done | fork `b1121f5d` |
 | 2b.1 | the backend's compute, and the first stage on the GPU: lighting | done | fork `ab93538e` |
-| 2b.2 | culling on the GPU, with indirect draws | not started | |
+| 2b.2 | culling on the GPU: the RSX's own face culling, no compute | done, off by default (the frame clock thread) | fork `825afdcd` |
 | 2b.3 | the other stages, back to front | not started | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
 | later | zero-copy rings: the GPU reads EDGE's ring bytes where the SPU wrote them | when the frame clock thread binds | |
@@ -274,11 +274,45 @@ registers at entry, the local store before and after; `logs/edge-ana/probe73`, n
     put out there: the backend takes it only while guest memory holds them (that also covers an
     output stage run lifted, which writes no key).
 
-### 2b.2 Culling on the GPU
+### 2b.2 Culling on the GPU (done 2026-11-05; off by default)
 
-- Culling (`0xD618`: `0xD640` and `0xD250`) compacts the index list, so the index count is known
-  only after it.
-- The draw becomes indirect: the compute shader writes the count.
+The plan was a compute pass that culls and writes the count of an indirect draw. The RSX culls
+EDGE's triangles already, so neither is needed.
+
+**What EDGE's culling does** (`0xD618` -> `0xD640`, with the vertex pass `0xD250`; both native
+since phase 2a, `native/spu_edge_cull.c`).
+- A triangle goes when:
+  - its three vertexes lie outside one bound (x, y or z);
+  - it faces away, by the mode in r4: 0 no culling, 1 no facing test, 2 and 3 the two signs;
+  - it is degenerate after snapping to 720p ("trimming", which the Disable Mesh Trimming patch
+    turns off: it can only add geometry).
+- The kept indexes are compacted in place and their count goes to `c + 0x190`.
+- In the game: ~11.6 µs of a lit job's 113.4 (the host reference's split).
+
+**What the RSX does with EDGE's draws.** `VTX_STATS=1` now counts a vertex ring's draws by their
+face culling. At the gate all of them, lit or not, are drawn culling back faces (front face CW).
+So the RSX culls what the facing test culls, clips what lies outside, and draws no pixel for most
+degenerate triangles. EDGE's culling only spares the RSX work, as the performance plan's 3.3
+supposed. The stage's own path for no culling (mode 0) leaves the whole index list and its count.
+`GOWA_EDGE_NOCULL=1` takes it (the hook at `0xD618` clears r4).
+
+**The cost.**
+- Culling keeps 31-37% of a lit job's indexes (the lighting stage's dumps of three corpora; the
+  gate's lit jobs 1,416 -> 518 on average).
+- Without it the gate's ring draws go from ~6,700 to ~10,000 a frame (pieces of 256 indexes) and
+  the indexes from ~1.5 M to ~2.5 M.
+- The first try went black and fell to 13 flips/s: past the backend's index buffer (2^21 indexes
+  a frame) the batches fall to the CPU's conversion, which dropped most of the geometry. The
+  buffer is 2^22 now (32 MB of upload heap), with a note when it fills; the default was at 1.5 M
+  of the 2 M.
+
+**The result** (the gate, ABBA, two runs a side, `logs/edge-ana/2b2-ab2`):
+- 20.56 and 20.62 against 20.82 and 21.43 flips/s, +2.6%; the screenshots the same.
+- But the frame clock thread goes from ~75% to ~91% of a core (the overlay's RSX figure; its
+  upload time ~7.9 -> ~9.0 ms a frame, and more draw calls to walk and record).
+- In a scene the frame clock thread binds, the extra work would cost more than this gains: off
+  by default until that thread has room. The frame clock thread is the next wall in any case:
+  at ~75% at 20.6 flips/s it allows ~27 at the gate, below what 2b.3 and 2b.4 aim at.
 
 ### 2b.3 The other stages, back to front
 
@@ -324,3 +358,7 @@ registers at entry, the local store before and after; `logs/edge-ana/probe73`, n
 - 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
   EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
   same screenshots, +6.6% at the gate. On by default in the game.
+- 2026-11-05: 2b.2 done as a switch. EDGE's draws are drawn with the RSX's face culling on, so
+  the SPU's culling can simply be left out (`GOWA_EDGE_NOCULL=1`): +2.6% at the gate, but the
+  frame clock thread ~75% -> ~91%, so off by default. The backend's frame index buffer doubled
+  (the first try overflowed it). The frame clock thread is the next wall.
