@@ -204,6 +204,32 @@ The core is built bottom-up:
 - **For step 3**, the core is the reference. The GPU's float results will not be bit-exact
   against it, so that check needs a tolerance, to be decided then.
 
+### Progress
+
+**1. The harness (done).**
+- The replay's state compare mode (fork):
+  - `SPU_JOB_REPLAY_CMP=state` with `SPU_JOB_REPLAY_STATE=lo-hi,...` compares, at a run's end,
+    only those local-store ranges and `r0`, `r1`, `r3`, `r80`-`r127`;
+  - requests, PUTs and mailbox are compared as always.
+  - Checked with a poked byte:
+    - strict and state both report it when it lies in a range;
+    - state does not when it lies outside.
+- The job's hook, `gowa_edge_job_ad98` (`native/spu_edge_job.c`, `GOWA_EDGE_JOB=1`, off by
+  default).
+  - It reads the job's input set and descriptor (`ej_read`): the own buffer set, the 22 slots,
+    the pieces, skinning, the segment header's counts. It counts the kinds, then declines.
+  - Replay of the 120 gate jobs with it on: 0 differences, every input set read. Kinds:
+    - 62 position-only: 57 with `0x764D10`, 5 with `0x75EB40`;
+    - 16 skinned position-only (`0x75EB40`);
+    - 38 lit: 33 with `0x75BD10`, 5 with `0x758590`;
+    - 3 skinned lit (`0x758590`);
+    - 1 of `0x762470`.
+
+Natives inside the job have one more rule than step 1's. Their channel operations must be the
+lifted code's, in its order: the glue reads `SPU_RdMachStat` around its critical sections, and
+the replay serves every read from the record. And they must not run with an interrupt pending,
+since the job manager's handler takes its turn at the lifted code's checks.
+
 ### Risks
 
 - **The job manager's protocol.** The calls must come in the same order with the same arguments.
