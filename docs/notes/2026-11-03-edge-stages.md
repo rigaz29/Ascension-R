@@ -470,3 +470,79 @@ the whole local store and the registers, and it held from the first build.
   - all on: 18.29 (18.25 / 18.38), so this one is within the spread;
   - the four pieces of today off (`GOWA_EDGE_NATIVE=4095`): 16.78 (17.12 / 16.68). The four
     together are +9.0%.
+
+## The index decompression, mapped and native (2026-11-04)
+
+`0xE4D0` (it calls `0xDCB0`, which runs on into `0xDCC0` and ends in `0xB600`) is native now
+(`spu_edge_idx.c`, `GOWA_EDGE_NATIVE` bit 65536). Every EDGE job calls it, 6% of the job.
+
+**How it was mapped.**
+- A probe snapshotted the whole local store at each stage, the first time a call reached each
+  loop head of `0xDCC0`.
+- Each stage's input and output were then fit with a script.
+- A model of the five stages was then checked against the whole local store after the call:
+  identical in 16 calls.
+
+**The stream** (in place: the indices end up where it was):
+- The count of indices is the halfword at `c + 0x190`, and T = count / 3 (the piece divides by
+  multiplying by 0xAAAB). A count of 0 does nothing but the frame.
+- The type is `c[6] >> 4`. Only 2 and 3 are decompressed, but every nonzero count sets
+  `c + 0x50` word 0 = r4.
+- An 8-byte header:
+  - h0: the number of reused indices;
+  - h1: a delta bias;
+  - h2: the bitmask's bytes;
+  - k: the bits of a reuse;
+  - one more byte.
+- Then three sections: h2 bytes of bitmask, `ceil(2T / 8)` bytes of 2-bit triangle codes, and
+  the k-bit reuse values.
+
+**The stages:**
+1. `n1 = 32 ceil(h0 / 32)` k-bit values, MSB first, become halfwords at
+   `S = r4 + align16(8 + h2 + codes)`. The piece expands them in place, from the end.
+2. In place: `s2[i] = s2[i - 8] + s1[i] - h1`. These are eight running sums, interleaved, so
+   the SPU does them a quadword at a time.
+3. The vertex sequence goes to `Q = r4 + align16(6T)`, from `16 ceil(8 h2 / 16)` bits of the
+   bitmask, MSB first:
+   - a 1 takes the next reuse;
+   - a 0 takes a new vertex, counting from 0.
+4. The code bytes are copied to just after the sequence. The copy is `align16(codes)` bytes, so
+   its tail is whatever stage 2 left there.
+5. The triangles, 8 a pass, against the triangle (a, b, c) before:
+   - code 3: three sequence values (a new strip);
+   - code 2: (b, a, next);
+   - code 1: (c, b, next);
+   - code 0: (a, c, next).
+   So each triangle either starts fresh or turns on an edge of the last one, reversed, which
+   keeps the winding.
+   The last pass makes up to 7 more triangles from what follows. Then `c + 0x58` is set to
+   `align16(r4 + 48 ceil(T / 8))`.
+
+**What else it leaves.**
+- E4D0's frame.
+- `r3 = cwd(r1, 0)`.
+- The sequence and the code copy past the indices. This is the scratch that goes out by DMA,
+  so a native has to make it too, byte for byte.
+
+**The routine.**
+- Stages 1 and 2: a bit reader, 32 bits at a time.
+- Stage 3: a mask byte at a time, `pshufb` expanding the next reuses and new vertices.
+- Stage 5: the triangle before is kept in a register, and each triangle is one `pshufb` of it
+  with the sequence's next four.
+- Declined, and run lifted instead (4 of the replay's 240 calls):
+  - addresses not 16-aligned;
+  - a count that is not a multiple of 3, or T < 16;
+  - k = 0 or k > 16;
+  - regions that would overlap where the order matters.
+
+**Checked.**
+- Replay: 240 calls identical.
+- Game: 561,152 calls identical. 48,517 of them (8.6%) were declined and ran lifted.
+- Strict replay: 0 differences.
+
+**Results.**
+- Per call: 9,154 -> 4,737 cycles. A first, byte-by-byte version was slower than the lifted
+  code (9,656).
+- Replay: w14 -1.5%, w15 -5%, w16 -5%.
+- Gate, same build, ABBA: off 18.14 (17.87 / 18.30) -> on 18.71 (18.54 / 18.89) flips/s (+3.1%); both
+  rounds went the same way.

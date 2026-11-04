@@ -1664,9 +1664,22 @@ records of a position and a 48-bit code.
 - `GOWA_EDGE_NATIVE=4095` (the four off): 16.78 (17.12 / 16.68) flips/s;
 - all on: 18.29 (18.25 / 18.38) flips/s, +9.0%.
 
-**Next in step 1:** `DCC0`, the index decompression (6% of the job). It is the biggest piece:
-five stages in place, and its scratch past the output goes out by DMA, so every stage has to
-be reproduced bit for bit.
+**`DCC0`, the index decompression, native** (`spu_edge_idx.c`, bit 65536; `0xE4D0` whole, every
+job). Mapped stage by stage from snapshots at each loop head, then by a model that matched the
+whole local store after the call.
+- The format:
+  - a k-bit reuse stream, decoded as eight interleaved delta sums;
+  - a bitmask that chooses, for each vertex slot, a reuse or the next new vertex;
+  - 2-bit triangle codes: 3 is a fresh triangle; 0-2 turn on one edge of the last triangle,
+    reversed, with the next vertex.
+- Its scratch past the indices, which goes out by DMA, is made byte for byte.
+- Identical in 561,152 calls in the game (8.6% declined, lifted), and by strict replay.
+- 9,154 -> 4,737 cycles a call. Replay: w14 -1.5%, w15 and w16 -5%.
+- The gate, ABBA: off 18.14 (17.87 / 18.30) -> on 18.71 (18.54 / 18.89) flips/s (+3.1%).
+
+**Step 1 done.** Every EDGE piece the jobs call at the gate, and the index decompression, is now
+mapped and native. Next for phase 2b is step 2: the job's output contract (what it hands the
+RSX: the hole, the rings, the labels) and a stub job that produces it.
 
 ## 3. The budget for 33 ms
 
