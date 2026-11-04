@@ -5,9 +5,10 @@ native and mapped their formats ([edge stages](2026-11-03-edge-stages.md)). Step
 a job hands out, and what it takes in, so that something other than the SPU job can produce
 the same result.
 
-Source: the 120 gate jobs in `logs/jobcap-gate` (40 from each of w14, w15, w16). Scratchpad
-scripts parse the capture format (`SPUJCAP2`: the context, then GET / PUT / atomic / channel
-events with their data).
+Source: the 120 gate jobs in `logs/jobcap-gate` (40 from each of w14, w15, w16), and for the
+input side also 160 consecutive jobs in `logs/jobcap-seq`. Scratchpad scripts parse the capture
+format (`SPUJCAP2`: a 56-byte header, the context, then GET / PUT / atomic / channel events
+with their data, then the registers and the local store at the end).
 
 ## The jobs at the gate
 
@@ -74,91 +75,180 @@ jobs); the hole is put together a quadword at a time.
 
 ## What a job reads
 
-The job manager double-buffers jobs.
-- The GETs in a job's capture are mostly the **next** job's inputs: its descriptor, DMA list and
-  buffers, fetched while this job runs.
-- A job's own inputs are already in the local store when it starts. They come in the context
-  snapshot of its capture, not as events.
-- The context at `c` is filled during the job, by `0x88B0`.
-- One example of the trap this sets: `job_w14_0002`'s GETs carry a 544-vertex segment, but the
-  job itself draws 48 vertices.
+Mapped from two capture sets:
+- the 120 gate jobs (`logs/jobcap-gate`);
+- 160 consecutive jobs (`logs/jobcap-seq`: w14 and w15, every job from 60 s on, all but 3 of
+  them position only).
 
-So a stand-in has to take a job's inputs from main memory, through the job's own DMA list. It
-also has to keep the job manager's prefetch going for the job after.
+Which function reads what comes from a replay of both sets with every local-store load and store
+of the job module and the pieces logged under the marked function that made it (temporary,
+natives off, 0 differences). A "read" of an input below is a read of its bytes before the
+job's own code has written over them.
 
-### A job's input set
+### How the inputs arrive
 
-Mapped from 160 consecutive jobs captured at the gate (`logs/jobcap-seq`: w14 and w15, every
-job, from 60 s on). Each capture holds the input set of the job after it on its SPU.
-- The **job descriptor**: 160 bytes, to LS `0x0C00`.
-- The **DMA list**: 176 bytes, up to 22 `(size, EA)` pairs, to LS `0x1CF50` or `0x28F50`.
-- The list's **elements**, fetched with `GETL` one after another from LS `0x11000` or
-  `0x1D000`, the two buffer sets of the double buffering. In every set they matched the list.
+The job manager double-buffers.
+- The local store has two buffer sets, `0x11000-0x1CFFF` and `0x1D000-0x28FFF`. While a job runs
+  from one, the job manager fetches the next job's inputs into the other:
+  - its 160-byte descriptor, to LS `0x0C00`;
+  - its 176-byte DMA list, as the set's last 176 bytes (`0x1CF50` or `0x28F50`);
+  - the list's elements, with `GETL`, one after another from the set's base.
+- Checked on the consecutive captures (156 jobs with a capture before them on their SPU):
+  - in 132, every element the job before fetched was in place when the job started;
+  - in 20, the job before fetched nothing (the inputs came between jobs);
+  - in 4, a job that was not captured ran between them.
+- So a job's own inputs are in the snapshot of its own capture, not in its events. The job
+  module keeps the previous job's set at LS `0x10918` (base) and `0x1091C` (end); the job's own
+  set is the other one. Laid out that way, the three pieces of all 120 gate jobs match the
+  executable's code at their EAs.
+- When the job starts, the descriptor's words 0-13 are zero (the job manager has taken them)
+  and words 14-39 are in place. The job body copies the 160 bytes to `0x10610`, and the stages
+  read the copy.
+- The context `c` (`0x107A0`) is filled by `0xBFB8`, inside `0x88B0`, from a 128-byte block the
+  job body writes at `0x10720`.
 
-| element | what | size |
+So a stand-in takes a job's inputs from main memory, through the job's descriptor and DMA list,
+and keeps the job manager's prefetch going for the job after.
+
+### The DMA list: 22 slots
+
+Each of the list's 22 `(size, EA)` pairs has one role. An empty slot (size 0) takes no room; the
+others follow one another, 16-byte aligned.
+
+| slot | what | bytes | read by |
+|---|---|---|---|
+| 0 | the light set (below) | 256-1616 | lit jobs: `0x9A60`, lighting `0x73E0`, point lights `0x6AC8`. Position-only jobs get one too, and never read it. |
+| 1 | the output piece: `0x765B70` (positions), `0x755B80` (lit), `0x762470`, `0x756DE0` | 336-2368 | itself (its constants) |
+| 2 | the input piece: `0x764D10`, `0x75BD10`, `0x75EB40`, `0x758590`, `0x764520`, `0x75E180`, `0x75AA50` | 672-2144 | itself, called from `0xDBC8` |
+| 3 | the attribute-method piece: `0x7661C0`, `0x75FE80`, `0x765170`, `0x7613D0` | 192-960 | (code only) |
+| 4 | 16 bytes: byte 0 a bit pattern (`0xFF` in 104 of 280 jobs, `0xCF`, `0x3F`, ...), byte 1 now and then, the rest 0 | 16 | the index stage, in 5 of 280 jobs only |
+| 5 | the index stream ([its format](2026-11-03-edge-stages.md)) | 32-1488 | the index stage (`0xDCB0`, `0xE4D0`) |
+| 6, 7 | skinned jobs: the matrix palette, 64 bytes a matrix, in two pieces (slot 7 can be empty) | 64-11456 | skinning `0xE550` |
+| 10 | skinned jobs: 8 bytes a vertex (bone indices and weights) | 160-4096 | skinning `0xE550` |
+| 11 | the vertex stream, in the input format | 240-10080 | the input piece |
+| 13 | the segment header (next section) | 16 | the job body, into `c + 0x00` |
+| 14 | the input vertex format | 32-48 | `0x88B0`, `0xDBC8` |
+| 16 | the output vertex format | 64-80 | `0x88B0`, `0xDBC8` |
+| 17 | the view block: the hole's viewport and scissor values (1280 x 720, the 640 / 360 offset and scale, ...). Many jobs share one (2-3 EAs in 80 consecutive jobs). | 272 | the job body |
+| 18 | a 4x4 matrix (at the gate an identity with a tiny translation) | 64 | the job body |
+| 8, 9, 12, 15, 19-21 | empty in all 280 jobs | | |
+
+Three patterns of filled slots in the 280 jobs:
+- 0-5, 11, 13, 14 and 16-18 (178 jobs);
+- those and 6, 7, 10 (91 skinned jobs);
+- those and 6, 10 (11 skinned jobs).
+
+The palette's size is the descriptor's matrix count (word 18) x 64 in every skinned job, and slot
+10's is 8 bytes x the vertex count, rounded up to 16.
+
+### The descriptor
+
+The readers are per quadword (the SPU loads 16 bytes), so a row's readers are those of its
+quadword.
+
+| words | what | read by |
 |---|---|---|
-| 0 | the parameter block (below) | 448-880 |
-| 1 | the output packer piece (`0x765B70`, `0x755B80`, `0x762470`, ...) | 336-848 |
-| 2 | the input unpacker piece (`0x764D10`, `0x75BD10`, `0x75EB40`, `0x758590`, ...) | 672-1552 |
-| 3 | the attribute-method piece (`0x7661C0`, `0x75FE80`, ...) | 192-448 |
-| 4 | a 16-byte control word (`0x41`, `0xF1`, `0x3F7F...`) | 16 |
-| 5 | the index stream (the header of [the index decompression](2026-11-03-edge-stages.md)) | 32-1328 |
-| 6 | the vertex stream (records; for example 432 vertexes x 18 = 7776) | 64-9648 |
-| 7 | the segment header (copied to `c`) | 16 |
-| 8 | the input vertex format | 32-80 |
-| 9 | the output vertex format | 64-80 |
-| 10 | the viewport block, one per frame (the same EA in every set) | 272 |
-| 11 | the local-to-world matrix (4x4) | 48-80 |
-| 12-14 | lit jobs: more blocks, and a second matrix | 64-272 |
+| 0-13 | the job manager's part: (LS address, flags) pairs of the buffer layout, the DMA list's EA (word 9), ... | the job manager; zero when the job starts |
+| 14 | `0xA00` in every job | the job body |
+| 16 | the ring lines' base, `0x73254300` (an SPU's line is at + 0x80 (spu + 1)) | the driver, the rings (`0x41A0`), the output |
+| 17 | the hole's EA: the fenced PUT goes there in all 280 jobs | the same |
+| 18 | high half: the number of matrices in slots 6 and 7 (skinned jobs; 0 otherwise) | the same |
+| 19 | `0x32005A08` (position only), `0x3200520C` or `0x3204520C` (lit) | the same |
+| 20 | a frame counter (`0x98D`, `0x98E`, `0x98F` over the gate's three lists) | the job body; in no output |
+| 22 | lit jobs: the EA of a 16-byte record the job fetches itself (below) | the job body |
+| 24-27 | the RSX attribute slots of the attributes the job puts out, a byte each, `0xFF` ends: `[0]` position only, `[0, 4, 5, 7, 8, 14, 15]` lit | `0x88B0`, `0x5CF8` |
+| 28, 29 | the fragment program object's EA and a 48-byte block's EA; both 0 when the job writes no program | the driver, `0x67C0`, `0x61B0` |
+| 30 | high half: the program object's size (`0x890`, 2,192 bytes); low byte `0xFE` in every job | the same |
+| 31 | high half: the 48-byte block's size (`0x30`, also `0x60`, `0x70`); low half 2-6 | the same |
+| 32 | the screen, `1280 << 16 \| 720`, which goes into the hole | the job body, `0x88B0`, the driver, the output |
+| 33 | `0x3101` in every job | the same |
+| 34 | `0x0213xxyy` (position only) or `0x0013xxyy` (lit), xx and yy changing | the same |
+| 35 | `0x04000000` (lit), `0x02000000` or 0 | the same |
+| 36-38 | three signed integers, 0 in about half the jobs | `0x88B0` (all skinned jobs, and some others) |
+| 15, 21, 23, 39 | 0 | |
 
-**The job descriptor.** Most of it is the same in every job.
-- Word 9 is the DMA list's EA.
-- Word 16 is the ring lines' descriptor (`0x73254300`).
-- Word 17 is the hole's EA in the command buffer.
-- Words 18, 34 and 36-38 change from job to job:
-  - 18: a count in its high halfword;
-  - 34: `0x0213xxyy`;
-  - 36-38: three signed integers, zero for some jobs.
-- The first words pair LS addresses with flags (`0x200 / 0x10340100`, `0x220 / 0x44300200`, ...):
-  the job manager's buffer layout.
+At the gate, the 22 jobs with word 28 set are the 22 that write a program to the second ring.
+Two more holes bind a program with word 28 at 0: one another job wrote.
 
-**The parameter block** (element 0) starts with four offsets of sub-blocks (`0x90`, `0x120`,
-`0x1B0`, `0x240`, 144 bytes each but the last), then eight counts (for example 2, 4, 3, 0, 9, 1,
-9, 0). The sub-blocks read as the lights:
-- positions (-681.7, -98.7, 0), with what looks like an attenuation in w (1/6, 2/9);
-- HDR colours (3.33, 2.74, 2.01);
-- unit directions (0.649, 0.658, -0.381).
-The lighting stage takes them. Which word goes where is still to map, from its native code.
+### The light set (slot 0)
 
-**The vertex formats** (elements 8 and 9) are a 4-byte header (attributes, stride) and an 8-byte
-entry per attribute: offset, type, components, attribute id, size.
-- The types are the RSX's vertex types: 1 I16N, 2 F32, 3 F16, 6 X11Y11Z10. So a format turns
-  straight into the hole's `VERTEX_DATA_ARRAY_FORMAT` words.
-- For example, one output format:
-  - 7 attributes, stride 58;
-  - id 1 F32x3 at +0;
-  - id 2 X11Y11Z10 at +12;
-  - id 27 F32x3 at +16;
-  - ids 28-30 F16x3 at +28, +34, +40;
-  - id 31 F32x3 at +46.
-- With that, the unpack and pack pieces could be one generic routine driven by the formats.
+- `+0x00`: the offsets of four arrays: positions, colours, directions, and a byte a light.
+- `+0x10`: the number of lights of each kind, n0, n1, n2 (then 0).
+- `+0x20`: n0 + n1 + n2 (the arrays' length), 1, n0 + n1 + n2 again, 0. `+0x30` to `+0x8F`: 0.
+- The arrays, a quadword a light:
+  - position: x, y, z, and 1/radius in w;
+  - colour: r, g, b (HDR), and a signed weight in w;
+  - direction: x, y, z (a unit vector) for the first n0.
+- The lights come in kind order:
+  - `[0, n0 + n1)` go through the lighting stage's loop (`0x7BB4`, over `r83` = n0 + n1
+    lights). The first n0 use their direction (`r100` = 16 n0); the others use the vector to the
+    vertex.
+  - `[n0 + n1, n0 + n1 + n2)` are point lights, which `0x6AC8` adds to the vertex colour (its
+    `r9` and `r10`; for example 20-21 in a job with 8 + 12 + 1 lights).
+- The fourth array is a byte a light, padded to 16 bytes (`0x00`, `0x01`, `0x02`, `0x80` seen).
+  In 6 of the 41 lit jobs, `0x9A60` reads it and sets some lights' colours to 0 before the
+  lighting stage: a light selection, whose rule is not mapped.
+- All of this holds in all 280 jobs' light sets.
+
+### The vertex formats (slots 14 and 16)
+
+- A format: byte 0 the number of attributes, byte 1 the stride; from byte 8, 8 bytes an
+  attribute: offset, type, components, attribute id, size, and 3 bytes more.
+- The output format's types are the RSX's (1 I16N, 2 F32, 3 F16, 6 X11Y11Z10), the same as the
+  hole's `VERTEX_DATA_ARRAY_FORMAT` types. The input format adds two of EDGE's own:
+  - 8: fixed point, 16 bits a component (6 bytes for x y z);
+  - 9: a unit vector in 3 bytes.
+- At the gate there are few formats:
+  - input: an F32x3 position and two type-9 vectors (ids 3 and 4), stride 18; or a type-8
+    position and the same, stride 12;
+  - output: 8 attributes, stride 66: id 1 F32x3 +0, id 3 I16N x4 +12, id 4 X11Y11Z10 +20,
+    id 27 F32x3 +24, ids 28-30 F16x3 +36 / +42 / +48, id 31 F32x3 +54.
+- The job puts out the output format's first attributes, as many as the descriptor's slot list
+  (words 24-27) names, each to its RSX slot:
+  - lit: seven, stride 54 (id 31 left out);
+  - position only: one, stride 12.
+  - That is each hole's vertex arrays in 278 of the 280 jobs; in the other 2, slot 16 holds
+    something else.
+- The vertex count: the job rounds the segment's count up to a multiple of 8 (all 265 jobs with
+  the two common output pieces). It puts out that many records: the vertex PUTs are the rounded
+  count x the stride, in pieces of at most 16 KB.
+
+### What a lit job fetches itself
+
+- The 16-byte record of word 22, twice at the start, to `0x10710`.
+  - Its words: `0x0005FAE0` (or `0xFFFFFFFF`), a word with bit 31 set that changes from job to
+    job, `0x0000FFFF` (or `0xFFFFFFFF`), 0.
+  - Only the job body reads it, and none of it is in the job's output.
+- When word 28 is set: the 48-byte block (word 29) and the program object (word 28), into the
+  job's buffer set. The block's words go into the second ring with the program: it is the
+  per-draw block the program's constants are patched from.
+
+### Not mapped yet, on the input side
+
+- What words 19, 20 and 33-35 and the 16-byte record do inside the job. None reaches an output.
+- Slot 4, which the job module hardly reads.
+- The light selection in `0x9A60`.
+- The palette's matrix layout and the 8-byte vertex weights, from the skinning code.
 
 ## The segment header, and the pieces each format takes
 
-The 16 bytes at `c + 0x00` (one of the DMA list's elements, copied there) describe the segment.
-In every job the header's hole size matched the hole it wrote.
+The segment header is slot 13. The job copies it to `c + 0x00` and fills in four of its
+fields; the table is `c`'s.
+- In the element, bytes 2, 4 and 5 are `0xFF` (278 of 280 jobs), byte 1 is a larger number
+  (`0x28`-`0x2B`) and bytes 8-9 are the exact vertex count.
+- In all 280 jobs the hole PUT is `c`'s byte 1 x 16 bytes.
 
-| byte | field | seen |
+| byte | field | seen in `c` |
 |---|---|---|
 | 0 | flags | 0x87 |
-| 1 | hole size, in 16 bytes | 0x0E-0x1D |
-| 2 | input vertex format | 0x01, 0x03, 0x0A, 0x0C |
+| 1 | hole size, in 16 bytes (the job's) | 0x0E-0x1D |
+| 2 | input vertex format (the job's number, one per input piece) | 0x00, 0x01, 0x03, 0x09, 0x0A, 0x0C |
 | 3 | secondary input format | 0 |
-| 4 | output vertex format | 0x00, 0x02, 0x04 |
+| 4 | output vertex format (the job's number, one per output piece) | 0x00, 0x02, 0x04 |
 | 5 | vertex delta format | 0xFF (none) |
 | 6 | index kind (high nibble), skinning (low) | 0x20, 0x23 |
 | 7 | skinning matrix format | 0x02 |
-| 8-9, 10-11 | vertex count, index count | 24-568, 99-2850 |
+| 8-9, 10-11 | vertex count (rounded up to 8), index count | 24-568, 99-2850 |
 | 12-15 | index offset | 0xFFFFFFFF |
 
 Every job loads three pieces: an input unpacker, an output packer, and a piece that writes the
@@ -224,7 +314,7 @@ Anything that makes the same three, in the same order and with the same labels, 
 for the SPU job.
 
 **Still to map:**
-- the descriptor's, parameter block's and attribute descriptors' fields, and which input block
-  feeds which step (the matrices, the lights, the skinning matrices);
+- the input side's open points (above): some descriptor words, the 16-byte record, slot 4,
+  the light selection;
 - `0x67C0`, `0x61B0`, `0x9A60`, `0xA880` and `0x75FE80` inside, and the skinning's formats;
 - the wrap path, exercised (it needs a longer run than the 120 jobs).

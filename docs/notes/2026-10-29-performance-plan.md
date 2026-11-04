@@ -1682,6 +1682,20 @@ whole local store after the call.
 mapped and native. Next for phase 2b is step 2: the job's output contract (what it hands the
 RSX: the hole, the rings, the labels) and a stub job that produces it.
 
+Step 2 so far ([output contract](2026-11-04-edge-output-contract.md)):
+- **The output side** is mapped: the ring allocation, the ring data, the fragment program, and
+  the hole's methods.
+- **The input side** is mapped from 280 captured jobs and a replay that logs every local-store
+  access by function:
+  - how the double buffering hands a job its inputs;
+  - the DMA list's 22 fixed slots and the stage that reads each;
+  - the descriptor's words;
+  - the light set;
+  - the vertex formats, and how they and the descriptor's attribute slot list make the hole's
+    vertex arrays.
+- **Still open:** a few descriptor words and records that reach no output, and some stages'
+  insides (`0x67C0`, `0x61B0`, `0x9A60`, the skinning formats).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
