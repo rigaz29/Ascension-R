@@ -229,6 +229,11 @@ endif()
 # Native code that lifted SPU functions call at their entry (scripts/
 # spu_native_hooks.json; `gowa.py lift` puts the calls in). Built as lifted SPU
 # code is, with the same float mode and instruction set.
+# A new or removed file here makes the next build configure again, in the
+# environment of whatever runs it. Build through `gowa.py build` then (with
+# GOWA_BUILD_DIR for another tree): a bare `cmake --build` from a shell without
+# clang-cl and the MSVC tools fails the compiler check, and CMake then drops the
+# cache and CMakeFiles, every object with them.
 if(JOBMOD_SOURCES)
     file(GLOB NATIVE_SPU_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/native/spu_*.c")
     list(APPEND SPU_SOURCES ${NATIVE_SPU_SOURCES})

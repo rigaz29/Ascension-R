@@ -1736,6 +1736,13 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
       for the natives.
   - Gate, ABBA, three runs a side, both steps against the module before them: 19.02 -> 19.19
     flips/s (+0.9%), within the noise of ±0.4 between runs.
+  - The vector normalization `0xBBC8` (twice in every skinned lit job) is native too
+    (`GOWA_EDGE_NATIVE` bit 524288, on by default).
+    - Every call checked in replay (188 calls) and in the game (139,265 calls), and 1360
+      replayed jobs, with 0 differences.
+    - Replay: -0.4% and -0.7% on two sets of 180 jobs from the game.
+    - In the game it went from 1.23% to 0.77% of the EDGE workers' samples (0.57% of that in
+      the native).
 
 ## 3. The budget for 33 ms
 

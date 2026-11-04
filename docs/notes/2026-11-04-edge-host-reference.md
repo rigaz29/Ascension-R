@@ -333,7 +333,7 @@ the largest and simplest first:
 
 0. the interrupt continuations;
 1. the lighting stage's set-up (`0x73E0` and `0x5D90`);
-2. `0xBBC8` (skinned lit jobs, 1.3%);
+2. `0xBBC8` (the skinned lit jobs' vector normalization, 1.3%);
 3. the skinning driver `0xE550` (1.6%);
 4. the context `0x88B0` (with `0xBFB8`, `0x5CF8`, `0xB600`; 1.6%).
 
@@ -420,8 +420,68 @@ computed addresses, done in the lifted order with the same SPU helpers.
     - That is within the noise: runs of one variant differ by about ±0.4.
     - The first run (the old module) started slow, 17.0-17.3 in its first windows.
     - The sampler's ~1% of the EDGE workers' time is about what to expect here.
-- **Next.** `0xBBC8`, which needs a capture with more skinned lit jobs first: it runs only 6
-  times in the gate's corpus.
+- **Next.** `0xBBC8`.
+
+**3.2 The vector normalization `0xBBC8` (done; `native/spu_edge_vnorm.c`, `GOWA_EDGE_NATIVE`
+bit 524288, on by default).**
+- **What it does.** It scales each quadword of an array in place (r3 the array, r4 its count,
+  rounded up to 8) by an estimate of its length's reciprocal square root:
+  - L = fma(z, z, fma(y, y, fm(x, x))), in the SPU's float forms;
+  - s = fi(L, frsqest(L));
+  - v = fm(v, (s, s, s, 1.0)), so w stays.
+- **Who calls it.** Every skinned lit job, twice, and no other kind of job (the job hook's
+  kinds, one replayed job at a time: 3 of 3 such jobs in the gate's corpus, 18 of 18 in
+  `jobcap-l3`).
+  - At `0x5A68` and `0x5A78` it normalizes the two arrays (r80, r82) the transform `0xF538` has
+    just written in place, when r84 is not zero.
+  - Its other call sites are `0x5AC4` and `0xF46C`-`0xF4AC` (up to four arrays).
+
+  The gate's corpus has only 3 skinned lit jobs (6 calls). The later captures from the game
+  have 13-18 in each set of 180 jobs (26-36 calls).
+- **The loop `0xBD54`.** Eight quadwords a pass, software pipelined three deep:
+  - a pass stores group p, with the scales in r16 | r18;
+  - it finishes group p + 1's lengths (z in r9 | r7, the partial sums in r49 | r10) and scales;
+  - it starts group p + 2's sums, and loads group p + 3;
+  - the raw quadwords move r33-r40 -> r41-r48 -> r24-r32.
+
+  The patterns it shuffles with (LS `0xFE60`, `0xFE70`, `0xFF30`, `0xFF60`) transpose four
+  quadwords into x, y and z lanes.
+- **The native.** A loop hook, the step-1 way, on 256-bit registers:
+  - a group's eight quadwords, two to a register; x, y and z by unpacks and shuffles (bit moves
+    only);
+  - the float ops in `spu_edge_simd.h`'s forms: native under the SPU code's MXCSR with the +0
+    rule, and the exact forms where a result leaves the single range (a zero vector's
+    estimate does: exponent 255);
+  - frsqest and fi as the runtime's bit-field rules, on eight lanes;
+  - it runs only with the module's patterns, select mask (r20) and 1.0 (r23), and under the SPU
+    code's MXCSR. A pending interrupt stops it before a pass.
+- **Checked.**
+  - `GOWA_EDGE_VERIFY=1` checks every call of `0xBBC8` (a hook at its entry; the local store
+    and all 128 registers): 188 calls in the eight corpora, 0 differences. In the first seven,
+    168 half-ops took the exact forms, for zero vectors.
+  - `GOWA_EDGE_EXACT=1`, the exact forms for every op: 60 calls, 0 differences.
+  - Replay: 1360 jobs in state mode, 0 differences. Strict mode as recorded (`out2`, `rt1`,
+    `l1`, `l2`, `l3`), and with only the output stage off: 0 differences.
+  - In the game:
+    - `GOWA_EDGE_VERIFY=1`: 139,265 calls checked, none declined, 0 differences;
+    - with it on: 589,824 calls (25.9 M passes), no halt, none declined, no stop for an
+      interrupt; about one half-op in 50 passes took the exact forms;
+    - 180 jobs captured with it on (`jobcap-l3`), replayed with 0 differences in state and in
+      strict mode.
+- **Speed.**
+  - Replay, best of 10, one build, two runs a side, ABBA:
+    - the 180 jobs of `l2`: 6153 -> 6127 µs (-0.4%);
+    - the 180 jobs of `out1`: 6856 -> 6811 µs (-0.7%);
+    - the jobs that call it are each 2-3 µs faster.
+  - Sampler in the game, the EDGE workers' samples:
+    - `0xBBC8`'s lifted code went from 1.23% to 0.20% (its prologue and last pass);
+    - the native takes 0.57%, so `0xBBC8` is 0.77% in all;
+    - the native's loop is about 280 instructions a pass: the byte swaps of 16 quadwords,
+      frsqest's table as eight permutes, and a range test after each float op.
+  - No gate A/B for this step alone: about 1% of the EDGE workers' time is under the gate's
+    noise (about ±0.4 flips/s between runs). The gate is measured again after the next steps
+    together.
+- **Next.** The skinning driver `0xE550`.
 
 ### Risks
 
