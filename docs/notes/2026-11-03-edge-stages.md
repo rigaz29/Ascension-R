@@ -311,3 +311,62 @@ in the replay), plus the inner loops' last iterations that were left lifted (~3.
 **Results.**
 - Replay, the lit jobs: ~89 -> ~79 us (-11%).
 - Gate, same build, ABBA: off 16.01 -> on 16.80 flips/s (+4.9%).
+
+## The output compression, native (2026-11-04)
+
+The position-independent piece `0x755B80` (8.6% of EDGE in the game) is native now
+(`spu_edge_cmp.c`, `GOWA_EDGE_NATIVE` bit 4096). `0xD158` calls it for the lit jobs, and it
+packs their vertices for the RSX. This is step 1 of the groundwork for phase 2b: each piece's
+format, mapped and native.
+
+**Mapped from probed calls.** A temporary probe wrote eight replay calls whole: registers, and
+the local store before and after. A script then fit each output field against the inputs, over
+the 3,344 vertices.
+- The piece finds attributes 1, 3, 4, 27, 28, 29 and 30 by id in the list at `c + 0x160` (the
+  first match of each). Their arrays come from the table at `c + 0x10`, a quadword a vertex.
+- The count is `r53 - 1`. The caller's `r4` holds it too, but the piece does not read it.
+- The output is 54 bytes a vertex, big-endian:
+
+| bytes | attribute | encoding |
+|---|---|---|
+| 0-11 | 1, the position | x y z copied |
+| 12-19 | 3, the normal | x y z w as I16N: the high halfword of `cflts(fma(v, 32767.5, -0.5), 157)` |
+| 20-23 | 4, the tangent | X11Y11Z10, x in the low bits: fields of `cflts(fma(v, s, b), 142)` |
+| 24-35 | 27 | x y z copied |
+| 36-53 | 28, 29, 30 | x y z as F16, by the piece's own rule |
+
+- The F16 rule:
+  - `|high halfword| >= 0x4780`: `0x7BFF`;
+  - below `0x3800`: +0;
+  - else `((bits - 0x38000000) >> 13) & 0x7FFF`, so exponent 112 gives denormal-like values;
+  - the sign copied, but for +0.
+- What else the piece leaves:
+  - **One junk quadword past the end.** Each pass does two vertices and writes the 8 quadwords
+    from its start rounded down. For n a multiple of 8 (every call seen), only one quadword
+    past the end is left: 4 zero bytes, then the output's last 12 bytes. The zeros are the
+    piece's own: the inputs' w lanes vary.
+  - **Its frame.** r84-r117, r126 and r1 are saved.
+  - **Registers.** r80-r83 come back from slots the piece never writes, and r3 = 0. The other
+    registers do not matter: the strict replay with r2-r79 scrambled after every call gave 0
+    differences.
+
+**The routine.**
+- Two vertices go in a 256-bit register. Each vertex's 54 bytes go out as four 16-byte stores,
+  built with shuffles.
+- A fast pass runs per block of 8 vertices, and is redone exact on a flag, as in the other
+  routines.
+- For other counts, the routine goes up to a multiple of 8 that leaves 8-15 vertices, and the
+  lifted piece does the rest.
+
+**Checked.**
+- `GOWA_EDGE_VERIFY=1` compares the local store (frame included) and r0, r1, r3, r80-r127:
+  - replay: 82 calls identical, fast and exact;
+  - game: 315,392 calls identical. 349 were declined, and ran lifted.
+- Strict replay: 0 differences, both ways.
+
+**Results.**
+- Replay, the lit jobs: 77.9 -> 68.8 us (-11.7%).
+- A first version gave -6%. It stored byte by byte (42 cycles a vertex) and left the last 8
+  vertices to the lifted piece (~3,300 cycles a call, mostly its set-up).
+- Gate, same build, ABBA: off 16.87 (17.05 / 16.58) -> on 17.82 (17.55 /
+  17.96) flips/s (+5.6%).

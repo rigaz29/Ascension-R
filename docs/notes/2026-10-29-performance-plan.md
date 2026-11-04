@@ -1613,6 +1613,27 @@ audio (`logs/gate-now/fight-lend`, `fight-lend-b1`):
 - General6: 59.7 ms, 21% (its noise subroutine, 2.21).
 - RenderJobs and RenJobSet: ~25 ms each.
 
+### 2.24 Update, 2026-11-04: EDGE's pieces, one at a time (toward phase 2b)
+
+Phase 2b (EDGE on the GPU) needs every stage's output format known exactly. Phase 2a's method
+gives that as it goes: each of EDGE's position-independent pieces is mapped field by field, made
+native and exact, and checked call by call, by strict replay and at the gate
+([notes](2026-11-03-edge-stages.md)). The order:
+1. the output compression `0x755B80` (8.6% of EDGE);
+2. the position-only output `0x765B70`;
+3. the decompressions `0x75BD10` (3.8%) and `0x764D10`;
+4. then `DCC0`.
+
+**`0x755B80`, native** (`spu_edge_cmp.c`, `GOWA_EDGE_NATIVE` bit 4096).
+- 54 bytes a vertex: the position and attribute 27 copied, the normal as I16N, the tangent as
+  X11Y11Z10, attributes 28-30 as the piece's own F16.
+- Also reproduced: the one junk quadword past the end, the frame, and r80-r83 and r3 as the
+  piece leaves them.
+- Checked identical in 315,392 calls in the game, and by strict replay.
+- The lit jobs in replay: 77.9 -> 68.8 us (-11.7%).
+- The gate, one build, ABBA, two runs a side: off 16.87 (17.05 / 16.58) -> on 17.82
+  (17.55 / 17.96) flips/s (+5.6%).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
