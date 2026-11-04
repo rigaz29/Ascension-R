@@ -1723,6 +1723,19 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
     - a page filter on the GET observer.
   - Replay: 820 jobs with 0 differences (strict where the record allows).
   - Gate, ABBA: 18.73 -> 19.19 flips/s (+2.5%).
+- **Then back to the glue** (the host reference's progress, item 3), the largest lifted pieces
+  first.
+  - Six interrupt continuations in the EDGE module were not lifted entries, and every jump to
+    them went through the micro-step (four of them about 124,000 times each in 20 s). They are
+    entries now: the micro-step went from 0.67% to 0.43% of the EDGE workers' samples.
+  - The lighting stage's set-up is native (`GOWA_EDGE_NATIVE` bit 262144, on by default): the
+    loops of the clear `0x5D90`, of the scatter `0x75D8` and of the running sum `0x7670`.
+    - 1180 replayed jobs with 0 differences, and the stage checked call by call.
+    - Replay of the gate's jobs: -1.9%.
+    - In the game, `0x73E0` and `0x5D90` went from 2.97% to 1.40% of the samples, plus 0.87%
+      for the natives.
+  - Gate, ABBA, three runs a side, both steps against the module before them: 19.02 -> 19.19
+    flips/s (+0.9%), within the noise of ±0.4 between runs.
 
 ## 3. The budget for 33 ms
 

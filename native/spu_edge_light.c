@@ -1018,7 +1018,154 @@ int gowa_edge_light_73e0(spu_context* ctx)
     return edge_verify(ctx, &s_vl73, l73_native, l73_lifted, &t_l73_guard);
 }
 
+/* The lighting stage's set-up (0x73E0, GOWA_EDGE_NATIVE bit 262144): the loop of the buffer
+ * clear it calls (0x5D90's 0x5DA8), and its two loops before the outer loop, 0x75D8 and 0x7670.
+ * Integer work only: 16-byte loads and stores at computed addresses, made here in the lifted
+ * order with the same SPU helpers. A loop is run up to its last pass, which the lifted loop then
+ * makes from the registers as it would have them, so the stage ends with exactly the lifted
+ * registers. A pending interrupt stops a loop before its next pass: the lifted code takes it at
+ * the loop's label, as it would have. GOWA_EDGE_VERIFY=1 checks all three with the stage
+ * (gowa_edge_light_73e0): its reference run (t_lo_ref) has them off. */
+static volatile long long s_ls_zero, s_ls_zero_passes, s_ls_scat, s_ls_scat_passes, s_ls_sum, s_ls_sum_passes;
+static volatile long long s_ls_irq;
+static int s_ls_stats;
+static void ls_report(void)
+{
+    fprintf(stderr, "[edge-native] light set-up: clear 5DA8 %lld calls, %lld passes; scatter 75D8 %lld calls, "
+            "%lld passes; prefix sum 7670 %lld calls, %lld passes; %lld stops for an interrupt\n",
+            s_ls_zero, s_ls_zero_passes, s_ls_scat, s_ls_scat_passes, s_ls_sum, s_ls_sum_passes, s_ls_irq);
+}
+static int ls_on(void)
+{
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("GOWA_EDGE_NATIVE");
+        on = !e || (atoi(e) & 262144) != 0;
+        s_ls_stats = getenv("GOWA_EDGE_NATIVE_STATS") != NULL;
+        if (on && s_ls_stats) atexit(ls_report);
+    }
+    return on;
+}
+#define LS_COUNT(v, n) do { if (s_ls_stats) __atomic_add_fetch(&(v), (long long)(n), __ATOMIC_RELAXED); } while (0)
+/* the lifted code's check at a loop's label */
+#define LS_IRQ(ctx) ((ctx)->int_enable && ((ctx)->event_status & (ctx)->event_mask))
+
+/* 0x5DA8, the loop of 0x5D90 (r3 the buffer, r4 its quadwords): stores r5 (zero) at 8
+ * quadwords a pass, r6 counting them up by 8, while r4 > r6. */
+void gowa_edge_lzero_5da8(spu_context* ctx)
+{
+    if (!ls_on() || t_lo_ref == ctx) return;
+    const u128 r4 = ctx->gpr[4], r5 = ctx->gpr[5];
+    u128 r3 = ctx->gpr[3], r6 = ctx->gpr[6], r7 = ctx->gpr[7];
+    uint32_t passes = 0;
+    /* a pass that leaves r4 > r6 (signed) is not the last */
+    while ((int32_t)r4._u32[0] > (int32_t)(r6._u32[0] + 8u) && passes < 0x10000u) {
+        if (LS_IRQ(ctx)) { LS_COUNT(s_ls_irq, 1); break; }
+        r6 = spu_ai(r6, 8);
+        const uint32_t a = r3._u32[0];
+        for (uint32_t o = 0; o < 0x80u; o += 0x10u) spu_ls_write128(ctx, a + o, r5);
+        r7 = spu_cgt(r4, r6);
+        r3 = spu_ai(r3, 128);
+        passes++;
+    }
+    if (!passes) return;
+    ctx->gpr[3] = r3; ctx->gpr[6] = r6; ctx->gpr[7] = r7;
+    LS_COUNT(s_ls_zero, 1);
+    LS_COUNT(s_ls_zero_passes, passes);
+}
+
+/* 0x75D8: for each 16-bit index of a list, the quadword r10 at r81 + index * 16. Software
+ * pipelined: a pass loads the list's next quadword (r80 + r14) and stores at the eight offsets
+ * the pass before left in r8, r9, r11, r12 (that quadword shifted left 4 bits, and rotated by
+ * 4, 8, 12 bytes), as is and by roti 16. r13 counts the passes down to 0. */
+void gowa_edge_lscat_75d8(spu_context* ctx)
+{
+    if (!ls_on() || t_lo_ref == ctx) return;
+    const uint32_t n = ctx->gpr[13]._u32[0];
+    if (n < 2u || n > 0x10000u) return;
+    const uint32_t b80 = ctx->gpr[80]._u32[0], b81 = ctx->gpr[81]._u32[0];
+    const u128 r10 = ctx->gpr[10];
+    u128 r8 = ctx->gpr[8], r9 = ctx->gpr[9], r11 = ctx->gpr[11], r12 = ctx->gpr[12];
+    u128 r13 = ctx->gpr[13], r14 = ctx->gpr[14];
+    uint32_t k = 1;
+    for (; k < n; k++) {
+        if (LS_IRQ(ctx)) { LS_COUNT(s_ls_irq, 1); break; }
+        const u128 r43 = spu_roti(r8, 16);
+        const u128 r42 = spu_ls_read128(ctx, b80 + r14._u32[0]);
+        const u128 r41 = spu_roti(r9, 16);
+        spu_ls_write128(ctx, b81 + r8._u32[0], r10);
+        const u128 r40 = spu_roti(r11, 16);
+        spu_ls_write128(ctx, b81 + r9._u32[0], r10);
+        const u128 r39 = spu_roti(r12, 16);
+        spu_ls_write128(ctx, b81 + r11._u32[0], r10);
+        r14 = spu_ai(r14, 16);
+        spu_ls_write128(ctx, b81 + r12._u32[0], r10);
+        r13 = spu_ai(r13, -1);
+        spu_ls_write128(ctx, b81 + r43._u32[0], r10);
+        r8 = spu_shlqbii(r42, 4);
+        spu_ls_write128(ctx, b81 + r41._u32[0], r10);
+        spu_ls_write128(ctx, b81 + r40._u32[0], r10);
+        spu_ls_write128(ctx, b81 + r39._u32[0], r10);
+        r9 = spu_rotqbyi(r8, 4);
+        r11 = spu_rotqbyi(r8, 8);
+        r12 = spu_rotqbyi(r8, 12);
+    }
+    if (k == 1) return;
+    ctx->gpr[8] = r8; ctx->gpr[9] = r9; ctx->gpr[11] = r11; ctx->gpr[12] = r12;
+    ctx->gpr[13] = r13; ctx->gpr[14] = r14;
+    LS_COUNT(s_ls_scat, 1);
+    LS_COUNT(s_ls_scat_passes, k - 1u);
+}
+
+/* 0x7670: a running sum r11 of four count tables read side by side (r16-r19 + r9, a quadword
+ * each a pass), and before each addition the counter for that table (r15, r14, r13, r12, +64
+ * a pass) stored at r81 + the sum. r9 = r10 counts up by 64 from below 0; the pass that takes
+ * it to 0 or above is the last. */
+void gowa_edge_lsum_7670(spu_context* ctx)
+{
+    if (!ls_on() || t_lo_ref == ctx) return;
+    u128 r9 = ctx->gpr[9], r10 = ctx->gpr[10], r11 = ctx->gpr[11];
+    u128 r12 = ctx->gpr[12], r13 = ctx->gpr[13], r14 = ctx->gpr[14], r15 = ctx->gpr[15];
+    const uint32_t a16 = ctx->gpr[16]._u32[0], a17 = ctx->gpr[17]._u32[0];
+    const uint32_t a18 = ctx->gpr[18]._u32[0], a19 = ctx->gpr[19]._u32[0];
+    const uint32_t b81 = ctx->gpr[81]._u32[0];
+    uint32_t passes = 0;
+    while ((int32_t)(r10._u32[0] + 64u) <= -1 && passes < 0x10000u) {   /* another pass follows */
+        if (LS_IRQ(ctx)) { LS_COUNT(s_ls_irq, 1); break; }
+        const u128 r67 = spu_ai(r10, 64);
+        const u128 r66 = spu_ls_read128(ctx, a19 + r9._u32[0]);
+        const u128 r65 = spu_ai(r15, 64);
+        const u128 r63 = spu_ls_read128(ctx, a18 + r9._u32[0]);
+        const u128 r61 = spu_ai(r14, 64);
+        const u128 r59 = spu_ls_read128(ctx, a17 + r9._u32[0]);
+        const u128 r57 = spu_ai(r13, 64);
+        const u128 r55 = spu_ls_read128(ctx, a16 + r9._u32[0]);
+        const u128 r53 = spu_ai(r12, 64);
+        spu_ls_write128(ctx, b81 + r11._u32[0], r15);
+        const u128 r62 = spu_a(r11, r66);
+        const u128 r58 = spu_a(r62, r63);
+        spu_ls_write128(ctx, b81 + r62._u32[0], r14);
+        const u128 r54 = spu_a(r58, r59);
+        spu_ls_write128(ctx, b81 + r58._u32[0], r13);
+        const u128 r2 = spu_a(r54, r55);
+        spu_ls_write128(ctx, b81 + r54._u32[0], r12);
+        r15 = r65; r10 = r67; r9 = r67; r14 = r61; r13 = r57; r12 = r53; r11 = r2;
+        passes++;
+    }
+    if (!passes) return;
+    ctx->gpr[9] = r9; ctx->gpr[10] = r10; ctx->gpr[11] = r11;
+    ctx->gpr[12] = r12; ctx->gpr[13] = r13; ctx->gpr[14] = r14; ctx->gpr[15] = r15;
+    if (s_ls_stats) {
+        LS_COUNT(s_ls_sum_passes, passes);
+        /* also every 65536 calls: a game run is ended by a kill, so atexit never comes */
+        if (!(__atomic_add_fetch(&s_ls_sum, 1, __ATOMIC_RELAXED) & 0xFFFF)) ls_report();
+    }
+}
+
 #else
+void gowa_edge_lzero_5da8(spu_context* ctx) { (void)ctx; }
+void gowa_edge_lscat_75d8(spu_context* ctx) { (void)ctx; }
+void gowa_edge_lsum_7670(spu_context* ctx) { (void)ctx; }
 void gowa_edge_light_7bb4(spu_context* ctx) { (void)ctx; }
 void gowa_edge_light_7ed8(spu_context* ctx) { (void)ctx; }
 void gowa_edge_light_79b0(spu_context* ctx) { (void)ctx; }

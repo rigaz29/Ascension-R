@@ -326,6 +326,103 @@ lifted code's, in its order: the glue reads `SPU_RdMachStat` around its critical
 the replay serves every read from the record. And they must not run with an interrupt pending,
 since the job manager's handler takes its turn at the lifted code's checks.
 
+**3. The lifted glue's largest pieces, after the runtime's fixes.** Measured in the game with
+the runtime's fixes in ([hot paths](2026-11-04-spu-runtime-hot-paths.md)), the EDGE module's
+lifted code was 13.3% of the EDGE workers' samples, spread over 284 functions. The order taken,
+the largest and simplest first:
+
+0. the interrupt continuations;
+1. the lighting stage's set-up (`0x73E0` and `0x5D90`);
+2. `0xBBC8` (skinned lit jobs, 1.3%);
+3. the skinning driver `0xE550` (1.6%);
+4. the context `0x88B0` (with `0xBFB8`, `0x5CF8`, `0xB600`; 1.6%).
+
+None of them has a channel operation, so `GOWA_EDGE_VERIFY` can check each call (the whole
+local store but the stack, and the registers).
+
+**3.0 The interrupt continuations (done).**
+- **The miss.** The glue turns interrupts on and off with a branch to the next instruction, and
+  then an indirect jump to the link plus 8:
+  - `spu_link`, `ai r2, 8`, `int_enable`, `bi r2`;
+  - the jump's target is a lifted entry, or it misses.
+- **Which ones missed.** Six such targets in the EDGE module were not entries: `0x4100`,
+  `0x62F4`, `0x65EC`, `0x66B0`, `0x6774`, `0x6A54`.
+  - Each jump to them took the dispatcher's full path, then the micro-step and the interpreter
+    up to the next lifted entry.
+  - In the game, `0x62F4`, `0x65EC`, `0x6774` and `0x6A54` each missed about 124,000 times in
+    20 s.
+- **The fix.** They are extra entries now (`scripts/jobmods_extra.json`), and the module was
+  lifted again.
+- **The effect, in the game.**
+  - All four are gone from the full-path report.
+  - Full-path branches went from 4.10 to 3.24 per EDGE job, and from 4.27 M to 3.81 M in all
+    over 20 s.
+  - The micro-step's share of the EDGE workers' samples went from 0.67% to 0.43%.
+
+**3.1 The lighting stage's set-up (done; `native/spu_edge_light.c`, `GOWA_EDGE_NATIVE` bit
+262144, on by default).** Three loop natives, all integer work: 16-byte loads and stores at
+computed addresses, done in the lifted order with the same SPU helpers.
+- **`0x5DA8`**, the loop of the buffer clear `0x5D90`, stores zero at 8 quadwords a pass
+  (`gowa_edge_lzero_5da8`). About 49 passes (6.2 KB) a lit job.
+- **`0x75D8`** stores one quadword at r81 + 16 x each 16-bit index of a list
+  (`gowa_edge_lscat_75d8`).
+  - It is software pipelined: a pass loads the list's next quadword before its eight stores.
+  - About 64 passes (514 indexes) a lit job.
+- **`0x7670`** is a running sum over four count tables, read side by side
+  (`gowa_edge_lsum_7670`).
+  - Before each addition, the counter for that table is stored at r81 + the sum: a counting
+    sort's placement.
+  - About 98 passes a lit job.
+- **The loop hooks.** All three are taken the step-1 way:
+  - all passes but the last run natively;
+  - the loop-carried registers are written back as whole quadwords;
+  - the lifted loop makes the last pass, so every scratch register ends as the lifted code
+    leaves it;
+  - a pending interrupt stops the native before its next pass, and the lifted code takes it at
+    the loop's label, as it would have.
+
+  The clear was a whole-function hook at first. As one, it could not hand an interrupt back in
+  mid-loop, so it became a loop hook; the three instructions before its loop stay lifted.
+- **Where the hooks go.** A loop head is already a lifted function (the re-entry after an
+  interrupt taken at its label), so a loop hook needs no extra entry.
+  - The hooks sit at the loop labels inside the merged `0x5D90` and `0x73E0`, and at the loop
+    functions' heads.
+  - An extra entry at a loop head is harmful: it splits the merged function there, so the code
+    before the loop reaches it by `SPU_DIRECT`.
+- **Checked.**
+  - `GOWA_EDGE_VERIFY=1` runs `0x73E0` with its natives against the fully lifted stage (the
+    reference run has them all off): 332 calls in five corpora, 0 differences.
+  - Replay, state mode: 1180 jobs (the gate's 120, the 160 consecutive ones, and five sets of
+    180 from the game), 0 differences.
+  - Strict mode:
+    - as recorded (`out2`, `rt1`, `l1`, `l2`), 0 differences;
+    - on the gate's and the consecutive jobs with only the output stage off (whose callee
+      frames differ by design), 0 differences. The new natives leave the whole local store and
+      every register as the lifted code does.
+  - In the game:
+    - 180 jobs captured with the first version on (`jobcap-l1`), and 180 with the last
+      (`jobcap-l2`); each set replayed with 0 differences, in state and in strict mode;
+    - 1.31 M calls of `0x7670` with no halt, and no stop for an interrupt (none in replay
+      either: there the events change only with the job's own channel operations).
+- **Speed.**
+  - Replay, the gate's 120 jobs, best of 10, one build, two runs a side: 4038 -> 3960 µs in all
+    (-1.9%). The 29 jobs that changed are each 2-3 µs faster (8 µs for the first); none are
+    slower.
+  - The sampler and the gate measured the first version (the clear as a whole-function hook,
+    no interrupt test). Its replay saving was the same, -1.8%.
+  - Sampler in the game, the EDGE workers' samples:
+    - `0x73E0` went from 2.67% to 1.40%, and `0x5D90` from 0.30% to 0;
+    - the three natives take 0.87%;
+    - the lifted EDGE module went from 13.33% to 11.37%;
+    - the micro-step went from 0.67% to 0.43%, and the interpreter from 0.13% to 0.10%.
+  - Gate, ABBA, three runs a side, the module before the re-lift against steps 0 and 1:
+    19.02 -> 19.19 flips/s (+0.9%; runs 18.59 / 19.42 / 19.09 against 19.12 / 19.36 / 19.14).
+    - That is within the noise: runs of one variant differ by about ±0.4.
+    - The first run (the old module) started slow, 17.0-17.3 in its first windows.
+    - The sampler's ~1% of the EDGE workers' time is about what to expect here.
+- **Next.** `0xBBC8`, which needs a capture with more skinned lit jobs first: it runs only 6
+  times in the gate's corpus.
+
 ### Risks
 
 - **The job manager's protocol.** The calls must come in the same order with the same arguments.
