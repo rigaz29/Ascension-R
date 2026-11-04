@@ -1743,6 +1743,19 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
     - Replay: -0.4% and -0.7% on two sets of 180 jobs from the game.
     - In the game it went from 1.23% to 0.77% of the EDGE workers' samples (0.57% of that in
       the native).
+  - Then `0xE550`'s two lifted loops (the matrix layout `0xE804`, and the skinned lit jobs'
+    normal and tangent transform `0xF104`; bit 1048576) and `0x88B0`'s two table loops (bit
+    2097152), all on by default.
+    - Every call checked in replay (378 and 1719 calls) and in the game (90,114 and 413,696),
+      and 1720 replayed jobs, with 0 differences.
+    - In the game `0xE550` went from 1.63% to 1.07% of the EDGE workers' samples, and `0x8930`
+      from 1.20% to 1.00%.
+    - The first `0xF104` native saved nothing until its pipeline left the stack. The context
+      loops cost mostly their tables' first touches in the game, which a native makes too.
+    - Where the time goes inside a lifted function now comes from a `--spu-lines` build
+      (`build-ln`), each sample put on the nearest label above its lifted line.
+    - Gate, ABBA, three runs a side, steps 2-4 off against on: 18.84 -> 19.19 flips/s (+1.9%),
+      ahead in all three pairs; the first run (off) started slow, so likely nearer +1%.
 
 ## 3. The budget for 33 ms
 

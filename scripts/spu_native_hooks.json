@@ -8,6 +8,9 @@
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_000079B0": "gowa_edge_light_79b0",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_00007BB4": "gowa_edge_light_7bb4",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_00007ED8": "gowa_edge_light_7ed8",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_000088B0": "?gowa_edge_ctx_88b0",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_00008988": "gowa_edge_ctx_8988",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_00008B90": "gowa_edge_ctx_8b90",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_00009080": "?gowa_edge_out_9080",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000A950": "gowa_edge_normals_a950",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000AD98": "?gowa_edge_job_ad98",
@@ -16,7 +19,10 @@
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000D250": "?gowa_edge_cull_d250",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000D618": "?gowa_edge_cull_d618",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E4D0": "?gowa_edge_idx_e4d0",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E550": "?gowa_edge_skinmat_e550",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E804": "gowa_edge_skinmat_e804",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000EC08": "gowa_edge_skin_ec08",
+  "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000F104": "gowa_edge_skinmat_f104",
   "jobmod_e8f44fbc6dbf_e6D98_spu_func_0000F538": "?gowa_edge_xform_f538"
  },
  "pic_00755B80": {

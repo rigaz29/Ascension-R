@@ -483,6 +483,125 @@ bit 524288, on by default).**
     together.
 - **Next.** The skinning driver `0xE550`.
 
+**3.3 The skinning driver `0xE550`: its two lifted loops (done; `native/spu_edge_skinmat.c`,
+`GOWA_EDGE_NATIVE` bit 1048576, on by default).**
+- **Its shape.** `0xE550` runs once in every skinned job, and is one function from `0xE550` to
+  `0xF538` (about 1040 SPU instructions):
+  - the matrix layout, `0xE804` (the matrix format 2; every skinned job in the captures);
+  - set-up (`0xE858`: the stream buffers from `0xB638`-`0xB660`);
+  - per batch of vertexes: the position loop `0xEC08` (native since phase 2a), then a loop for
+    the other attribute streams. Only `0xF104`, two streams, runs in the captures; `0xEE28`,
+    `0xF034` and `0xF24C` never do;
+  - the renormalization `0xBBC8` and `0xB600` at the end.
+
+  Loop counts in replay, from a counting build:
+
+  | corpus | `0xE550` calls | `0xE804` passes | `0xF104` passes |
+  |---|---|---|---|
+  | gate (120 jobs) | 19 | 768 | 266 |
+  | consecutive (160) | 84 | 2736 | 0 |
+  | `l3` (180) | 36 | 1191 | 1468 |
+- **`0xE804`** lays each bone's matrix out in place: four quadwords q0-q3 become three,
+  (q0.x q1.y q2.z q3.x) (q1.x q2.y q0.z q3.y) (q2.x q0.y q1.z q3.z), the diagonals a vector is
+  multiplied with. Only word moves; it loads matrix k + 1 before it stores matrix k.
+- **`0xF104`** transforms two attribute streams (the normals and tangents of the skinned lit
+  jobs) by the per-vertex matrixes in that layout, four vertexes a pass, in place:
+  out = fma(zxyw(v), D2, fma(yzxw(v), D1, fm(v, D0))). One stream and the matrixes are loaded a
+  pass ahead.
+- **The natives.** Loop hooks, the step-1 way.
+  - `0xE804`: word moves on 128-bit registers.
+  - `0xF104`, first version: its pipeline (twelve matrix quadwords, four vertexes and their two
+    shuffles) in arrays, and `spu_edge_simd.h`'s forms with a range test after each op. The
+    loop was 318 instructions a pass, 111 of them stack traffic, about what the lifted loop
+    costs. In the game `0xE550`'s lifted code went from 1.63% to 0.67% of the EDGE workers'
+    samples, but the natives took 0.90% (`0xF104` 0.80%): 0.06% net.
+  - `0xF104`, as kept: the pipeline in eight 256-bit registers (six matrix pairs, two vertex
+    pairs; the shuffled copies are made again from the vertexes), two quadwords to a load or a
+    store with one byte swap, the twelve float ops of a pass native, and one range test of all
+    their results. A lane at or past FLT_MAX (where an overflow toward zero lands) or NaN (from
+    an operand of exponent 255) has the pass done again in the exact forms, op by op, from the
+    same inputs; the +0 rule is applied to what is stored.
+- **Checked** (the kept version).
+  - `GOWA_EDGE_VERIFY=1` checks every call of `0xE550` (a hook at its entry): the whole driver
+    with the two loops native against it with them lifted. Neither the driver nor its callees
+    use a channel, so all 128 registers and the whole local store, stack included, are
+    compared. 378 calls in the ten corpora, 0 differences; one pass was redone exact.
+  - `GOWA_EDGE_EXACT=1`, the exact forms for every pass: 79 calls, 0 differences.
+  - Replay: 1720 jobs in state mode, 0 differences. Strict mode as recorded, and with only the
+    output stage off: 0 differences.
+  - In the game:
+    - `GOWA_EDGE_VERIFY=1`: 90,114 calls of `0xE550` checked, none declined, 0 differences;
+    - with the natives on: 543,648 calls of `0xE804` and 983,040 of `0xF104` (25.9 M passes,
+      4272 of them redone exact), no halt, none declined, no stop for an interrupt;
+    - 180 jobs captured with them on (`jobcap-l5`, with step 4's too), replayed with 0
+      differences in state and in strict mode.
+- **Speed.**
+  - Replay, best of 10, ABBA, natives off -> on: the 180 jobs of `l3` 6825 -> 6776 µs (-0.7%),
+    of `l4` 6466 -> 6413 µs (-0.8%); 14-15 jobs faster each, none slower. The first version
+    gave -0.1%.
+  - Sampler in the game, the EDGE workers' samples: `0xE550` and its natives went from 1.63% to
+    1.07% (0.57% lifted, 0.50% native, of that 0.40% `0xF104`). The first version had left 1.57%.
+
+**3.4 The context builder `0x88B0`: its two table loops (done; `native/spu_edge_ctx.c`,
+`GOWA_EDGE_NATIVE` bit 2097152, on by default).**
+- **Where its time goes.** A sampler run of a `--spu-lines` build (a third tree, `build-ln`;
+  the same code with line tables), each sample put on the lifted function and the nearest label
+  above its line:
+  - `0x8930` (the builder's body) 1.22% of the EDGE workers' samples: `0x8B90` 0.49, `0x89F0`
+    0.20, `0x8DA0` 0.13, `0x8988` 0.09, `0x8930` 0.07, `0x8B28` 0.07, `0x8EB8` 0.07, the rest
+    under 0.05 each;
+  - `0xBFB8` 0.55%, spread over its blocks (none above 0.12), and `0x5CF8` and `0xB600` nothing.
+  The two loops over the descriptor's tables (`0x8988`-`0x8B08` and `0x8B90`-`0x8D34`) are
+  about 0.8%.
+- **The loops.** A[i] is the byte at r33 + i; 0xFF marks an entry to leave out.
+  - Loop A (`0x8988`, `0x89F0`, `0x8B08`; entry i in r28, its 8-byte entry at r27): an entry
+    with byte 1 == 8 and byte 3 == 1 takes the long path at `0x8EB8`; any other has the 8 bytes
+    at r30 + r31 + 8 copied to r26 + 8, and r26 and r32 move on. The count is r29's low byte.
+  - Loop B (`0x8B90`, `0x8D34`; entry i in r29): the 8 bytes at r27 + 8 are copied to
+    r28 + 8, then r32's low byte goes to r28 + 8 and A[i] to r28 + 13. Per word, unless the byte
+    at r27 + 11 + 4w (in its quadword) is 27-30 while r36's word is 0, r28 moves on by 8, r34 by
+    1 and r32 by the byte at r27 + 12 + 4w. The count is the first byte of r35's quadword,
+    loaded again after each copy.
+  - The SPU code moves each byte as a quadword load, a rotate that brings it to byte 3
+    (address + 13), a shuffle with a `cbd` control and a quadword store. The native moves one
+    byte, at the same address, in the same order.
+- **A lesson about loop hooks.** The first version ran every pass but the last, as before. The
+  call-by-call check failed in every call, on r31 only (the local store was the same, and so
+  was every replayed job): when the last pass leaves an entry out, the copy's scratch registers
+  keep the values of the last pass that copied, and the native had made that pass. A pass sets
+  only the scratch registers of its own path. So the natives now work out the passes left
+  first, and the last pass that copies, and every pass after it, is the lifted loop's. The
+  passes left rest on bytes the natives' stores must not reach (the A bytes still to be read,
+  r35's quadword); a copy that would reach them stops the native. The loops of steps 1-3 have
+  no such paths.
+- **Checked.**
+  - `GOWA_EDGE_VERIFY=1` checks every call of `0x88B0` (a hook at its entry): the builder with
+    the loops native against it with them lifted. Neither it nor its callees (`0x5CF8`,
+    `0xBFB8`, `0xB600`) use a channel; all 128 registers and the whole local store are
+    compared. 1719 calls in the ten corpora, 0 differences.
+  - Replay: 1720 jobs in state mode, 0 differences; strict as recorded, and with only the output
+    stage off, 0 differences.
+  - In the game: `GOWA_EDGE_VERIFY=1` checked 413,696 calls, none declined, 0 differences. 180
+    jobs captured with the loops native (`jobcap-l5`) replay with 0 differences, in state and in
+    strict mode.
+- **Speed.**
+  - Replay, best of 10, ABBA, natives off -> on: 0.05 µs a job on the gate's jobs and 0.02 µs on
+    `l4`, within the noise. A replayed job runs ten times over the same local store, so its
+    tables are in the cache.
+  - Sampler in the game: `0x8930` and the natives went from 1.20% to 1.00% (0.67% lifted, 0.33%
+    native). The natives make only byte moves, yet take a third of what they replaced: in the
+    game these loops cost mostly the first touches of the job's tables, which a native makes
+    too.
+- **Steps 2-4 at the gate.** One build, ABBA, three runs a side, `GOWA_EDGE_NATIVE=2143813631`
+  (bits 524288, 1048576 and 2097152 off) against the default: 18.84 -> 19.19 flips/s (+1.9%;
+  runs 18.04 / 18.94 / 19.09 against 19.00 / 19.18 / 19.59).
+  - The natives' side was ahead in all three pairs, by 0.24-0.96.
+  - The first run (natives off) started slow, as a session's first run tends to, so the gain
+    is likely nearer 1%: about what the sampler's 1.2% of the EDGE workers' time predicts.
+- **Not done.** `0xBFB8` (0.55%): straight-line field packing (`shufb` with `cwd`, `chd` and
+  `cbd` controls) spread over its blocks; a native would be a transliteration of the whole
+  function.
+
 ### Risks
 
 - **The job manager's protocol.** The calls must come in the same order with the same arguments.
