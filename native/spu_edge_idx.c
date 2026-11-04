@@ -13,8 +13,9 @@
  *    the k-bit reuse values.
  * Five stages:
  *  1. n1 = 32 ceil(h0 / 32) k-bit values, MSB first, from the stream as it was, go as halfwords
- *     to S = r4 + align16(8 + h2 + codes).
- *  2. In place: s2[i] = s2[i - 8] + s1[i] - h1 (eight running sums, 16 bits).
+ *     to S = r4 + align16(8 + h2 + codes). For k = 0 the piece instead zero-fills
+ *     8 ceil(h0 / 8) of them (0xE0C8), and the rest up to n1 stay as the store held them.
+ *  2. In place, over n1: s2[i] = s2[i - 8] + s1[i] - h1 (eight running sums, 16 bits).
  *  3. The vertex sequence, at Q = r4 + align16(6T): for each of n3 = 16 ceil(8 h2 / 16) bits
  *     from r4 + 8 (MSB first; past the bitmask, the bytes after it), a 1 takes the next s2 value
  *     (read from the local store at S) and a 0 a new vertex (counting from 0).
@@ -36,7 +37,7 @@
  * Declined (lifted instead):
  *  - c, r4 or r1 not 16-aligned;
  *  - a count not a multiple of 3, or T < 16;
- *  - k = 0 or k > 16;
+ *  - k > 16, or h0 = 0 with k > 0 (not seen);
  *  - any of the regions it reads or writes outside the local store or over c, the frame, or
  *    each other where the order would matter.
  * GOWA_EDGE_VERIFY=1 checks every call (spu_edge_verify.h).
@@ -49,7 +50,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-static volatile long long s_x11_calls, s_x11_tris, s_x11_declined;
+static volatile long long s_x11_calls, s_x11_tris, s_x11_declined, s_x11_why[13];
+static int x11_no(int why) { __atomic_add_fetch(&s_x11_why[why], 1, __ATOMIC_RELAXED); return 0; }
 
 static uint32_t x11_be16(const uint8_t* p) { return ((uint32_t)p[0] << 8) | p[1]; }
 static void x11_put16(uint8_t* p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
@@ -114,17 +116,17 @@ static int x11_native(spu_context* ctx)
 {
     uint8_t* ls = ctx->ls;
     const uint32_t c = ctx->gpr[3]._u32[0], src = ctx->gpr[4]._u32[0], sp = ctx->gpr[1]._u32[0];
-    if ((c & 15) || c + 0x1A0 > SPU_LS_SIZE || (sp & 15) || sp < 0x40 || sp + 0x20 > SPU_LS_SIZE || (src & 15)) return 0;
+    if ((c & 15) || c + 0x1A0 > SPU_LS_SIZE || (sp & 15) || sp < 0x40 || sp + 0x20 > SPU_LS_SIZE || (src & 15)) return x11_no(0);
     const uint32_t count = x11_be16(ls + c + 0x190);
     const uint32_t typ = (uint32_t)(ls[c + 6] >> 4);
     const int decode = count != 0 && (typ == 2 || typ == 3);
     uint32_t T = 0, h0 = 0, h1 = 0, h2 = 0, k = 0, codes = 0, off_k = 0, S = 0, n1 = 0, Q = 0, n3 = 0, C = 0, ncp = 0, passes = 0;
     if (decode) {
-        if (count % 3) return 0;
+        if (count % 3) return x11_no(1);
         T = count / 3;
-        if (T < 16 || src + 16 > SPU_LS_SIZE) return 0;
+        if (T < 16 || src + 16 > SPU_LS_SIZE) return x11_no(2);
         h0 = x11_be16(ls + src); h1 = x11_be16(ls + src + 2); h2 = x11_be16(ls + src + 4); k = ls[src + 6];
-        if (k == 0 || k > 16) return 0;
+        if (k > 16 || (k > 0 && h0 == 0)) return x11_no(3);
         codes = (2 * T + 7) / 8;
         off_k = 8 + h2 + codes;
         S = src + ((off_k + 15) & ~15u);
@@ -134,14 +136,14 @@ static int x11_native(spu_context* ctx)
         C = Q + 2 * n3;
         ncp = (codes + 15) & ~15u;
         passes = (T + 7) / 8;
-        if (n1 > 4096 || passes > 1365 || n3 > 8192) return 0;
+        if (n1 > 4096 || passes > 1365 || n3 > 8192) return x11_no(4);
         /* the reuses the bitmask takes (its 1 bits, and up to 16 past it) within s2's room */
-        if (src + 8 + h2 + codes + 16 > SPU_LS_SIZE) return 0;
+        if (src + 8 + h2 + codes + 16 > SPU_LS_SIZE) return x11_no(5);
         {
             uint32_t ones = 0, i = 0;
             for (; i + 8 <= h2 + 2; i += 8) ones += (uint32_t)__builtin_popcountll(x11_be64(ls + src + 8 + i));
             for (; i < h2 + 2; i++) ones += (uint32_t)__builtin_popcount(ls[src + 8 + i]);
-            if (ones > n1 + 40) return 0;
+            if (ones > n1 + 40) return x11_no(6);
         }
         /* the sequence the real triangles take within seq's room (the 7 extra ones take 21 more at most) */
         {
@@ -153,19 +155,19 @@ static int x11_native(spu_context* ctx)
             for (; i + 8 <= full; i += 8) { const uint64_t x = x11_be64(cb + i); n3s += (uint32_t)__builtin_popcountll(x & (x >> 1) & lo); }
             for (; i < full; i++) { const uint32_t x = cb[i]; n3s += (uint32_t)__builtin_popcount(x & (x >> 1) & 0x55); }
             if (T & 3) { const uint32_t x = cb[full] & (0xFF00u >> (2 * (T & 3))); n3s += (uint32_t)__builtin_popcount(x & (x >> 1) & 0x55); }
-            if (T + 2 * n3s > n3 + 20) return 0;
+            if (T + 2 * n3s > n3 + 20) return x11_no(7);
         }
         /* everything it touches inside the local store, with room for the reads past the ends */
         const uint32_t hi = C + ncp + 64;
         const uint32_t kend = src + off_k + (n1 * k + 7) / 8 + 16;
-        if (hi > SPU_LS_SIZE || kend > SPU_LS_SIZE || S + 2 * n1 + 64 > SPU_LS_SIZE) return 0;
+        if (hi > SPU_LS_SIZE || kend > SPU_LS_SIZE || S + 2 * n1 + 64 > SPU_LS_SIZE) return x11_no(8);
         /* the regions as the model has them: apart from c and the frame; the stages' outputs where
          * the order would matter: S before Q (stage 3 reads S, writes Q), the copy's source before C */
         const uint32_t lo_all = src, hi_all = hi > kend ? hi : kend;
-        if (!x11_apart(lo_all, hi_all, c, c + 0x1A0) || !x11_apart(lo_all, hi_all, sp - 0x40, sp + 0x20)) return 0;
-        if (!x11_apart(S, S + 2 * n1 + 32, Q, Q + 2 * n3)) return 0;
-        if (!x11_apart(src + 8, src + 8 + h2 + ncp, C, C + ncp)) return 0;
-        if (src + 48 * passes > Q + 2 * n3) return 0;
+        if (!x11_apart(lo_all, hi_all, c, c + 0x1A0) || !x11_apart(lo_all, hi_all, sp - 0x40, sp + 0x20)) return x11_no(9);
+        if (!x11_apart(S, S + 2 * n1 + 32, Q, Q + 2 * n3)) return x11_no(10);
+        if (!x11_apart(src + 8, src + 8 + h2 + ncp, C, C + ncp)) return x11_no(11);
+        if (src + 48 * passes > Q + 2 * n3) return x11_no(12);
     }
 
     /* E4D0's frame */
@@ -185,11 +187,21 @@ static int x11_native(spu_context* ctx)
             const uint32_t mk = (1u << k) - 1;
             uint16_t* d = s2 + 8;
             memset(s2, 0, 16);
-            for (uint32_t i = 0; i < n1; i++) {
-                if (nb < (int)k) { acc = (acc << 32) | x11_be64(p) >> 32; p += 4; nb += 32; }
-                const uint32_t v = (uint32_t)(acc >> (nb - (int)k)) & mk;
-                nb -= (int)k;
-                d[i] = (uint16_t)(d[(int)i - 8] + v - h1);
+            if (k == 0) {
+                /* the piece zero-fills 8 ceil(h0 / 8) of them (0xE0C8); stage 2 still takes n1, the
+                 * rest as the store held them */
+                const uint32_t z = 8 * ((h0 + 7) / 8);
+                for (uint32_t i = 0; i < n1; i++) {
+                    const uint32_t v = i < z ? 0 : x11_be16(ls + S + 2 * i);
+                    d[i] = (uint16_t)(d[(int)i - 8] + v - h1);
+                }
+            } else {
+                for (uint32_t i = 0; i < n1; i++) {
+                    if (nb < (int)k) { acc = (acc << 32) | x11_be64(p) >> 32; p += 4; nb += 32; }
+                    const uint32_t v = (uint32_t)(acc >> (nb - (int)k)) & mk;
+                    nb -= (int)k;
+                    d[i] = (uint16_t)(d[(int)i - 8] + v - h1);
+                }
             }
         }
         x11_wr16(ls, S, s2 + 8, n1);
@@ -247,6 +259,9 @@ static void x11_stats(void)
 {
     fprintf(stderr, "[edge-native] index decompression E4D0: %lld calls native, %lld triangles, %lld declined\n",
             s_x11_calls, s_x11_tris, s_x11_declined);
+    fprintf(stderr, "[edge-native] index decompression E4D0 declined by check:");
+    for (unsigned i = 0; i < sizeof s_x11_why / sizeof s_x11_why[0]; i++) if (s_x11_why[i]) fprintf(stderr, " #%u %lld", i, s_x11_why[i]);
+    fprintf(stderr, "\n");
 }
 static edge_vstat s_vx11 = { "index decompression E4D0", 0, 1, 0, 0, 0, 0, 0, 0 };
 static void x11_verify_report(void) { edge_vreport(&s_vx11); }

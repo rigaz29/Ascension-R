@@ -538,6 +538,10 @@ the whole local store and the registers, and it held from the first build.
 **Checked.**
 - Replay: 240 calls identical.
 - Game: 561,152 calls identical. 48,517 of them (8.6%) were declined and ran lifted.
+- Those declines were streams with k = 0 (no k-bit values). There the piece zero-fills
+  `8 ceil(h0 / 8)` halfwords (`0xE0C8`) instead of unpacking. Stage 2 still runs over `n1`, so
+  the halfwords between come from what the store held. With that path added, the game showed
+  536,576 calls identical, and 3.2% declined.
 - Strict replay: 0 differences.
 
 **Results.**

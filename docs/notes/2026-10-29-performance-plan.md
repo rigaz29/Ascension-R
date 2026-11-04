@@ -1673,7 +1673,8 @@ whole local store after the call.
   - 2-bit triangle codes: 3 is a fresh triangle; 0-2 turn on one edge of the last triangle,
     reversed, with the next vertex.
 - Its scratch past the indices, which goes out by DMA, is made byte for byte.
-- Identical in 561,152 calls in the game (8.6% declined, lifted), and by strict replay.
+- Identical in 561,152 calls in the game, and by strict replay. With the k = 0 streams added (the
+  piece zero-fills there), 536,576 calls identical and 3.2% declined, from 8.6%.
 - 9,154 -> 4,737 cycles a call. Replay: w14 -1.5%, w15 and w16 -5%.
 - The gate, ABBA: off 18.14 (17.87 / 18.30) -> on 18.71 (18.54 / 18.89) flips/s (+3.1%).
 
