@@ -1712,6 +1712,17 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
   (`GOWA_EDGE_NATIVE` bit 131072): 640 replayed jobs with 0 differences and about 2 µs less a
   job in replay. At the gate it is within the noise (18.83 off, 18.86 on, ABBA). Details are in
   the host reference's progress section.
+- **Then the runtime first** ([hot paths](2026-11-04-spu-runtime-hot-paths.md)).
+  - Measured in the game, the lifted glue left was 12.7% of the EDGE workers' time and the
+    runtime's own machinery 26.7%.
+  - The first changes in the fork:
+    - one switch for the DMA path's and the channels' diagnostics;
+    - the MFC channels without the engine lookup;
+    - a false-shared cache line taken apart;
+    - the interrupt handler's save and restore stubs run from a decoded copy;
+    - a page filter on the GET observer.
+  - Replay: 820 jobs with 0 differences (strict where the record allows).
+  - Gate, ABBA: 18.73 -> 19.19 flips/s (+2.5%).
 
 ## 3. The budget for 33 ms
 
