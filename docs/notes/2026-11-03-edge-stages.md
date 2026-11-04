@@ -442,3 +442,31 @@ zero) and the runtime's `frsqest`/`fi` tables, and matched all 10,224 vectors of
 - Replay, the lit jobs: 68.3 -> 64.0 us (-6%).
 - Gate, same build, ABBA: off 17.95 (17.90 / 17.95) -> on 17.91 (17.71 / 18.10) flips/s. That is no change
   beyond the spread; the two rounds went opposite ways.
+
+## The position-only unpacking, native (2026-11-04)
+
+The piece `0x764D10` is native now (`spu_edge_vtx.c`, `GOWA_EDGE_NATIVE` bit 32768). It is
+`0x75BD10` for the jobs of the other two lists (w15, w16):
+- it reads the same 18-byte records, but unpacks only attribute 1 (x y z, w = 1.0), into the
+  first free slot's array, and puts that array's word at `c + 0x5C`;
+- it writes the same 12 patterns to its frame, from its own pool, which holds them in the
+  frame's order;
+- it leaves no junk past the array, r1 + 224, and r3 = 0.
+- Its hook comes after its first six instructions (stored back chain, r1 - 224, the list in
+  r45, r44 = 1, r25 = r4 + 36, the first pattern in r57).
+
+The routine was written from the code alone, without a probe. The per-call check compares
+the whole local store and the registers, and it held from the first build.
+
+**Checked.**
+- Replay: 114 calls identical.
+- Game: 172,032 calls identical, none declined.
+- Strict replay: 0 differences.
+
+**Results.**
+- Replay: w15 25.4 -> 23.6-23.9 us a job (-6.5%), w16 26.4 -> 24.6-25.2 (-5.5%).
+- Gate, same build, three variants alternated, two runs each (`logs/edge-cmp/ab4`):
+  - this piece off: 18.50 (18.25 / 18.76) flips/s;
+  - all on: 18.29 (18.25 / 18.38), so this one is within the spread;
+  - the four pieces of today off (`GOWA_EDGE_NATIVE=4095`): 16.78 (17.12 / 16.68). The four
+    together are +9.0%.

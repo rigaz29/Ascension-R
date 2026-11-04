@@ -23,6 +23,9 @@
  "pic_0075EB40": {
   "pic_0075EB40_spu_func_00030310": "gowa_edge_decode_30310"
  },
+ "pic_00764D10": {
+  "pic_00764D10_spu_func_00030018": "?gowa_edge_pos_764d10"
+ },
  "pic_00765B70": {
   "pic_00765B70_spu_func_00030000": "?gowa_edge_pos_765b70"
  }

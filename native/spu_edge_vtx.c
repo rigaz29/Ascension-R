@@ -347,6 +347,115 @@ int gowa_edge_vtx_75bd10(spu_context* ctx)
     return 0;
 }
 
+/*
+ * The position-only unpacking: the piece of EA 0x764D10 (lifted as pic_00764D10),
+ * GOWA_EDGE_NATIVE bit 32768.
+ *
+ * The hook is at 0x30018, after its first six instructions:
+ *  - they store the back chain and take 224 from r1;
+ *  - they load the list into r45;
+ *  - they set r44 = 1 and r25 = r4 + 36;
+ *  - they load the first pattern into r57.
+ *
+ * The records are those of 0x75BD10 (above), but it unpacks only attribute 1: x y z, w = 1.0.
+ *  - The array is the first free slot's in the pool, and its word also goes to c + 0x5C.
+ *  - It writes the same 12 patterns to its frame, from its own pool, which holds them in the
+ *    frame's order.
+ *  - It leaves r1 + 224 and r3 = 0, and no junk.
+ * Declined as above.
+ */
+#define P10_POOL 0x301C0u
+#define P10_POOL_Q 14
+extern void pic_00764D10_spu_func_00030018(spu_context* ctx);
+static SPU_THREAD_LOCAL spu_context* t_p10_guard;
+static volatile long long s_p10_calls, s_p10_verts, s_p10_declined;
+
+/* its pool's quadword q (big-endian words): the 12 patterns in the frame's order, the identity
+ * pattern, then (0, 0, 0, 1.0) */
+static const uint32_t* p10_pool(int q)
+{
+    return q < 12 ? v9_pool[v9_frame_q[q]] : v9_pool[q == 12 ? 12 : 18];
+}
+
+static int p10_native(spu_context* ctx)
+{
+    uint8_t* ls = ctx->ls;
+    const uint32_t c = ctx->gpr[3]._u32[0], src = ctx->gpr[4]._u32[0], n = ctx->gpr[5]._u32[0];
+    const uint32_t sp = ctx->gpr[1]._u32[0];
+    if ((c & 15) || c + 0x170 > SPU_LS_SIZE || (sp & 15) || sp + 0xE0 > SPU_LS_SIZE) return 0;
+    if (n < 2 || n > 0x4000) return 0;
+    if ((ctx->gpr[44]._u32[0] & 0xFF) != 1 || ctx->gpr[25]._u32[0] != src + 36) return 0;
+    const uint32_t pool = (ctx->pic_base + P10_POOL) & (SPU_LS_SIZE - 1);
+    if ((pool & 15) || pool + 16u * P10_POOL_Q > SPU_LS_SIZE) return 0;
+    for (int q = 0; q < P10_POOL_Q; q++)
+        for (int k = 0; k < 4; k++)
+            if (ec_be32(ls + pool + 16 * q + 4 * k) != p10_pool(q)[k]) return 0;
+    for (int k = 0; k < 4; k++)
+        if (ctx->gpr[57]._u32[k] != p10_pool(0)[k]) return 0;
+    /* the list (r45): 1 into its first free slot */
+    uint8_t ids[16];
+    for (int k = 0; k < 4; k++) v9_put32(ids + 4 * k, ctx->gpr[45]._u32[k]);
+    int s = 0;
+    while (s < 16 && ids[s]) s++;
+    if (s == 16) return 0;
+    ids[s] = 1;
+    const uint32_t base = ec_be32(ls + c + 0x10 + 4 * s);
+    if (base & 15) return 0;
+    const uint32_t P0 = base & (SPU_LS_SIZE - 16), cnt = (n + 1) & ~1u, len = 16u * cnt;
+    if (P0 + len > SPU_LS_SIZE) return 0;
+    const uint32_t S0 = src & ~15u, S1 = (src + 18u * cnt + 96u + 15u) & ~15u;
+    if (src >= SPU_LS_SIZE || S1 > SPU_LS_SIZE) return 0;
+    {
+        const uint32_t other[4][2] = { { S0, S1 }, { c + 0x10, c + 0x170 }, { sp, sp + 0xE0 }, { pool, pool + 16u * P10_POOL_Q } };
+        for (int j = 0; j < 4; j++)
+            if (!v9_apart(P0, P0 + len, other[j][0], other[j][1])) return 0;
+        for (int i = 0; i < 4; i++)
+            for (int j = i + 1; j < 4; j++)
+                if (!v9_apart(other[i][0], other[i][1], other[j][0], other[j][1])) return 0;
+    }
+    memcpy(ls + c + 0x160, ids, 16);
+    v9_put32(ls + c + 0x5C, base);
+    for (int k = 0; k < 12; k++) memcpy(ls + sp + 0x20 + 16 * k, ls + pool + 16 * k, 16);
+    for (uint32_t v = 0; v < cnt; v++) {
+        const __m128i q = _mm_blend_epi32(_mm_loadu_si128((const __m128i*)(ls + src + 18u * v)), _mm_set1_epi32(0x0000803F), 8);
+        _mm_storeu_si128((__m128i*)(ls + P0 + 16u * v), q);
+    }
+    for (int k = 0; k < 4; k++) { ctx->gpr[1]._u32[k] += 224u; ctx->gpr[3]._u32[k] = 0; }
+    __atomic_add_fetch(&s_p10_verts, (long long)cnt, __ATOMIC_RELAXED);
+    return 1;
+}
+
+static void p10_stats(void)
+{
+    fprintf(stderr, "[edge-native] position unpack 764D10: %lld calls native, %lld vertices, %lld declined\n",
+            s_p10_calls, s_p10_verts, s_p10_declined);
+}
+static edge_vstat s_vp10 = { "position unpack 764D10", 0, 1, 0, 0, 0, 0, 0, 0 };
+static void p10_verify_report(void) { edge_vreport(&s_vp10); }
+
+/* The hook at 0x30018: 1 when the call is done (the function returns). */
+int gowa_edge_pos_764d10(spu_context* ctx)
+{
+    if (t_p10_guard == ctx) return 0;
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("GOWA_EDGE_NATIVE");
+        on = !e || (atoi(e) & 32768) != 0;
+        if (on && getenv("GOWA_EDGE_NATIVE_STATS")) atexit(p10_stats);
+        if (on && edge_verify_on()) atexit(p10_verify_report);
+    }
+    if (!on) return 0;
+    if (edge_verify_on())
+        return edge_verify(ctx, &s_vp10, p10_native, pic_00764D10_spu_func_00030018, &t_p10_guard);
+    if (p10_native(ctx)) {
+        __atomic_add_fetch(&s_p10_calls, 1, __ATOMIC_RELAXED);
+        return 1;
+    }
+    __atomic_add_fetch(&s_p10_declined, 1, __ATOMIC_RELAXED);
+    return 0;
+}
+
 #else
 int gowa_edge_vtx_75bd10(spu_context* ctx) { (void)ctx; return 0; }
+int gowa_edge_pos_764d10(spu_context* ctx) { (void)ctx; return 0; }
 #endif

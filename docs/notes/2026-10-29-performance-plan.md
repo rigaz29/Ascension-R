@@ -1654,6 +1654,20 @@ records of a position and a 48-bit code.
 - The gate, ABBA: off 17.95 (17.90 / 17.95) -> on 17.91 (17.71 / 18.10) flips/s, unchanged within
   the spread.
 
+**`0x764D10`, native** (bit 32768). The same records for the other two lists' jobs, positions only.
+- Written from the code, without a probe. Identical in 172,032 calls in the game, and by strict
+  replay.
+- Replay: w15 -6.5%, w16 -5.5%.
+- The gate: 18.50 off, 18.29 on, within the spread.
+
+**The four together.** One build, three variants alternated, two runs each (`logs/edge-cmp/ab4`):
+- `GOWA_EDGE_NATIVE=4095` (the four off): 16.78 (17.12 / 16.68) flips/s;
+- all on: 18.29 (18.25 / 18.38) flips/s, +9.0%.
+
+**Next in step 1:** `DCC0`, the index decompression (6% of the job). It is the biggest piece:
+five stages in place, and its scratch past the output goes out by DMA, so every stage has to
+be reproduced bit for bit.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
