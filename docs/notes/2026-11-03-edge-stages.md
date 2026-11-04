@@ -401,3 +401,44 @@ stage calls it from `0xD1E0` for the other two lists' jobs (w15 and w16).
 - Replay: w15 26.8-27.1 -> 25.4-25.9 us a job (-4.7%), w16 27.5 -> 26.4-26.6 (-3.6%).
 - Gate, same build, ABBA: off 17.56 (17.70 / 17.48) -> on 17.91 (17.72 /
   17.91) flips/s (+2.0%, within the spread; both rounds the same way).
+
+## The vertex unpacking, native (2026-11-04)
+
+The piece `0x75BD10` (3.8% of EDGE in the game) is native now (`spu_edge_vtx.c`,
+`GOWA_EDGE_NATIVE` bit 16384). The lit jobs call it to unpack their vertex stream into the
+position, and two unit vectors with a handedness.
+
+**Mapped from probed calls with a bit-exact model.** The model used the SPU's float ops (toward
+zero) and the runtime's `frsqest`/`fi` tables, and matched all 10,224 vectors of 12 calls.
+- A record is 18 bytes: x y z (F32), then a 48-bit code.
+- The piece adds attributes 1, 3 and 4 to the list, in its first three free slots. Their arrays
+  are the pool's words for those slots (`c + 0x10 + 4 slot`). The same words also go to
+  `c + 0x5C`, `c + 0x64` and `c + 0x68`.
+- Attribute 1 is x y z, with w = 1.0.
+- Attributes 3 and 4 come from the code's high and low 24 bits. Each is a unit vector stored as
+  two 10-bit components and a 4-bit pattern:
+  - `c = fma(A, f(0x3F800000 | m), B)`: m = 0..1023 becomes -0.7071..0.7071;
+  - the third component is `c3 = t * fi(t, frsqest(t))`, with `t = 1 - c1^2 - c2^2`;
+  - the pattern is one of 12 the piece writes to its frame. It puts c3 at x, y or z, gives it a
+    sign, and sets w to +-1. In attribute 3, w is -1 for nearly half the vertices.
+- Patterns 12-15 read past the table, into the caller's stack. Those vectors come out as the
+  piece's shuffle makes them from whatever is there. This happened for 16 pairs in the
+  replay's 68 calls. The routine does those pairs with the piece's own operations.
+- What else the piece leaves:
+  - the 12 patterns in its frame;
+  - two zero quadwords past the arrays of 3 and 4, from its first pass;
+  - r1 + 224, and r3 = 0.
+- The hook comes after the piece's first eight instructions. The dispatcher runs those: the
+  piece list lifts the piece from +0x20, but the job calls it at +0. Most pieces are listed
+  that way. Lifting them from entry 0 made no measurable difference in replay, so the list
+  stays as it is.
+
+**Checked.**
+- Replay: 68 calls identical, fast and exact.
+- Game: 188,416 calls identical, none declined.
+- Strict replay: 0 differences, both ways.
+
+**Results.**
+- Replay, the lit jobs: 68.3 -> 64.0 us (-6%).
+- Gate, same build, ABBA: off 17.95 (17.90 / 17.95) -> on 17.91 (17.71 / 18.10) flips/s. That is no change
+  beyond the spread; the two rounds went opposite ways.

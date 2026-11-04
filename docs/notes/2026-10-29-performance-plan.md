@@ -1642,6 +1642,18 @@ copied, 12 bytes a vertex.
 - The gate, ABBA: off 17.56 (17.70 / 17.48) -> on 17.91 (17.72 / 17.91) flips/s (+2.0%, within
   the spread).
 
+**`0x75BD10`, native** (`spu_edge_vtx.c`, bit 16384). The lit jobs' vertex unpacking: 18-byte
+records of a position and a 48-bit code.
+- The code holds two unit vectors (attributes 3 and 4), each as two 10-bit components and a
+  pattern of 12. The third component is a square root (`frsqest`/`fi`). The pattern gives its
+  place and sign, and a handedness w.
+- A pattern index past 11 reads the caller's stack; the routine does those pairs with the
+  piece's own operations.
+- Checked identical in 188,416 calls in the game, and by strict replay.
+- Replay: the lit jobs -6%.
+- The gate, ABBA: off 17.95 (17.90 / 17.95) -> on 17.91 (17.71 / 18.10) flips/s, unchanged within
+  the spread.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
