@@ -86,6 +86,39 @@ jobs); the hole is put together a quadword at a time.
   - the 272-byte viewport block, and a 64-byte matrix;
   - for lit jobs, lighting data, the fragment program object and its constants.
 
+## The segment header, and the pieces each format takes
+
+The 16 bytes at `c + 0x00` (one of the DMA list's elements, copied there) describe the segment.
+In every job the header's hole size matched the hole it wrote.
+
+| byte | field | seen |
+|---|---|---|
+| 0 | flags | 0x87 |
+| 1 | hole size, in 16 bytes | 0x0E-0x1D |
+| 2 | input vertex format | 0x01, 0x03, 0x0A, 0x0C |
+| 3 | secondary input format | 0 |
+| 4 | output vertex format | 0x00, 0x02, 0x04 |
+| 5 | vertex delta format | 0xFF (none) |
+| 6 | index kind (high nibble), skinning (low) | 0x20, 0x23 |
+| 7 | skinning matrix format | 0x02 |
+| 8-9, 10-11 | vertex count, index count | 24-568, 99-2850 |
+| 12-15 | index offset | 0xFFFFFFFF |
+
+Every job loads three pieces: an input unpacker, an output packer, and a piece that writes the
+vertex attribute methods into the hole.
+
+| input -> output | jobs | pieces |
+|---|---|---|
+| 0x01 -> 0x00 (position only) | 52 | `0x765B70` (12-byte out), `0x764D10` (18-byte records in), `0x7661C0` (the hole's slot-0 format/offset) |
+| 0x01 / 0x0A -> 0x00, fixed-point in | 23 (16 skinned) | `0x765B70`, `0x75EB40`, `0x7661C0` |
+| 0x03 -> 0x04 (lit) | 27 | `0x755B80` (54-byte out), `0x75BD10` (records in), `0x75FE80` (the seven slots) |
+| 0x03 / 0x0C -> 0x04, fixed-point in | 12 (3 skinned) | `0x755B80`, `0x758590` (or `0x75BD10`), `0x75FE80` |
+| others | 6 | `0x756DE0` / `0x760F30` / `0x7613D0`, `0x762470` / `0x765170`, ... |
+
+`0x7661C0` is straight-line code: it writes `VERTEX_DATA_ARRAY_FORMAT[slot] = 0xC32` and
+`VERTEX_DATA_ARRAY_OFFSET[slot]` into the hole buffer. `0x75FE80` does the same for the lit
+layout, but has not been read yet.
+
 ## What this means for a stub job
 
 The job's observable effects are three things:
