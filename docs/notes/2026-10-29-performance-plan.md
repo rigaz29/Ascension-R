@@ -1517,6 +1517,102 @@ only, and the other five workers carry the rest. A 15 s `PS3_FTRACE` (`logs/edge
 2. A whole-job native EDGE (2a), behind a switch, bit-exact by replay.
 3. Then the GPU (2b).
 
+### 2.23 Update, 2026-11-04: the gate at 16.9 flips/s; the audio SPU
+
+After phase 2a's native code (EDGE's lighting, culling and transform:
+[notes](2026-11-03-edge-stages.md)), what bounds the gate. 15 s `PS3_FTRACE` as in 2.22
+(`logs/gate-now/gate1.ft`, 254 frames, median 59.5 ms; 2.22's numbers in brackets):
+
+| a frame | SPU busy | a run open | width |
+|---|---|---|---|
+| EDGE w14-16 | 162.6 ms (227.6) | 47.9 ms | 3.40 |
+| General6 w2 | 59.7 ms (66.8) | 32.6 ms | 1.84 |
+| audio w7 (SPU 5) | 26.2 ms (34.3) | 26.2 ms | 1.00 |
+| RenderJobs w12 | 25.3 ms | 15.9 ms | 1.76 |
+| RenJobSet w8-11 | 24.2 ms | 11.0 ms | 2.47 |
+| all | 311.7 ms (395.7) | | |
+
+**Still the SPUs' throughput.**
+- SPUs 0-3 are 97% busy (EDGE ~69% of each). SPU 4 is 96.6% (General6, RenderJobs, RenJobSet).
+- (311.7 - 26.2) / 5 x 1.02 = 58.2 ms, against 59.5 measured.
+- SPU 5 runs audio alone (Steady audio) and is 44% busy. That worker was the sampler's 10%
+  "idle".
+- The main thread does 22.6 ms of its own work a frame (a limit at ~44 flips/s). The frame
+  clock thread takes 31 ms of CPU (~32 flips/s).
+- The title's priority tables:
+  - the EDGE lists: 3 on SPUs 0-3, 0 on SPUs 4-5 (maximum contention 8);
+  - audio: SPU 5 only;
+  - on SPU 5 also HighestPrio6 1, Batch 2, Network 3, RenJobSet 8, RenderJobs 10, General6 11,
+    SysMisc 15.
+
+**EDGE cannot use SPU 5.**
+- Every EDGE job takes one per-SPU line with GETLLAR and puts it back with PUTLLUC, at
+  EA = 0x73254380 + 128 x SPU.
+  - Found by fitting the 120 captured jobs' DMA and atomic addresses against their SPU number
+    (LS `0x1C8`): all three lists, every job, and nothing else depends on it.
+  - The line is that SPU's output ring: start, end, current, and the RSX labels
+    0x20000C80 + 16 x SPU.
+- In the game, the descriptor at 0x73254300 holds lines for SPUs 0-3, and the lines of SPUs 4
+  and 5 are zero. The rings take 4 x 2.75 MB, the second region 4 x 0x60000. (Probed at the
+  job's get-SPU-number routine, `0xF770`.)
+- EDGE on SPU 5 would write its output near address 0.
+- The job manager's own per-SPU state is not the obstacle: a halfword per SPU in one quadword
+  of the list header, room for 8.
+
+**SPU 5 lent to others** (fork: `SPURS_LEND=<workload>[,...]`, beside `SPURS_RESERVE`).
+- A lent workload may take the reserved SPU where the title's table gives it a priority there.
+- It is never as strong as the reserved workload. The Wws job manager polls the kernel between
+  jobs and gives way to a stronger workload, so audio waits at most one of the lent jobs.
+- The jobs at the gate (`SPU_JOB_TIME`, now with p99 and the maximum):
+
+| workload | mean | p99 |
+|---|---|---|
+| EDGE | ~100 us | < 512 us |
+| RenJobSet | 58-100 us | < 512 us |
+| Batch | 285 us | < 1 ms |
+| audio | 135 us | < 1 ms |
+| General6 | 1.24 ms | < 4 ms |
+| RenderJobs | 0.72 ms | < 2 ms |
+| MeshProc | 0.96 ms | < 4 ms |
+
+The measurements, one build, ABBA, two runs a side. The audio columns are a kick of workload 7
+waiting for a pick (`SPURS_KICK_PROF`):
+
+| | gate flips/s | policy modules | audio kick, mean | audio kick, max |
+|---|---|---|---|---|
+| reserved | 16.78 (17.09 / 16.23) | 531% | 0.08-0.30 ms | 2.1-5.0 ms |
+| + RenJobSet, Batch, HighestPrio6, Network, SysMisc | 17.02 (17.17 / 16.77) | 545% | 0.11-0.16 ms | 2.8-3.9 ms |
+| reserved (second round) | 16.59 (16.62 / 16.32) | 531% | 0.12-0.29 ms | 2.5-4.6 ms |
+| + General6 too | 17.51 (17.51 / 17.51) | 591% | 1.2-1.4 ms | 5.7-12.5 ms |
+
+The scripted parasite fight with an empty shader cache, the case that had gaps before Steady
+audio (`logs/gate-now/fight-lend`, `fight-lend-b1`):
+
+| | flips/s | gaps | ring 1-2 blocks ahead (reports) | audio kick, mean | audio kick, max |
+|---|---|---|---|---|---|
+| reserved | 17.16 / 16.77 | 0 | 4 / 5 | 0.27 / 0.49 ms | 11.7 / 19.0 ms |
+| + General6 & co. | 17.51 / 18.53 | 0 | 238 / 71 | 0.73 / 0.65 ms | 24.6 / 13.0 ms |
+| reserved | 17.19 / 17.44 | 0 | 5 / 50 | 0.28 / 0.43 ms | 10.9 / 16.4 ms |
+| + the short-job ones | 17.71 / 17.34 | 0 | 7 / 12 | 0.19 / 0.19 ms | 7.9 / 14.8 ms |
+
+**The short-job workloads.**
+- They have little to run in parallel: their runs are half empty.
+- SPU 5 takes +10-15% of a core of their work. Frames +1.2-1.4%, within the spread.
+- Audio is as before.
+- **Kept, on by default with Steady audio.**
+
+**General6.**
+- Lent too, it fills SPU 5 (+60% of a core): +5.5% at the gate, +6% in the fight. That is what
+  Steady audio off gives (2.22: +5.7%).
+- Audio's kicks wait ~1.3 ms on average and 12-25 ms at most.
+- The ring was only 1-2 blocks ahead 15-50 times as often, though without a gap in these runs.
+- So that trade stays the launcher's switch. Steady audio now costs ~4% of the frames.
+
+**Next at the gate:** the SPU work itself.
+- EDGE: 162.6 ms a frame, 57%.
+- General6: 59.7 ms, 21% (its noise subroutine, 2.21).
+- RenderJobs and RenJobSet: ~25 ms each.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

@@ -1152,9 +1152,18 @@ static void title_environment(void)
      * (SPURS_RESERVE=7:5). In the parasites' fight a kick of it waited up to 8-16 ms
      * for SPU 5 while other workloads' jobs held it -- past the ~16 ms of blocks the
      * title keeps ahead, so the blocks played as gaps. Reserved: 1.6-6.8 ms, for ~2.5%
-     * fewer flips (docs/notes/2026-11-03-parasite-stutter.md). */
-    if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1))
+     * fewer flips (docs/notes/2026-11-03-parasite-stutter.md).
+     * SPU 5 is then lent to the workloads whose jobs are short, when audio leaves it free
+     * (SPURS_LEND): RenJobSet, Batch and three small lists, jobs ~0.06-0.3 ms (p99 under
+     * 1 ms), never as strong as audio, so a kick of audio waits at most one of their jobs.
+     * At the gate SPU 5 was 56% idle; lent, it takes +10-15% of a core of their work,
+     * +1-1.5% flips (within the spread), audio's kicks and ring as before. General6 (jobs
+     * 1-4 ms) stays off it: lent too, it gives what Steady audio off gives (+5.5-6%), with
+     * audio's kicks at ~1.3 ms on average and 12-25 ms at most (performance plan, 2.23). */
+    if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1)) {
         env_default("SPURS_RESERVE", "7:5");
+        env_default("SPURS_LEND", "HighestPrio6,SysMisc,Network,BatchJobList,RenJobSet");
+    }
     /* Each display buffer its own target, the flipped one presented: the title
      * draws its video into one buffer, tonemaps into the next and composites
      * its post chain into a third within one frame, and with a single
