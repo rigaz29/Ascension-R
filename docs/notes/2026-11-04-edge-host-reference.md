@@ -225,6 +225,55 @@ The core is built bottom-up:
     - 3 skinned lit (`0x758590`);
     - 1 of `0x762470`.
 
+**2. The output stage, `0x9080` (first part, done; `native/spu_edge_out.c`, `GOWA_EDGE_OUT=1`,
+off by default).** It is the most valuable common block of glue: 4.4 µs of a position-only job
+and ~7 µs of a lit job, in the game.
+- **What it does.** Mapped from the lifted code (`0x9090` and its helpers):
+  - the ring allocation: round128(round16(vertexes x stride) + 2 x round8(indexes)) bytes;
+  - the index PUT and the vertex PUT(s), through `0xAF38`'s pieces (16 KB, then the 16-byte
+    multiple, then 8/4/2/1), each between a `SPU_RdMachStat` read and interrupts back on;
+  - the vertex packing through the piece at `c + 0x8C`;
+  - the hole, built in the local store at the hole EA's 128-byte offset, a word at a time (so
+    the NOP data keep the stale bytes):
+    - the method piece, and the program binding when there is one;
+    - then per pass (w34 byte 1: the count in the high nibble, a mask in the low one):
+      - the viewport (`0x0A00`, `0x0394`, `0x0A20` x8, with SPU float ops);
+      - the scissor (`0x08C0`) and `0x1EFC` x5;
+      - `INVALIDATE_VERTEX_FILE` and `INDEX_ARRAY_ADDRESS`;
+      - `BEGIN_END` 5 and `DRAW_INDEX_ARRAY`: up to the index data's first 128-byte boundary,
+        then 2047 x 256 indexes under one non-increment header, then the rest;
+      - `BEGIN_END` 0;
+  - the hole's end and its fenced PUT.
+- **What is native.** All of it but four parts, which it calls as the lifted code calls them
+  (same link, then the drain):
+  - the ring allocation `0xC628`, with the ring line protocol and the wait for the GPU;
+  - the method piece through `0x5D68`;
+  - the program binding `0x84C0`, when there is one;
+  - the hole's end `0xCC98`.
+  The hole set-up's 4-byte label read is handed to the lifted `0xC9A8` (never seen).
+- **How it is written.** Its arithmetic is the lifted code's, op for op, with the same SPU helpers
+  on locals. It drops the register file, the interrupt checks at every label, and the
+  dispatcher's round trip at every interrupt enable and disable.
+- **When it declines.** With an interrupt pending, or a stride callback at `c + 0x88`.
+- **Checked.**
+  - Replay, state mode with `SPU_JOB_REPLAY_STATE=0-3E000,3F780-40000` (all but the frames
+    below the job's main frame): the 120 gate jobs and the 160 consecutive ones, 0 differences
+    (560 calls).
+  - Strict mode: the PUT and atomic bytes are the same; only 109 bytes of callee frames and
+    scratch registers differ.
+  - In the game: 2,686,976 calls (63,433 of them empty draws), none declined. Then 180 jobs
+    captured with it on were replayed with it off, and the lifted code gives the same output
+    (state mode, 0 differences).
+- **Speed.**
+  - Replay: about 2 µs a job less (w15 25.0 -> 23.1 µs).
+  - Gate, ABBA, 2 runs each: 18.19 -> 18.70 flips/s (+2.8%). Both runs on are above both
+    runs off, though the spread is about ±0.3.
+  - A first A/B had shown -3%. The stats test called `getenv` on every call; the CRT's
+    environment lock, taken from six SPU threads, cost more than the native saved. The flag is
+    now read once, and the counts run only with the stats on.
+- **Next.** The ring allocation and the hole's end as native code. Then this goes on by
+  default, as a `GOWA_EDGE_NATIVE` bit, with the replay check in state mode.
+
 Natives inside the job have one more rule than step 1's. Their channel operations must be the
 lifted code's, in its order: the glue reads `SPU_RdMachStat` around its critical sections, and
 the replay serves every read from the record. And they must not run with an interrupt pending,
