@@ -119,6 +119,43 @@ vertex attribute methods into the hole.
 `VERTEX_DATA_ARRAY_OFFSET[slot]` into the hole buffer. `0x75FE80` does the same for the lit
 layout, but has not been read yet.
 
+## The pipeline, end to end
+
+Mapped with a call trace of the replay (temporary, not kept). Marks at every call in the lifted
+module recorded:
+- the call's arguments and cycles;
+- the attribute list at `c + 0x160` after it;
+- the local-store ranges it wrote, named by the attribute arrays of the pool at `c + 0x10`.
+
+The 120 jobs fall into 9 call sequences, four of them common. The stage driver is `0x51D0`;
+its second half runs inside `0x17E0`.
+
+| step | function | position only | lit | skinned |
+|---|---|---|---|---|
+| set-up, DMA | `0x9990`, `0xAF38`, `0x88B0` | fills the context (header, tables, empty list) | same | same |
+| unpack | `0xDBF8` -> `0xDBC8` -> the input piece | id 1 | ids 1, 3, 4 | id 1 (and 3, 4 for lit) |
+| transform | `0xF538` (`r6` the matrix) | id 1 (unchanged at the gate: an identity) | ids 1, 3, 4 (two matrices) | - |
+| skinning | `0xE550` -> `0xBBC8` per array | - | - | ids 1, 3, 4 in place, a matrix buffer, a temporary array |
+| the rings | `0x41A0` -> `0xF770` (SPU number), `0x4110` x2 | both lines to `0x3F580` | same | same |
+| indices | `0xE4D0` | in place | same | same |
+| draw constants | `0x67C0` | a 16-byte record on the stack | the 176-byte constant block | as its kind |
+| fragment program | `0x61B0` | (some) | copy and patch, 2,192 bytes | as its kind |
+| culling | `0xD618` (-> `0xD640`, `0xD250`) | - | the index list compacted, a temporary array | lit only |
+| more attributes | `0xBFA8` x4, `0xBEE0`, `0x9A60` | - | ids 27-30 added | lit only |
+| attribute methods | `0xA880` (the pieces at `0x111C0` / `0x111F0`) | stack only | stack only | same |
+| lighting | `0x73E0` | - | ids 27 (F32x3) and 28-30 (F16x3) written | lit only |
+| output | `0x9080` | `0x765B70`, the ring, the hole | `0x755B80`, the second ring, the hole | as its kind |
+
+So:
+- Positions take unpack, transform, indices and output. Culling is not done at all for them;
+  they are the depth and shadow passes.
+- Lit vertices add the frame (normal and tangent), culling, the per-draw constants and program,
+  and the lighting. Lighting makes the four attributes (27-30) that `0x755B80` packs as F32x3
+  and F16x3.
+- Skinning replaces the transform.
+- Small accessors (`0x5C88`, `0xB638`-`0xB660`, `0xBEE0`, `0xBFA8`, `0xB600`) look up and register
+  attribute arrays in the context's tables.
+
 ## What this means for a stub job
 
 The job's observable effects are three things:
@@ -130,6 +167,7 @@ Anything that makes the same three, in the same order and with the same labels, 
 for the SPU job.
 
 **Still to map:**
-- the descriptor's, parameter block's and attribute descriptors' fields;
-- which inputs feed which stage (the input contract);
+- the descriptor's, parameter block's and attribute descriptors' fields, and which input block
+  feeds which step (the matrices, the lights, the skinning matrices);
+- `0x67C0`, `0x61B0`, `0x9A60`, `0xA880` and `0x75FE80` inside, and the skinning's formats;
 - the wrap path, exercised (it needs a longer run than the 120 jobs).
