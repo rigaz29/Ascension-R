@@ -2,8 +2,12 @@
 
 Written 2026-11-05, branch `edge`, at port `6bfc470`. The question: General6 (w2) is now the largest
 workload after EDGE, and the largest of all in the fight, and it has no native code. Its noise
-subroutine is about half of it at the gate. Should that become native code? Nothing here is
-implemented; the measurements came from a temporary hook (not kept).
+subroutine is about half of it at the gate. Should that become native code? The measurements below
+came from a temporary hook.
+
+**Since then:** option A is in, on by default: `native/spu_g6_noise.c`, `GOWA_G6_NOISE` (0 off, the
+default in a replay and a capture; 2 the check). Replay of `logs/jobcap6` in each mode, state compare:
+0 differences. The gate with it, two runs: 25.36 flips/s.
 
 **The result:** no native code is needed. In the levels the game sets the noise's scale to zero, so
 every call computes the noise at (0, 0, 0, 0) and gets 0. A test of the four arguments at the
