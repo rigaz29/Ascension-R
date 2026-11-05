@@ -10,7 +10,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 | 2b.0 | measure: EDGE's draws, vertex bytes and backend time a frame; the GPU's load | done | fork `b1121f5d` |
 | 2b.1 | the backend's compute, and the first stage on the GPU: lighting | done | fork `ab93538e` |
 | 2b.2 | culling on the GPU: the RSX's own face culling, no compute | done, on by default since a draw's pieces go in one call | fork `825afdcd` |
-| 2b.3 | the other stages, back to front | under review: see [the review](2026-11-05-edge-gpu-review.md) | |
+| 2b.3 | the other stages, back to front | replaced: see [the second review](2026-11-06-edge-gpu-review-2.md): kept results in GPU memory, then skinning from cached inputs | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
 | fc.1 | the frame clock thread, first round: per-draw work shared along runs of draws | done | fork `43a1386f` |
 | fc.2 | the frame clock thread, second round: a render thread | tried, not merged: ~3% slower (the SPU workers set the frame); mode 1 hangs the GPU | fork branch `perf/d3d12-render-thread` (`88bb0c16`) |
@@ -454,6 +454,9 @@ on the frame clock thread (then 2b.2's switch), the job as C code, and the stage
 
 ## Progress log
 
+- 2026-11-06: [second review](2026-11-06-edge-gpu-review-2.md). EDGE counts again in both scenes. The
+  stages are 18-23% of it, jobs with a kept result 49-63%, and the step around the job manager's `0x17E0`
+  12.5 µs of every job. Proposed: kept results in GPU memory, then skinning from cached inputs.
 - 2026-11-04: plan written; tolerance checking for GPU stages agreed; 2b.0 started.
 - 2026-11-04: 2b.0 done. EDGE's draws already take the raw fetch, so the native draw step was
   folded in, and the steps were renumbered: 2b.1 is now the compute with lighting. Zero-copy

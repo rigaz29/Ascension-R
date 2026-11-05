@@ -1945,6 +1945,14 @@ CR and XER, about 13% fewer instructions in the lifted code.
 A baseline in a bench goes in a folder of its own under the name `GowARecomp.exe`, with a copy of
 `build/gowa.ini`: the same binary ran ~2% slower in the fight as `m1.exe`.
 
+### 2.30 Update, 2026-11-06: EDGE on the GPU, second review
+
+[The review](2026-11-06-edge-gpu-review-2.md). With the main thread faster, 25% more EDGE costs 6% of the
+frames in both scenes. A job with a kept result does no math and still costs 34 or 54 µs: those jobs
+are 49-63% of EDGE's time, and the step around the job manager's `0x17E0` is 12.5 µs of every job. So
+moving stages stays poor. What the GPU can take is the geometry itself: kept results in GPU memory,
+then skinning from cached inputs.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
