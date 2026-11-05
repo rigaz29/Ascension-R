@@ -27,7 +27,7 @@ Two job modules, two kinds of job.
 |---|---|---|
 | `a67e549fa0ab`, jobs at `0x81E8`: the noise chain (`0x4930`, `0x4AB0`, `0x4E9C`, `0x4F00`) | 49% | 36% |
 | the same module, the loop around it (`0x63B4`) | 7% | 5% |
-| `1bdd67b54c3b`, jobs at `0xBF60`: `0x5C40`, `0x53E0`, `0xA588`, `0x4ED0`, ... | ~38% | ~45% |
+| `1bdd67b54c3b`, jobs at `0xBF60`: `0x5C40`, `0x53E0`, `0xA588`, `0x4ED0`, ... | ~38% | ~50% |
 | the runtime | ~6% | ~9% |
 
 Its code is 91-94% lifted. It takes 155% of a core at the gate and 185-196% in the fight, where EDGE
@@ -44,7 +44,8 @@ now takes 155%.
   28-30), and colours.
 - **Its loop.** Four pixels a group: four calls of `0x4930` (four octaves, four arguments each, a
   pixel a lane) are summed, and each channel is clamp(sum x 0.5 x gain + base), then F16.
-- **A call** is ~860 SPU instructions, ~0.5 µs lifted. A job makes 2,048 calls, 16 jobs a frame.
+- **A call** is ~860 SPU instructions, ~0.9 µs lifted in the game. A job makes ~2,100 calls, and 16
+  jobs a frame make ~35,000.
 
 ## What the probes found
 
@@ -75,8 +76,10 @@ now takes 155%.
    | 31 | 0.295 | 0.05 |
    | 32-34 | 1, 0.221, 0.456 | 0.25, 0.1, 0.35 |
 
-   The fight's and the first level's have the same zeros. This is the game's own data: the level
-   turns the noise off by its scale, and the job computes it anyway. The PS3 spent the same SPU time.
+   The first level's record (`logs/jobcap6`) has the same zeros; the fight's was not printed, but
+   its arguments are zero too. This looks like the game's own data: the level turns the noise off by
+   its scale, and the job computes it anyway, so the PS3 would spend the same SPU time. That was not
+   compared with the real thing.
 
 ## Why the earlier oracle saw less
 
@@ -123,5 +126,5 @@ With the hook on, each part 25% slower, the gate, two runs each (`logs/edge-ana/
   2b plan's second round) because the workers were the limit then.
 - **The fight is different:** the frame clock thread at 62%, the workers at 507% of 600%, the main
   thread at 94%. What sets it there was not probed.
-- The `0xBF60` jobs are General6's other half, ~33 ms a frame at the gate, ~45 in the fight. Their
+- The `0xBF60` jobs are General6's other half, ~24 ms a frame at the gate, ~45 in the fight. Their
   output changes every frame, so nothing can be kept from it. They were not looked at further.
