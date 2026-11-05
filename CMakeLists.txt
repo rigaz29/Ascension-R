@@ -522,6 +522,13 @@ if(PORT_PPU_FAST_FP)
     set_property(SOURCE ${RECOMP_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_FAST_FP)
 endif()
 
+# The lifted code's memory helpers without their per-function arithmetic, the store watches and the
+# alignment branches (ppu_recomp.h). main.cpp calls ppu_mm_fix before the guest runs.
+option(PORT_PPU_MM_LEAN "Lifted game code: the lean memory helpers" ON)
+if(PORT_PPU_MM_LEAN)
+    set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_MM_LEAN)
+endif()
+
 # ---------------------------------------------------------------------------
 # Install
 # ---------------------------------------------------------------------------
