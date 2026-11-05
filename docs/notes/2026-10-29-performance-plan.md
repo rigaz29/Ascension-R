@@ -846,6 +846,12 @@ skipped, splitting it into a walk thread and a render thread (RPCS3's "Multithre
 not raise the frame rate, which the SPU side sets (2.12, comparison 4.6). It is the step to take
 when the frame clock is the limit again.
 
+**Tried 2026-11-05** (phase 2b plan, "a render thread"; fork branch `perf/d3d12-render-thread`):
+the recording and the presents on a render thread took the frame clock thread from ~73% of a
+core to ~41%, and the frame rate fell ~3% at the gate (20.87 -> 20.18 flips/s, two runs each),
+with the PPU main thread at ~94%. As above: not the limit yet. Its fastest mode (the walk going
+on past the batch's reset) also hung the GPU in two of four runs, not yet found.
+
 ### 2.15 Update, 2026-11-01: the runtime's work inside an EDGE job
 
 The EDGE workers set the frame (2.12, comparison 4.6: EDGE phase 35.9 against RPCS3's 27.6 ms,
