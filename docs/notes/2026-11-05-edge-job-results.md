@@ -109,8 +109,8 @@ skinned jobs' natives ~8%, the packing's copy 3%, the output stage 3%.
 - A hit could leave more out: `0x88B0` and `0xBFB8` (~2%) if the context were restored.
 - The rest of C, the glue, stays poor value for now.
 - The workers' largest single job now is not EDGE's: General6 (w2) takes ~64 ms a frame at the gate
-  and 186% of a core in the fight, and has no native code. Its noise subroutine is ~45% of it
-  (performance plan 2.21, where it could not show: nothing was full then).
+  and 186% of a core in the fight, and has no native code. Its noise subroutine is ~45% of it: see
+  [the review](2026-11-05-general6-noise-review.md).
 
 ## A hang that is not new
 

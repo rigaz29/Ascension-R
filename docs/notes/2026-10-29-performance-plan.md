@@ -1922,6 +1922,14 @@ With culling on the RSX a job's output no longer depends on the camera, and 95% 
 jobs repeat one already done, so a result is kept and the stages left out. All of A, B and this: the
 gate 22.89 -> 24.40 flips/s, the warm fight 21.17 -> 21.56, EDGE 114 -> 87 ms of worker time a frame.
 
+### 2.28 Update, 2026-11-05: General6's noise reviewed
+
+[The review](2026-11-05-general6-noise-review.md), nothing implemented yet. In the levels the record
+sets the noise's scale to zero, so every call of `0x4930` computes the noise at (0, 0, 0, 0). A
+temporary hook returning 0 for zero arguments: the gate 24.20 -> 25.63 flips/s, the warm fight 21.20 ->
+23.15, General6 halved, and the output the same. 2.21's "at most ~3%" no longer holds: nothing was
+full then. With it the gate is bound by the frame clock thread (+25% there: -13.6%).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
