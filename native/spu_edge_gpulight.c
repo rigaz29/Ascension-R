@@ -50,6 +50,14 @@
  * GOWA_EDGE_GPU_SELFTEST=1 with GOWA_EDGE_GPU=1 checks the C version of the pass (the backend's
  * fallback) against the SPU: at the publish, over the packed vertexes the job is putting out, for
  * the vertexes the stage lit (its list, in the eighth array's fourth words); counts at exit.
+ *
+ * With the stage skipped (GOWA_EDGE_GPU_LEAN=0 keeps them) two things before it have no reader:
+ *  - the binormals, 0xA880's loop at 0xA950 into the eighth array: its result is the stage's r10
+ *    and nothing else's. Its hook at 0xA928, with the array in place, leaves the loop out and
+ *    returns as 0xA880 does. If the stage runs on the SPU after all (declined at its entry, or run
+ *    late), 0xA880 runs first, from its arguments (eg_binorm_late);
+ *  - ids 27-30 in the output piece: the pass writes over them. It packs bytes 0-23 of a vertex
+ *    (spu_edge_cmp.c); the rest of the 54 are whatever the local store held.
  */
 #include "spu_context.h"
 #include "spu_helpers.h"
@@ -60,6 +68,9 @@
 
 #define EG_MAX_LIGHTS 32
 #define EG_STRIDE     54
+
+/* the lit layout: the attribute ids at c + 0x160 */
+static const uint8_t eg_ids[8] = { 1, 3, 4, 27, 28, 29, 30, 0 };
 
 /* the record, as the backend copies it for the shader (host order, 4-byte words) */
 typedef struct {
@@ -75,19 +86,23 @@ extern void rsx_d3d12_vertex_pass_set(const char* hlsl, uint32_t stride, uint32_
 extern void rsx_d3d12_vertex_pass_publish(uint32_t io_offset, uint32_t nverts, const void* rec,
                                           uint32_t bytes, uint32_t applied, const void* tag16);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0(spu_context* ctx);
+extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000A880(spu_context* ctx);
 
 static void eg_cpu(const void* rec, const uint8_t* src, uint8_t* dst, uint32_t n);
 static const char* eg_hlsl(void);
 static void eg_selftest(const uint8_t* ls, const eg_rec* r, uint32_t n);
 
 static volatile long long s_eg_taken, s_eg_skipped, s_eg_declined, s_eg_published, s_eg_unskipped, s_eg_lost;
+static volatile long long s_eg_binorm, s_eg_binorm_late;
 static int s_eg_stats;
 #define EG_COUNT(v) do { if (s_eg_stats) __atomic_add_fetch(&(v), 1, __ATOMIC_RELAXED); } while (0)
 static void eg_report(void)
 {
     fprintf(stderr, "[edge-gpu] lighting: %lld records taken (%lld stages skipped), %lld declined; "
-            "%lld published, %lld skipped stages run late, %lld records dropped\n",
-            s_eg_taken, s_eg_skipped, s_eg_declined, s_eg_published, s_eg_unskipped, s_eg_lost);
+            "%lld published, %lld skipped stages run late, %lld records dropped; "
+            "binormals left out %lld, %lld of those run after all\n",
+            s_eg_taken, s_eg_skipped, s_eg_declined, s_eg_published, s_eg_unskipped, s_eg_lost,
+            s_eg_binorm, s_eg_binorm_late);
 }
 
 static int eg_mode(void)
@@ -124,6 +139,8 @@ static SPU_THREAD_LOCAL struct {
     uint32_t n;                /* lights */
     uint8_t  head[16];         /* c + 0x00 (the job's segment header): the job the record is of */
     u128     regs[16];         /* r0-r15 at the stage's entry, to run it late */
+    int      binorm;           /* 0xA880's loop left out; its arguments */
+    u128     binorm_c, binorm_n;
     eg_rec   rec;
 } t_eg;
 static SPU_THREAD_LOCAL int t_eg_late;    /* running a skipped stage late: no record, no skip */
@@ -133,6 +150,75 @@ static inline uint32_t eg_be32(const uint8_t* ls, uint32_t a)
     const uint8_t* p = ls + (a & (SPU_LS_SIZE - 1));
     return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3];
 }
+
+static int eg_lean(void)
+{
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("GOWA_EDGE_GPU_LEAN"); v = !(e && e[0] == '0'); }
+    return v;
+}
+
+/* 0xA880's loop is about to run (its hook at 0xA928, the array in place), from the stage driver, in
+ * a job of the lit layout: leave it out and return as the function does at 0xAD48. The stage's own
+ * entry decides whether the array is wanted after all. The driver may not call the stage at all (no
+ * lights): then nothing reads the array. */
+int gowa_edge_binorm_a928(spu_context* ctx)
+{
+    if (eg_mode() != 2 || t_eg_late || !eg_lean()) return 0;
+    const uint32_t sp = ctx->gpr[1]._u32[0];
+    t_eg.binorm = 0;
+    if (ctx->gpr[80]._u32[0] != 0x107A0 || eg_be32(ctx->ls, sp + 0x80) != 0x54F8 ||
+        memcmp(ctx->ls + 0x107A0 + 0x160, eg_ids, 8))
+        return 0;
+    t_eg.binorm = 1;
+    t_eg.binorm_c = ctx->gpr[80];
+    t_eg.binorm_n = ctx->gpr[83];
+    EG_COUNT(s_eg_binorm);
+    ctx->gpr[3] = ctx->gpr[53];
+    ctx->gpr[0] = spu_ls_read128(ctx, sp + 0x80);
+    ctx->gpr[1] = spu_ai(ctx->gpr[1], 112);
+    const uint32_t s = sp + 112;
+    ctx->gpr[126] = spu_ls_read128(ctx, s - 0x50);
+    ctx->gpr[80] = spu_ls_read128(ctx, s - 0x10);
+    ctx->gpr[81] = spu_ls_read128(ctx, s - 0x20);
+    ctx->gpr[82] = spu_ls_read128(ctx, s - 0x30);
+    ctx->gpr[83] = spu_ls_read128(ctx, s - 0x40);
+    return 1;
+}
+
+/* The stage runs on the SPU after all: the binormals first, all registers kept (all below the
+ * stack pointer is free at the stage's entry and the output stage's). */
+static void eg_binorm_late(spu_context* ctx)
+{
+    if (!t_eg.binorm) return;
+    t_eg.binorm = 0;
+    u128 regs[128];
+    memcpy(regs, ctx->gpr, sizeof regs);
+    ctx->gpr[3] = t_eg.binorm_c;
+    ctx->gpr[4] = t_eg.binorm_n;
+    EG_COUNT(s_eg_binorm_late);
+    ctx->gpr[0] = spu_link(0x54F8);
+    const int ie = ctx->int_enable;
+    ctx->int_enable = 0;
+    const int late = t_eg_late;
+    t_eg_late = 1;
+    const int32_t si = (int32_t)ctx->image_id;
+    ctx->host_depth++;
+    jobmod_e8f44fbc6dbf_e6D98_spu_func_0000A880(ctx);
+    spu_drain_call(ctx, 0x54F8);
+    ctx->host_depth--;
+    spu_img_restore(ctx, si);
+    t_eg_late = late;
+    ctx->int_enable = ie;
+    memcpy(ctx->gpr, regs, sizeof regs);
+}
+
+/* the output piece (spu_edge_cmp.c): the stage is skipped, and the pass will write ids 27-30 */
+int edge_gpul_lean_pack(void)
+{
+    return t_eg.state == 2 && eg_lean();
+}
+
 static inline float eg_f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 
 /* What the stage writes that is put out besides ids 27-30: the index list (u16, at c + 0x50's first
@@ -159,8 +245,7 @@ int edge_gpul_capture(spu_context* ctx)
     const uint8_t* ls = ctx->ls;
     const uint32_t c = ctx->gpr[3]._u32[0], r5 = ctx->gpr[5]._u32[0], r8 = ctx->gpr[8]._u32[0];
     const uint32_t r12 = ctx->gpr[12]._u32[0], flags = ctx->gpr[13]._u32[0];
-    static const uint8_t ids[8] = { 1, 3, 4, 27, 28, 29, 30, 0 };
-    int ok = c == 0x107A0 && r5 != 0 && r8 == 0 && (flags & 0x800) == 0 && !memcmp(ls + c + 0x160, ids, 8);
+    int ok = c == 0x107A0 && r5 != 0 && r8 == 0 && (flags & 0x800) == 0 && !memcmp(ls + c + 0x160, eg_ids, 8);
     /* the arguments name the pool's arrays: r9 id 1, r4-r7 ids 27-30 */
     if (ok)
         ok = ctx->gpr[9]._u32[0] == eg_be32(ls, c + 0x10) && ctx->gpr[4]._u32[0] == eg_be32(ls, c + 0x1C) &&
@@ -175,7 +260,7 @@ int edge_gpul_capture(spu_context* ctx)
              (uint64_t)r12 + o0 + 16 * n <= SPU_LS_SIZE && (uint64_t)r12 + o1 + 16 * n <= SPU_LS_SIZE &&
              (uint64_t)r12 + o2 + 16 * n <= SPU_LS_SIZE;
     }
-    if (!ok) { EG_COUNT(s_eg_declined); return 0; }
+    if (!ok) { EG_COUNT(s_eg_declined); eg_binorm_late(ctx); return 0; }
     const uint32_t n = n0 + n1 + n2;
     eg_rec* r = &t_eg.rec;
     r->n0 = n0; r->n1 = n1; r->n2 = n2; r->flags = flags;
@@ -198,14 +283,28 @@ int edge_gpul_capture(spu_context* ctx)
     return mode == 2;
 }
 
+/* the output stage native, at its entry: a job that will publish keeps its record */
+int edge_gpul_defer_test(void)
+{
+    static int d = -1;
+    if (d < 0) { const char* e = getenv("GOWA_EDGE_GPU_DEFER"); d = e && e[0] == '1'; }
+    return d;
+}
+
 /* The output stage runs lifted, or has nothing to draw: a skipped stage runs now, from the
  * registers it was called with (all below the stack pointer is free at the stage's entry), with
  * interrupts held off; the record is dropped. */
 void edge_gpul_unskip(spu_context* ctx)
 {
-    if (t_eg.state != 2) { t_eg.state = 0; return; }
+    if (t_eg.state != 2) {
+        t_eg.state = 0;
+        if (edge_gpul_defer_test()) eg_binorm_late(ctx);    /* the test compares the array too */
+        t_eg.binorm = 0;
+        return;
+    }
     t_eg.state = 0;
     EG_COUNT(s_eg_unskipped);
+    eg_binorm_late(ctx);
     u128 regs[128];
     memcpy(regs, ctx->gpr, sizeof regs);
     for (int r = 2; r < 16; r++) ctx->gpr[r] = t_eg.regs[r];
@@ -224,26 +323,18 @@ void edge_gpul_unskip(spu_context* ctx)
     memcpy(ctx->gpr, regs, sizeof regs);
 }
 
-/* the output stage native, at its entry: a job that will publish keeps its record */
-int edge_gpul_defer_test(void)
-{
-    static int d = -1;
-    if (d < 0) { const char* e = getenv("GOWA_EDGE_GPU_DEFER"); d = e && e[0] == '1'; }
-    return d;
-}
-
 /* The output stage native, after the vertex PUT: the vertexes at IO offset vio, n of them, with
  * the given stride and attribute list. Every job's: one without a record clears the key. */
 void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride)
 {
     if (!eg_mode()) return;
+    t_eg.binorm = 0;
     if (!t_eg.state) { rsx_d3d12_vertex_pass_publish(vio, 0, NULL, 0, 0, NULL); return; }
     const int applied = t_eg.state == 1;
     t_eg.state = 0;
-    static const uint8_t ids[8] = { 1, 3, 4, 27, 28, 29, 30, 0 };
     const uint8_t* ls = ctx->ls;
     const uint32_t buf = eg_be32(ls, 0x107A0 + 0x54);      /* what the vertex PUT took (c + 0x50, word 1) */
-    if (stride != EG_STRIDE || memcmp(ls + 0x107A0 + 0x160, ids, 8) || memcmp(ls + 0x107A0, t_eg.head, 16) ||
+    if (stride != EG_STRIDE || memcmp(ls + 0x107A0 + 0x160, eg_ids, 8) || memcmp(ls + 0x107A0, t_eg.head, 16) ||
         buf > SPU_LS_SIZE - 16) {
         /* not the job or the layout the record was taken for */
         EG_COUNT(s_eg_lost);

@@ -50,6 +50,9 @@
  *  - the output not 16-aligned, or overlapping an array or the frame;
  *  - an array, the ids or the table in the frame.
  * GOWA_EDGE_VERIFY=1 checks every call (spu_edge_verify.h).
+ *
+ * With the lighting stage skipped (spu_edge_gpulight.c) only bytes 0-23 of a vertex are packed: the
+ * GPU's pass writes the rest.
  */
 #include "spu_context.h"
 #include "spu_helpers.h"
@@ -103,11 +106,11 @@ EC_INL __m256i c7_ld(const uint8_t* ls, uint32_t a) { return _mm256_loadu_si256(
 
 /* vertices v and v + 1: their 108 bytes at out + 54 v. f: fast (bad collects the exponent-255
  * lanes it reads), else the runtime's exact forms. */
-EC_INL void c7_pair(const int f, uint8_t* ls, const uint32_t lo[7], uint32_t v, uint32_t out, __m256i* bad)
+EC_INL void c7_pair(const int f, const int lean, uint8_t* ls, const uint32_t lo[7], uint32_t v, uint32_t out, __m256i* bad)
 {
     const __m256i bs = C7_B2(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12);
     const uint32_t o = 16u * v;
-    const __m256i P = c7_ld(ls, lo[0] + o), Q = c7_ld(ls, lo[3] + o);
+    const __m256i P = c7_ld(ls, lo[0] + o);
     const __m256i N = _mm256_shuffle_epi8(c7_ld(ls, lo[1] + o), bs);
     /* the tangent's w is not used: 0 */
     const __m256i T = _mm256_blend_epi32(_mm256_shuffle_epi8(c7_ld(ls, lo[2] + o), bs), _mm256_setzero_si256(), 0x88);
@@ -135,6 +138,18 @@ EC_INL void c7_pair(const int f, uint8_t* ls, const uint32_t lo[7], uint32_t v, 
         ni = _mm256_castps_si256(ec_join(n0, n1));
         ti = _mm256_castps_si256(ec_join(t0, t1));
     }
+    if (lean) {             /* bytes 0-23 of each */
+        const __m256i NT = c7_nt(ni, ti);
+        const __m256i R0 = _mm256_blend_epi32(P, _mm256_slli_si256(NT, 12), 0x88);
+        const __m256i R1 = _mm256_srli_si256(NT, 4);
+        uint8_t* d = ls + out + 54u * v;
+        _mm_storeu_si128((__m128i*)d, _mm256_castsi256_si128(R0));
+        _mm_storel_epi64((__m128i*)(d + 16), _mm256_castsi256_si128(R1));
+        _mm_storeu_si128((__m128i*)(d + 54), _mm256_extracti128_si256(R0, 1));
+        _mm_storel_epi64((__m128i*)(d + 70), _mm256_extracti128_si256(R1, 1));
+        return;
+    }
+    const __m256i Q = c7_ld(ls, lo[3] + o);
     const __m256i F28 = c7_f16(_mm256_shuffle_epi8(c7_ld(ls, lo[4] + o), bs));
     const __m256i F29 = c7_f16(_mm256_shuffle_epi8(c7_ld(ls, lo[5] + o), bs));
     const __m256i F30 = c7_f16(_mm256_shuffle_epi8(c7_ld(ls, lo[6] + o), bs));
@@ -175,6 +190,29 @@ static void c7_lifted(spu_context* ctx)
     t_c7_guard = NULL;
 }
 
+/* m vertices, a block of 8 at a time */
+EC_INL void c7_blocks(const int lean, uint8_t* ls, const uint32_t lo[7], uint32_t m, uint32_t out, int force, unsigned csr)
+{
+    for (uint32_t v0 = 0; v0 < m; v0 += 8) {
+        int fast = !force;
+        if (fast) {
+            /* a redo writes every byte of the block again; its reads are apart from them */
+            __m256i bad = _mm256_setzero_si256();
+            for (uint32_t p = 0; p < 8; p += 2) c7_pair(1, lean, ls, lo, v0 + p, out, &bad);
+            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
+                fast = 0;
+                __atomic_add_fetch(&s_c7_redone, 1, __ATOMIC_RELAXED);
+            }
+        }
+        if (!fast) {
+            for (uint32_t p = 0; p < 8; p += 2) c7_pair(0, lean, ls, lo, v0 + p, out, NULL);
+            ec_fl_clear(csr);
+        }
+    }
+}
+
+extern int edge_gpul_lean_pack(void);
+
 static int c7_apart(uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) { return a1 <= b0 || b1 <= a0; }
 static void c7_put32(uint8_t* p, uint32_t v)
 {
@@ -214,22 +252,8 @@ static int c7_native(spu_context* ctx)
     const unsigned csr = _mm_getcsr();
     const int force = ec_force_exact();
     ec_fl_clear(csr);
-    for (uint32_t v0 = 0; v0 < m; v0 += 8) {
-        int fast = !force;
-        if (fast) {
-            /* a redo writes every byte of the block again; its reads are apart from them */
-            __m256i bad = _mm256_setzero_si256();
-            for (uint32_t p = 0; p < 8; p += 2) c7_pair(1, ls, lo, v0 + p, out, &bad);
-            if ((ec_fl_read() & EC_FLAGS_BAD) || !_mm256_testz_si256(bad, bad)) {
-                fast = 0;
-                __atomic_add_fetch(&s_c7_redone, 1, __ATOMIC_RELAXED);
-            }
-        }
-        if (!fast) {
-            for (uint32_t p = 0; p < 8; p += 2) c7_pair(0, ls, lo, v0 + p, out, NULL);
-            ec_fl_clear(csr);
-        }
-    }
+    if (!edge_verify_on() && edge_gpul_lean_pack()) c7_blocks(1, ls, lo, m, out, force, csr);
+    else c7_blocks(0, ls, lo, m, out, force, csr);
     ec_fl_set(csr);
     __atomic_add_fetch(&s_c7_verts, (long long)m, __ATOMIC_RELAXED);
 
