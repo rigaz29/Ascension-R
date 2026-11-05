@@ -13,7 +13,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 | 2b.3 | the other stages, back to front | not started | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
 | fc.1 | the frame clock thread, first round: per-draw work shared along runs of draws | done | fork `43a1386f` |
-| fc.2 | the frame clock thread, second round: a render thread | tried, not merged: ~3% slower (the PPU sets the frame); mode 1 hangs the GPU | fork branch `perf/d3d12-render-thread` (`88bb0c16`) |
+| fc.2 | the frame clock thread, second round: a render thread | tried, not merged: ~3% slower (the SPU workers set the frame); mode 1 hangs the GPU | fork branch `perf/d3d12-render-thread` (`88bb0c16`) |
 | later | zero-copy rings: the GPU reads EDGE's ring bytes where the SPU wrote them | when the frame clock thread binds | |
 
 The steps were renumbered after 2b.0 (see its results): the native draw it planned first, the
@@ -395,20 +395,17 @@ the level's windows):
 
 - The walk falls by ~30 points and the frame rate does not rise: both mode 2 runs below both off
   runs, ~3% slower; the two threads together take a few points more than the one did.
-- The menu, at ~61 flips/s with it off, runs at ~50 in every mode: the handoff at each present.
 - Mode 1 put the GPU in a hang (`DXGI_ERROR_DEVICE_HUNG`) in two of four runs, after ~2,000 and
   ~4,000 frames (the menu's picture broke first). It needs both the walk going on past the
   reset and the render thread recording ahead; modes 2 and 3 did not hang in four and two
   runs. Not found: the D3D12 debug layer is not installed here (Windows' "Graphics Tools"), and
   the one run with DRED's breadcrumbs on did not hang.
 
-**Why no gain:** at the gate the PPU main thread is busy ~94% of a core and the SPU workers take
-~5.2 of the six cores (the process ~7.8): the frame clock thread is not what sets the frame, as
-2.14 of the performance plan found on 2026-11-01. A second RSX thread adds CPU on a CPU that has
-none to spare. It is the step for when the frame clock thread binds: 2b.2's switch and 2b.3/2b.4
-put more on it, and less on the SPUs.
-
-**Next:** what the PPU main thread spends its time on at the gate (the sampler on "ppu main").
+**Why no gain:** the SPU workers set the frame, not the frame clock thread, as 2.14 of the
+performance plan found on 2026-11-01 and its 2.25 measured again (the thread's work +25%: -1.6%).
+The main thread's ~94% is mostly waiting. A second RSX thread only adds CPU. It is the step for
+when the frame clock thread binds: 2b.2's switch and 2b.3/2b.4 put more on it, and less on the
+SPUs.
 
 ### 2b.3 The other stages, back to front
 
@@ -454,9 +451,11 @@ put more on it, and less on the SPUs.
 - 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
   EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
   same screenshots, +6.6% at the gate. On by default in the game.
+- 2026-11-05: audio on a host worker of its own (performance plan 2.25): SPU 5 no longer kept for
+  it, the gate 20.6 -> 22.7 flips/s (+10%), the fight +4.5%, the menu +5%, audio as before.
 - 2026-11-05: the frame clock thread, second round: a render thread, tried and not merged (fork
   branch `perf/d3d12-render-thread`). The walk thread 73% -> 41% of a core, the frame rate ~3%
-  lower (20.87 -> 20.18 flips/s): the PPU main thread (~94%) and the SPU workers set the frame.
+  lower (20.87 -> 20.18 flips/s): the SPU workers set the frame.
   Its mode 1 (the walk going on past the batch's reset) hung the GPU in two of four runs.
 - 2026-11-05: the frame clock thread, first round: the constant slots and the prepass's units
   shared along runs of draws, EDGE's spread draws kept on the raw path. The thread 76.8% ->

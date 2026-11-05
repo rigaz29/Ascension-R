@@ -848,9 +848,9 @@ when the frame clock is the limit again.
 
 **Tried 2026-11-05** (phase 2b plan, "a render thread"; fork branch `perf/d3d12-render-thread`):
 the recording and the presents on a render thread took the frame clock thread from ~73% of a
-core to ~41%, and the frame rate fell ~3% at the gate (20.87 -> 20.18 flips/s, two runs each),
-with the PPU main thread at ~94%. As above: not the limit yet. Its fastest mode (the walk going
-on past the batch's reset) also hung the GPU in two of four runs, not yet found.
+core to ~41%, and the frame rate fell ~3% at the gate (20.87 -> 20.18 flips/s, two runs each).
+As above: not the limit yet; the SPU workers set the frame (2.25). Its fastest mode (the walk
+going on past the batch's reset) also hung the GPU in two of four runs, not yet found.
 
 ### 2.15 Update, 2026-11-01: the runtime's work inside an EDGE job
 
@@ -1771,6 +1771,84 @@ The design for a C implementation of the whole job ([host reference](2026-11-04-
   - 2b.1, lighting on the GPU, done 2026-11-04: the D3D12 backend's vertex pass lights EDGE's
     draws, the SPUs skip the stage. Gate, ABBA, two rounds: 19.41 -> 20.69 flips/s (+6.6%). On by
     default (`GOWA_EDGE_GPU=0` turns it off).
+
+### 2.25 Update, 2026-11-05: what sets the gate at ~20.7 flips/s; audio on a worker of its own
+
+The render thread (phase 2b plan) took the frame clock thread from 73% of a core to 41% and the
+frame rate did not rise, so what does set it? The first answer written down, the main thread at
+94%, was wrong: that figure is mostly waiting, as L8 found on 2026-10-28.
+
+**The main thread** (the sampler, 75 s of the gate, `logs/edge-ana/now.rvas`): `poll_mwaitx` 22%,
+the EDGE counter's loop `func_0041CBDC` 12%, `sys_timer_usleep` 6%, waits under indirect calls 5%.
+
+**Each part made 25% longer** (`logs/edge-ana/probe2`, one build, two rounds, base spread out
+over four runs):
+
+| | flips/s | change |
+|---|---|---|
+| nothing | 20.67 (20.88 / 20.41 / 20.46 / 20.88) | |
+| EDGE (`SPURS_WID_SLOW`, w14-16) | 19.36 (19.48 / 18.98) | -6.3% |
+| the main thread (`GOWA_MAIN_SLOW=25`) | 20.04 (19.84 / 20.21) | -3.0% |
+| the frame clock thread (`RSX_SLOW=25`) | 20.33 (20.33 / 20.33) | -1.6% |
+| Steady audio off | 21.66 (21.30 / 21.71) | +4.8% |
+| audio on a worker of its own | 22.07 (22.66 / 21.88) | +6.8% |
+
+**So the SPU workers set the frame.** A 15 s trace (`logs/edge-ana/now.ft`):
+- SPUs 0-3 busy 89%, SPU 4 80%, SPU 5 64% (52 points of it audio);
+- five or six runs other than audio open 75% of the time; none 6%, one to three 7%;
+- ~252 ms of runs a frame at 48 ms: what is not audio, over five workers, is the frame.
+
+SPU 5 is the capacity left. Steady audio kept it for audio and the short jobs, because the title
+lets audio run on SPU 5 only and a job is not interrupted.
+
+**The fix: a host worker for audio** (fork, `SPURS_LANE=<wid>:<spu>`; the port's `steady_audio`).
+- A PS3 has six SPUs, the host twelve logical CPUs. Workload 7 gets a seventh worker, as SPU 5,
+  and SPU 5's own worker takes what the title's table gives it otherwise (General6, RenderJobs,
+  RenJobSet, Batch and the small lists).
+- A policy module's context is per workload and SPU (`spu_run_policy_module`), so nothing in it
+  changes: on a PS3 the two would take turns on that SPU, here they run at once.
+- The kernel's answers follow: `spurs_claim` and `spurs_kernel_poll` tell the two workers apart,
+  so a General6 job on SPU 5 no longer yields to audio.
+- Audio no longer waits behind another workload's job, as with the reserve, and no SPU is kept
+  for it.
+
+**Measured**, with `AUDIO_RATE` on:
+
+| | reserved | audio's own worker | |
+|---|---|---|---|
+| the gate, ABBA (`lane-gate`) | 20.67 (20.72 / 20.43) | 22.98 (23.26 / 22.91) | +11% |
+| the gate, its gaps | 0, 0 | 0, 0 | ring 1-2 blocks ahead: 4-8 against 4 |
+| the scripted fight, warm cache (`fight2`) | 20.35 (20.41 / 20.28) | 21.26 (21.37 / 21.14) | +4.5% |
+| its gaps | 1, 0 | 0, 0 | |
+| the fight, empty shader cache (`fight1`) | 19.09 (19.12 / 19.06) | 18.92 (19.06 / 18.77) | the same |
+| its gaps | 0, 2 | 5, 0 | the 5 at the level's load; ring 1-2 blocks ahead 24, 60 against 239, 210 |
+| the main menu (`menu-ab`) | ~51.5 | ~54 | +5% |
+
+- All the gate's runs, the five with audio's worker against the six without: 20.6 -> 22.7
+  flips/s (+10%). The workers at 598% of a core (seven), the frame clock thread 82%, the main
+  thread 90%, the process 860%.
+- An empty shader cache is the one case not better: the frame rate is the same, and audio's
+  margin is thinner when the level loads. Audio's own runs are no longer: 600 us against 690.
+- The picture is the same (screenshots at the gate, the menu and the fight).
+- Steady audio off is now only the title's own scheduling: 21.95 at the gate.
+
+**A second lane adds nothing:** General6 on a worker of its own as SPU 4 (`SPURS_LANE=7:5,2:4`):
+22.86 (22.89 / 22.71). The extra width is not there to take.
+
+**What misled on the way.**
+- A first batch of these probes, stopped by low memory with Windows servicing running, read
+  19.18 for base and -9% for the frame clock thread. The base ran once and the machine drifted
+  under it: without base spread over the batch, slopes like these mean nothing.
+- `PS3_FTRACE` now slows the whole run, not its 15 s (15.8 flips/s in every level window, all
+  workloads but EDGE 20-30% longer than 2.23): its shape holds, its milliseconds do not.
+- The sampler over six workers shows `(wait) spurs_pm_worker` at 39%: threads suspended while
+  they hold the instance's lock make the others wait. The workers' own CPU, 525% of 600%, is the
+  figure.
+- `SPURS_KICK_PROF`'s "to a pick" for audio covers 20-40 kicks a second: ~900 of its runs a
+  second are the coordinator's probes.
+
+**Next:** the frame clock thread is close now, 82% at 23 flips/s (a limit near 28). The SPU work
+itself stays the frame: EDGE first (phase 2b).
 
 ## 3. The budget for 33 ms
 

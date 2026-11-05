@@ -1147,23 +1147,18 @@ static void title_environment(void)
      * flips/s unchanged (docs/notes/2026-10-28-rendering-accuracy-plan.md, 3.4).
      * SPURS_BOOST_WID=none leaves every worker at normal priority. */
     env_default("SPURS_BOOST_WID", "7");
-    /* [system] steady_audio (the launcher's "Steady audio", on by default): SPU 5,
-     * the only SPU the title lets workload 7 run on, runs that workload only
-     * (SPURS_RESERVE=7:5). In the parasites' fight a kick of it waited up to 8-16 ms
-     * for SPU 5 while other workloads' jobs held it -- past the ~16 ms of blocks the
-     * title keeps ahead, so the blocks played as gaps. Reserved: 1.6-6.8 ms, for ~2.5%
-     * fewer flips (docs/notes/2026-11-03-parasite-stutter.md).
-     * SPU 5 is then lent to the workloads whose jobs are short, when audio leaves it free
-     * (SPURS_LEND): RenJobSet, Batch and three small lists, jobs ~0.06-0.3 ms (p99 under
-     * 1 ms), never as strong as audio, so a kick of audio waits at most one of their jobs.
-     * At the gate SPU 5 was 56% idle; lent, it takes +10-15% of a core of their work,
-     * +1-1.5% flips (within the spread), audio's kicks and ring as before. General6 (jobs
-     * 1-4 ms) stays off it: lent too, it gives what Steady audio off gives (+5.5-6%), with
-     * audio's kicks at ~1.3 ms on average and 12-25 ms at most (performance plan, 2.23). */
-    if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1)) {
-        env_default("SPURS_RESERVE", "7:5");
-        env_default("SPURS_LEND", "HighestPrio6,SysMisc,Network,BatchJobList,RenJobSet");
-    }
+    /* [system] steady_audio (the launcher's "Steady audio", on by default): workload 7, the
+     * title's audio, has a host worker of its own, as SPU 5, the only SPU the title lets it
+     * run on (SPURS_LANE=7:5). SPU 5's own worker takes what the title's table gives it
+     * otherwise. In the parasites' fight a kick of it waited up to 8-16 ms for SPU 5 while
+     * other workloads' jobs held it -- past the ~16 ms of blocks the title keeps ahead, so the
+     * blocks played as gaps (docs/notes/2026-11-03-parasite-stutter.md). Keeping SPU 5 for it
+     * (SPURS_RESERVE=7:5, lent to the short jobs with SPURS_LEND) ended that, but left half an
+     * SPU idle with the other five full: at the gate 20.67 flips/s against 22.98 with a worker
+     * of its own, in the scripted fight 20.35 against 21.26, the ring as far ahead (performance
+     * plan, 2.25). SPURS_RESERVE set by hand takes its place. */
+    if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1) && !getenv("SPURS_RESERVE"))
+        env_default("SPURS_LANE", "7:5");
     /* Each display buffer its own target, the flipped one presented: the title
      * draws its video into one buffer, tonemaps into the next and composites
      * its post chain into a third within one frame, and with a single
