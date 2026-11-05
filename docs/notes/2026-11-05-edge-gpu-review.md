@@ -5,10 +5,10 @@ the [phase 2b plan](2026-11-04-phase-2b-plan.md) be, now that lighting is on the
 a worker of its own? The numbers are from the gate; the samples from `logs/edge-ana/now.rvas`, the
 counts from `logs/edge-ana/rev1`.
 
-**Since then:** A and B are done: the gate went from 22.96 to 23.80 flips/s, A giving ~1-2% and B ~2%,
-below the table's upper bounds. Performance plan 2.26 has the numbers, and what they correct here:
-culling cost the frame clock thread ~3 points, not 16 (that was the pieces), and the pieces' own
-cost was ~1.6 ms a flip.
+**Since then:** A and B are done: the gate went from 22.96 to ~24.1 flips/s, A and B giving ~3% and
+~2%, about the table's estimates for A and below them for B. Performance plan 2.26 has the numbers,
+and what they correct here: culling cost the frame clock thread ~3 points, not 16 (that was the
+pieces), and the pieces' own cost was ~1.6 ms a flip.
 
 **The result:** 2b.3 as written, the other stages moved to the GPU one at a time, is not the best
 next step. The stages are 37% of an EDGE job. The job's shell (the runtime, DMA, the lifted glue,

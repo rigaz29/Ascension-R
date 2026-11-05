@@ -54,8 +54,8 @@
  * With the stage skipped (GOWA_EDGE_GPU_LEAN=0 keeps them) two things before it have no reader:
  *  - the binormals, 0xA880's loop at 0xA950 into the eighth array: its result is the stage's r10
  *    and nothing else's. Its hook at 0xA928, with the array in place, leaves the loop out and
- *    returns as 0xA880 does. If the stage runs on the SPU after all (declined at its entry, or run
- *    late), 0xA880 runs first, from its arguments (eg_binorm_late);
+ *    returns as 0xA880 does. Unless the stage ends up skipped, 0xA880 runs after all, from its
+ *    arguments (eg_binorm_late);
  *  - ids 27-30 in the output piece: the pass writes over them. It packs bytes 0-23 of a vertex
  *    (spu_edge_cmp.c); the rest of the 54 are whatever the local store held.
  */
@@ -158,18 +158,16 @@ static int eg_lean(void)
     return v;
 }
 
-/* 0xA880's loop is about to run (its hook at 0xA928, the array in place), from the stage driver, in
- * a job of the lit layout: leave it out and return as the function does at 0xAD48. The stage's own
- * entry decides whether the array is wanted after all. The driver may not call the stage at all (no
- * lights): then nothing reads the array. */
+/* 0xA880's loop is about to run (its hook at 0xA928, the array in place), from the stage driver:
+ * leave it out and return as the function does at 0xAD48. It runs after all unless the stage is
+ * skipped, which also proves the lit layout (ids 27-30 are not in the list yet here): at the stage's
+ * entry when it is declined, or before the packing when the driver does not call it (no lights). */
 int gowa_edge_binorm_a928(spu_context* ctx)
 {
     if (eg_mode() != 2 || t_eg_late || !eg_lean()) return 0;
     const uint32_t sp = ctx->gpr[1]._u32[0];
     t_eg.binorm = 0;
-    if (ctx->gpr[80]._u32[0] != 0x107A0 || eg_be32(ctx->ls, sp + 0x80) != 0x54F8 ||
-        memcmp(ctx->ls + 0x107A0 + 0x160, eg_ids, 8))
-        return 0;
+    if (ctx->gpr[80]._u32[0] != 0x107A0 || eg_be32(ctx->ls, sp + 0x80) != 0x54F8) return 0;
     t_eg.binorm = 1;
     t_eg.binorm_c = ctx->gpr[80];
     t_eg.binorm_n = ctx->gpr[83];
@@ -211,6 +209,12 @@ static void eg_binorm_late(spu_context* ctx)
     t_eg_late = late;
     ctx->int_enable = ie;
     memcpy(ctx->gpr, regs, sizeof regs);
+}
+
+/* the output stage native, before the packing: a job with no stage skipped has its binormals */
+void edge_gpul_binorm_now(spu_context* ctx)
+{
+    if (t_eg.state != 2) eg_binorm_late(ctx);
 }
 
 /* the output piece (spu_edge_cmp.c): the stage is skipped, and the pass will write ids 27-30 */
@@ -298,8 +302,7 @@ void edge_gpul_unskip(spu_context* ctx)
 {
     if (t_eg.state != 2) {
         t_eg.state = 0;
-        if (edge_gpul_defer_test()) eg_binorm_late(ctx);    /* the test compares the array too */
-        t_eg.binorm = 0;
+        eg_binorm_late(ctx);
         return;
     }
     t_eg.state = 0;

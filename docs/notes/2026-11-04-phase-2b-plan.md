@@ -460,7 +460,7 @@ on the frame clock thread (then 2b.2's switch), the job as C code, and the stage
   same screenshots, +6.6% at the gate. On by default in the game.
 - 2026-11-05: the review's A and B done (performance plan 2.26): the binormals and ids 27-30 left
   out with the stage, a draw's pieces in one call, the constant bank by generation, no culling on
-  the SPU by default. The gate 22.96 -> 23.80 flips/s.
+  the SPU by default. The gate 22.96 -> ~24.1 flips/s.
 - 2026-11-05: [review](2026-11-05-edge-gpu-review.md) before 2b.3: a new order proposed.
 - 2026-11-05: audio on a host worker of its own (performance plan 2.25): SPU 5 no longer kept for
   it, the gate 20.6 -> 22.7 flips/s (+10%), the fight +4.5%, the menu +5%, audio as before.

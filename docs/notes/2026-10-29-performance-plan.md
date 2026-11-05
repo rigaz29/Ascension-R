@@ -1855,24 +1855,31 @@ itself stays the frame: EDGE first (phase 2b).
 Options A and B of the [review](2026-11-05-edge-gpu-review.md), each measured alone, base spread
 through the batch, at the gate and in the warm fight.
 
-**The sum.** The gate, three runs a side, everything off against the defaults (`logs/edge-ana/ab-final`):
-22.96 -> 23.80 flips/s (runs 22.84, 22.91, 23.17 against 23.85, 23.75, 24.05). The warm fight does not move (21.17 and
-21.14 against 21.47, 20.25, 21.33, 21.27). The menu does not either.
+**The sum.** The gate, three runs a side, everything off against the defaults
+(`logs/edge-ana/ab-final`): 22.96 -> 23.80 flips/s (runs 22.84, 22.91, 23.17 against 23.85, 23.75,
+24.05), still without the binormals left out (see A); with them, 24.13. So 22.96 -> ~24.1, +5%. The
+warm fight does not move (21.17 and 21.14 against 21.47, 20.25, 21.33, 21.27), measured before the
+binormals' fix. The menu does not either.
 
 **A: what lighting's move left behind** (port `03f66f8`). With the stage skipped, nothing read the
 binormals or ids 27-30.
-- A hook at `0xA928` leaves `0xA880`'s loop out, for the lit layout, when the stage driver calls it.
-  The stage's own entry decides whether the array is wanted after all: a stage that runs on the SPU
-  (declined, or late) has `0xA880` run first, from the arguments the hook kept. The driver may also
-  not call the stage (no lights), and then nothing reads the array.
+- A hook at `0xA928` leaves `0xA880`'s loop out when the stage driver calls it. It runs after all,
+  from the arguments the hook kept, unless the stage ends up skipped: at the stage's entry if the
+  stage is declined or runs late, and before the packing if the driver does not call the stage (no
+  lights). Only a skipped stage proves the lit layout: ids 27-30 join the list after `0xA880`.
 - The output piece packs bytes 0-23 of a vertex. Bytes 24-53 are whatever the local store held; the
   pass writes all of them, for every vertex of a segment.
 - `GOWA_EDGE_GPU_LEAN=0` keeps both.
-- Checked: `GOWA_EDGE_GPU=2 GOWA_EDGE_GPU_DEFER=1` over the ten corpora, 0 differences. The first
-  try gave 1 job in 120 with 6,099 local-store bytes different and no PUT byte: a job with no lights
-  never wrote the array. The test makes it now, since it compares it.
-- The gate, four runs a side, `logs/edge-ana/lean1`: 22.48 -> 22.96 flips/s (runs 22.17, 23.01,
-  22.99, 22.22 against 22.73, 22.96, 22.73, 23.06). Near the spread. The same screenshots by region.
+- Checked: `GOWA_EDGE_GPU=2 GOWA_EDGE_GPU_DEFER=1` over the ten corpora, 0 differences, with the
+  hook counting: 42 of the gate's 120 jobs left the loop out, and one of them ran it after all.
+- **The first version left nothing out.** It tested the id list at the hook, where ids 27-30 are not
+  in it yet, so the test always failed, the replays passed with nothing to compare, and the first
+  commit's claim was wrong. The sampler showed it: `0xA950` still 4.3% of EDGE. Its bench,
+  `logs/edge-ana/lean1`, is the packing alone: 22.48 -> 22.96 flips/s (four runs a side; runs 22.17,
+  23.01, 22.99, 22.22 against 22.73, 22.96, 22.73, 23.06), near the spread.
+- The binormals left out as well, on top of B, three runs a side, `logs/edge-ana/lean2`: 23.48 ->
+  24.13 flips/s (runs 23.66, 23.26, 23.57 against 24.17, 23.62, 24.34). The same screenshots by
+  region.
 
 **B: room on the frame clock thread, then culling on the RSX.** Frame clock time a flip, at the gate
 (`logs/edge-ana/room1`, three runs a side):

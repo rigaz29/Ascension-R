@@ -43,6 +43,7 @@ extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000084C0(spu_context*);
 extern void rsx_d3d12_register_vertex_ring(uint32_t io_offset, uint32_t size);
 /* Phase 2b.1, the lighting stage's record (spu_edge_gpulight.c) */
 extern void edge_gpul_unskip(spu_context* ctx);
+extern void edge_gpul_binorm_now(spu_context* ctx);
 extern int edge_gpul_defer_test(void);
 extern void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride);
 
@@ -1311,6 +1312,7 @@ int gowa_edge_out_9080(spu_context* ctx)
             const u128 line = LD(0x10C00);
             if (vea >= line._u32[0] && vea < line._u32[2]) vio = line._u32[1] + (vea - line._u32[0]);
             if (!vio || edge_gpul_defer_test()) edge_gpul_unskip(ctx);
+            edge_gpul_binorm_now(ctx);
         }
         eo_d158(ctx, c, spu_ai(sp, -80));
         if (eo_put(ctx, 1, c, icount, local, spu_ai(sp, 32), spu_ai(sp, -176))) goto done;
