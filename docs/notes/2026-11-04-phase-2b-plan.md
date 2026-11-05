@@ -10,7 +10,7 @@ the place its progress is kept: each step's status is updated here as it moves.
 | 2b.0 | measure: EDGE's draws, vertex bytes and backend time a frame; the GPU's load | done | fork `b1121f5d` |
 | 2b.1 | the backend's compute, and the first stage on the GPU: lighting | done | fork `ab93538e` |
 | 2b.2 | culling on the GPU: the RSX's own face culling, no compute | done, off by default (the frame clock thread) | fork `825afdcd` |
-| 2b.3 | the other stages, back to front | not started | |
+| 2b.3 | the other stages, back to front | under review: see [the review](2026-11-05-edge-gpu-review.md) | |
 | 2b.4 | a stub job: EDGE off the SPUs | not started | |
 | fc.1 | the frame clock thread, first round: per-draw work shared along runs of draws | done | fork `43a1386f` |
 | fc.2 | the frame clock thread, second round: a render thread | tried, not merged: ~3% slower (the SPU workers set the frame); mode 1 hangs the GPU | fork branch `perf/d3d12-render-thread` (`88bb0c16`) |
@@ -409,6 +409,10 @@ SPUs.
 
 ### 2b.3 The other stages, back to front
 
+[Reviewed 2026-11-05](2026-11-05-edge-gpu-review.md): the stages left are 37% of a job, its shell
+56%, and two things lighting's move left behind have no reader. Proposed order: those two, room
+on the frame clock thread (then 2b.2's switch), the job as C code, and the stages after that.
+
 - The normals (`0xA950`), the renormalization (`0xBBC8`).
 - Transform (`0xF538`) and skinning (`0xE550`).
 - Unpacking (the input pieces) and the index decompression (`0xE4D0`).
@@ -451,6 +455,7 @@ SPUs.
 - 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
   EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
   same screenshots, +6.6% at the gate. On by default in the game.
+- 2026-11-05: [review](2026-11-05-edge-gpu-review.md) before 2b.3: a new order proposed.
 - 2026-11-05: audio on a host worker of its own (performance plan 2.25): SPU 5 no longer kept for
   it, the gate 20.6 -> 22.7 flips/s (+10%), the fight +4.5%, the menu +5%, audio as before.
 - 2026-11-05: the frame clock thread, second round: a render thread, tried and not merged (fork
