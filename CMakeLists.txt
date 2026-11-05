@@ -334,6 +334,8 @@ option(PORT_SPU_RESTRICT "Lifted SPU functions take their context as __restrict"
 #   gen          -- instrument it; main.cpp writes the profile to LLVM_PROFILE_FILE every 15 s
 #   <.profdata>  -- optimize it with that profile (llvm-profdata merge of the runs')
 set(PORT_SPU_PGO "" CACHE STRING "Lifted SPU code: 'gen' to instrument, or a .profdata to use")
+# PORT_PPU_PGO: the same for the lifted PPU code.
+set(PORT_PPU_PGO "" CACHE STRING "Lifted PPU code: 'gen' to instrument, or a .profdata to use")
 if(SPU_SOURCES)
     # SPU_INLINE_MFC_PARAMS: the MFC command parameters as stores, no call.
     set(spu_defs SPU_USE_DISPATCH_MT SPU_INLINE_MFC_PARAMS)
@@ -386,7 +388,7 @@ if(SPU_SOURCES)
     if(PORT_SPU_LINES AND MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE /DEBUG /OPT:REF /OPT:ICF)
     endif()
-    if(PORT_SPU_PGO STREQUAL "gen")
+    if(PORT_SPU_PGO STREQUAL "gen" OR PORT_PPU_PGO STREQUAL "gen")
         # The profile runtime of the clang that builds the port, next to its linker.
         get_filename_component(_llvm_bin "${CMAKE_LINKER}" DIRECTORY)
         file(GLOB _pgo_rt "${_llvm_bin}/../lib/clang/*/lib/windows/clang_rt.profile-x86_64.lib")
@@ -461,6 +463,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
         # without this, clang exploits overflow UB (e.g. folds "x*x < 0" to false).
         -fwrapv
     )
+    # An executable's thread-locals are set up as each thread starts. The on-demand guard is for a
+    # DLL that loads later, and it costs a load and a branch at every access.
+    if(MSVC)
+        target_compile_options(${PROJECT_NAME} PRIVATE $<$<COMPILE_LANGUAGE:CXX>:/Zc:tlsGuards->)
+    endif()
 elseif(MSVC)
     target_compile_options(${PROJECT_NAME} PRIVATE
         /W3 /wd4100 /wd4244 /wd4267
@@ -509,6 +516,11 @@ else()
         list(APPEND recomp_opts -mfma)
     endif()
 endif()
+if(PORT_PPU_PGO STREQUAL "gen")
+    list(APPEND recomp_opts -fprofile-instr-generate)
+elseif(PORT_PPU_PGO)
+    list(APPEND recomp_opts "-fprofile-instr-use=${PORT_PPU_PGO}")
+endif()
 set_source_files_properties(${RECOMP_SOURCES} ${LIBSRE_SOURCES} PROPERTIES
     COMPILE_OPTIONS "${recomp_opts}")
 
@@ -523,7 +535,8 @@ if(PORT_PPU_FAST_FP)
 endif()
 
 # The lifted code's memory helpers without their per-function arithmetic, the store watches and the
-# alignment branches (ppu_recomp.h). main.cpp calls ppu_mm_fix before the guest runs.
+# alignment branches, and its tail calls through the context (ppu_recomp.h). main.cpp calls
+# ppu_mm_fix before the guest runs.
 option(PORT_PPU_MM_LEAN "Lifted game code: the lean memory helpers" ON)
 if(PORT_PPU_MM_LEAN)
     set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_MM_LEAN)

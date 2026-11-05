@@ -67,7 +67,8 @@ void     ppu_sysprx_register(void);           /* boot-critical CRT (sys_initiali
 void     ppu_fs_register(void);               /* cellFs over the real game directory */
 void     lv2_init_syscalls(void);             /* the lv2 syscall table */
 int      ppu_run(uint32_t entry_opd, uint32_t stack_top);
-void     ppu_mm_fix(void);
+void     ppu_mm_fix(const unsigned char* coh);      /* PPU_MM_LEAN */
+const unsigned char* spu_coh_bits_publish(void);
 void     cellGame_init_from_paramsfo(const char* sfo_path);  /* libs/system/cellGame.c */
 int      spu_job_replay_main(const char* dir);           /* runtime/spu/spu_jobcap.c */
 
@@ -1331,6 +1332,7 @@ int main(int argc, char** argv)
         fprintf(stderr, "ERROR: could not allocate the guest address space\n");
         return 1;
     }
+    ppu_mm_fix(spu_coh_bits_publish());
 
     uint32_t entry = ppu_load_elf(elf);
     if (!entry) {
@@ -1388,7 +1390,6 @@ int main(int argc, char** argv)
         CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)10, 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */
 
-    ppu_mm_fix();
     printf("\n[boot] dispatching entry OPD 0x%08X (stack top 0x%08X)\n\n",
            entry, STACK_TOP);
 
