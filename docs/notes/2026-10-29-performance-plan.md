@@ -1850,6 +1850,64 @@ lets audio run on SPU 5 only and a job is not interrupted.
 **Next:** the frame clock thread is close now, 82% at 23 flips/s (a limit near 28). The SPU work
 itself stays the frame: EDGE first (phase 2b).
 
+### 2.26 Update, 2026-11-05: options A and B of the EDGE review
+
+Options A and B of the [review](2026-11-05-edge-gpu-review.md), each measured alone, base spread
+through the batch, at the gate and in the warm fight.
+
+**The sum.** The gate, three runs a side, everything off against the defaults (`logs/edge-ana/ab-final`):
+22.96 -> 23.80 flips/s (runs 22.84, 22.91, 23.17 against 23.85, 23.75, 24.05). The warm fight does not move (21.17 and
+21.14 against 21.47, 20.25, 21.33, 21.27). The menu does not either.
+
+**A: what lighting's move left behind** (port `03f66f8`). With the stage skipped, nothing read the
+binormals or ids 27-30.
+- A hook at `0xA928` leaves `0xA880`'s loop out, for the lit layout, when the stage driver calls it.
+  The stage's own entry decides whether the array is wanted after all: a stage that runs on the SPU
+  (declined, or late) has `0xA880` run first, from the arguments the hook kept. The driver may also
+  not call the stage (no lights), and then nothing reads the array.
+- The output piece packs bytes 0-23 of a vertex. Bytes 24-53 are whatever the local store held; the
+  pass writes all of them, for every vertex of a segment.
+- `GOWA_EDGE_GPU_LEAN=0` keeps both.
+- Checked: `GOWA_EDGE_GPU=2 GOWA_EDGE_GPU_DEFER=1` over the ten corpora, 0 differences. The first
+  try gave 1 job in 120 with 6,099 local-store bytes different and no PUT byte: a job with no lights
+  never wrote the array. The test makes it now, since it compares it.
+- The gate, four runs a side, `logs/edge-ana/lean1`: 22.48 -> 22.96 flips/s (runs 22.17, 23.01,
+  22.99, 22.22 against 22.73, 22.96, 22.73, 23.06). Near the spread. The same screenshots by region.
+
+**B: room on the frame clock thread, then culling on the RSX.** Frame clock time a flip, at the gate
+(`logs/edge-ana/room1`, three runs a side):
+
+| | flips/s | frame clock, ms a flip |
+|---|---|---|
+| base | 22.57 | 36.1 |
+| the constant bank by generation | 22.50 | 35.7 |
+| and a draw's pieces in one call | 22.77 | 34.1 |
+| and no culling on the SPU | 23.08 | 35.4 |
+
+- **A draw's pieces in one call** (`RSX_DRAW_RUN=0` turns it off). `DRAW_INDEX_ARRAY` words wait in
+  `rsx_state` while they follow one another in the index array, and go to the backend as one draw at
+  the next other method, the END at the latest. Triangles only. Ring draws per second: 133,800 ->
+  35,000.
+- **The constant bank by generation** (`VP_CB_GEN=0` turns it off). `rsx_state` numbers the bank's
+  contents; a word that changes takes a new number. Five records in six have the bank of the one
+  before, and now neither copy it to the image nor compare it. The holes write a constant four
+  times a record, with the words already there, so the number moves only on a real change: 30,700
+  of 30,708 shared records a second by generation.
+- **No culling on the SPU, on by default** (`GOWA_EDGE_NOCULL=0` for the old way, the default in a
+  replay, a capture and `GOWA_EDGE_VERIFY`). SPU worker time a flip -3%; screenshots the same at the
+  gate and in the fight; `VTX_STATS` shows every ring draw culling back faces in the fight too. A
+  scene that draws EDGE's output with the RSX's culling off would show back faces.
+
+**What this corrects.**
+- The review put culling's cost on the frame clock thread at 16 points. That was the pieces: 3,300
+  more a frame. With a draw in one call it is +1.4 ms a flip at the gate, ~3 points.
+- The sampler's `(wait) vp_record_cb`, 6.6% of the thread, was not the 8 KB copy: leaving that out
+  in 84% of the records gave 0.4 ms a flip. A `(wait)` name is the first return address into the
+  executable on the stack, and it can be a stale slot.
+- `(wait) rsx_d3d12_backend_pump_messages`, 44% of the samples, is the idle wait in
+  `cellGcm_fifo_kick_wait`, under a stale return address from the pump a loop before. The thread's
+  own table says the same: ~80% busy, and the sampled run was slower.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

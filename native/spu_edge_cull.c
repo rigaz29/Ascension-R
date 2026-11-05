@@ -555,11 +555,15 @@ static void d618_verify_report(void) { edge_vreport(&s_v618); }
 int gowa_edge_cull_d618(spu_context* ctx)
 {
     if (t_d618_guard == ctx) return 0;
-    /* Phase 2b.2 (docs/notes/2026-11-04-phase-2b-plan.md): GOWA_EDGE_NOCULL=1 takes the stage's own
-     * path for no culling (the mode, r4, 0): the count stays, the indexes stay as decompressed, and
-     * the RSX's face culling and clipping do the work (EDGE's draws are drawn culling back faces). */
+    /* Phase 2b.2 (docs/notes/2026-11-04-phase-2b-plan.md): the stage's own path for no culling (the
+     * mode, r4, 0): the count stays, the indexes stay as decompressed, and the RSX's face culling and
+     * clipping do the work (EDGE's draws are drawn culling back faces). On in the game; off with
+     * GOWA_EDGE_NOCULL=0, and by default in a replay, a capture and GOWA_EDGE_VERIFY's check. */
     {   static int nc = -1;
-        if (nc < 0) { const char* e = getenv("GOWA_EDGE_NOCULL"); nc = e && e[0] == '1'; }
+        if (nc < 0) {
+            const char* e = getenv("GOWA_EDGE_NOCULL");
+            nc = e ? e[0] == '1' : !(getenv("SPU_JOB_REPLAY") || getenv("SPU_JOB_CAPTURE") || edge_verify_on());
+        }
         if (nc) memset(&ctx->gpr[4], 0, sizeof ctx->gpr[4]);
     }
     static int on = -1;
