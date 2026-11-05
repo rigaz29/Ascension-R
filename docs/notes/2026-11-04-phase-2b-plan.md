@@ -404,6 +404,11 @@ the level's windows):
   runs. Not found: the D3D12 debug layer is not installed here (Windows' "Graphics Tools"), and
   the one run with DRED's breadcrumbs on did not hang.
 
+**Tried again, 2026-11-05,** on the current fork (branch `perf/render-thread-2`), with the gate at
+25.3 flips/s and the thread at 91%: 25.34 -> 25.48 flips/s, three runs a side, the walk at 53% and
+the render thread at 49%. No gain above the spread, ten runs without a hang. What sets the gate now
+is the main thread and EDGE ([the noise review](2026-11-05-general6-noise-review.md)).
+
 **Why no gain:** the SPU workers set the frame, not the frame clock thread, as 2.14 of the
 performance plan found on 2026-11-01 and its 2.25 measured again (the thread's work +25%: -1.6%).
 The main thread's ~94% is mostly waiting. A second RSX thread only adds CPU. It is the step for

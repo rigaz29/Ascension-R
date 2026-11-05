@@ -1928,7 +1928,8 @@ gate 22.89 -> 24.40 flips/s, the warm fight 21.17 -> 21.56, EDGE 114 -> 87 ms of
 zero, so every call of `0x4930` computes the noise at (0, 0, 0, 0). A hook returning 0 for zero
 arguments (`native/spu_g6_noise.c`, on by default): the gate 24.20 -> 25.63 flips/s, the warm fight
 21.20 -> 23.15, General6 halved, and the output the same. 2.21's "at most ~3%" no longer holds: nothing was
-full then. With it the gate is bound by the frame clock thread (+25% there: -13.6%).
+full then. With it the gate is set by the chain through the main thread and EDGE (+25% of either:
+4-5%), the frame clock thread close behind at 92%, and the render thread gives nothing yet.
 
 ## 3. The budget for 33 ms
 

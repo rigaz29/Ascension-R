@@ -114,20 +114,31 @@ level does.
 
 ## What sets the frame after it
 
-With the hook on, each part 25% slower, the gate, two runs each (`logs/edge-ana/g6p`):
+With the hook on, each part 25% slower, the gate, two runs each (`logs/edge-ana/g6p`, `lim1`, `lim2`):
 
-| +25% on | flips/s | |
-|---|---|---|
-| nothing | 25.66 | |
-| the frame clock thread | 22.16 | -13.6% |
-| EDGE | 24.54 | -4.4% |
-| the main thread | 24.75 | -3.5% |
+| +25% on | flips/s | | with the render thread, mode 2 | |
+|---|---|---|---|---|
+| nothing | 25.66 | | 25.98 | |
+| the main thread | 24.75 | -3.5% | 24.74 | -4.8% |
+| EDGE | 24.54 | -4.4% | 24.97 | -3.9% |
+| the frame clock thread | 22.16 | -13.6% | 25.56 | -1.6% |
+| RenderJobs | 25.68 | 0 | | |
+| RenJobSet | 25.78 | 0 | | |
+| General6 | 25.63 | 0 | | |
 
-- **The gate's limit moves to the frame clock thread:** 92% of a core at 25.5 flips/s, ~36 ms a flip.
-  It is full near 27.7. Its work did not change; the workers stopped hiding it.
-- So the render thread (fork branch `perf/d3d12-render-thread`, mode 2) or less work on that thread
-  comes next at the gate. The render thread cost frames when it was tried (performance plan, phase
-  2b plan's second round) because the workers were the limit then.
+- **The frame clock thread is not the limit yet.** A first reading of this table said it was. It is at
+  92% of a core, ~36 ms a flip, so +25% puts it past full: 22.2 flips/s is 1 / (36 ms x 1.25). Taking
+  its load away shows the rest: the render thread, mode 2, took the walk from 91% to 53%, and the frame
+  rate did not follow (25.34 against 25.48, three runs a side, `logs/edge-ana/rt3`; the same spread).
+- **What sets the frame is the chain through the main thread and EDGE:** 25% more of either costs
+  4-5%, and 25% more of RenderJobs, RenJobSet or General6 costs nothing. The workers are ~79% busy.
+- **The frame clock thread is close behind:** full near 27.7 flips/s, the next wall once the chain
+  shortens. Mode 2 is on the fork branch `perf/render-thread-2` for then: the same code on the current
+  fork, ten runs at the gate without a hang, off the main line while it gives nothing.
+- A frame in the trace (`logs/edge-ana/ft1.ft`, ~37 ms; it slows the run, so its shape only): EDGE
+  with runs open ~25 ms, 3.4 wide; RenJobSet ~6 ms and RenderJobs ~8 ms after it, 4-5 wide; General6
+  beside the next EDGE list; the main thread ~27 ms of its own work.
+- `D3D12_VSYNC=0`: 26.03 against 25.66, near the spread.
 - **The fight is different:** the frame clock thread at 62%, the workers at 507% of 600%, the main
   thread at 94%. What sets it there was not probed.
 - The `0xBF60` jobs are General6's other half, ~24 ms a frame at the gate, ~45 in the fight. Their
