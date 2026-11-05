@@ -140,6 +140,6 @@ With the hook on, each part 25% slower, the gate, two runs each (`logs/edge-ana/
   beside the next EDGE list; the main thread ~27 ms of its own work.
 - `D3D12_VSYNC=0`: 26.03 against 25.66, near the spread.
 - **The fight is different:** the frame clock thread at 62%, the workers at 507% of 600%, the main
-  thread at 94%. What sets it there was not probed.
+  thread at 94%. The main thread sets it there ([the review](2026-11-06-main-thread-review.md)).
 - The `0xBF60` jobs are General6's other half, ~24 ms a frame at the gate, ~45 in the fight. Their
   output changes every frame, so nothing can be kept from it. They were not looked at further.

@@ -517,6 +517,9 @@ not, and what is worth trying. Its new findings, and the order they go in:
      on the context; off by default). The replay, best of ten a job, outputs identical: General6
      871.5 -> 860.4 us, RenderJobs 466.7 -> 457.6, EDGE 52.7 -> 52.0. -1 to -2%, about the
      replay's own spread (the same build twice differs by up to 1.5%). Left off.
+   - **That test could not find anything** (2026-11-06): LLVM's capture tracking gives up at 100
+     uses of a pointer, so `noalias` did nothing in a function of size. See
+     [the review](2026-11-06-main-thread-review.md).
    - On the way: the replay restores a captured context with its resident code slots, so the
      position-independent pieces' image ids must stay as they were. The four Batch pieces had
      been put first in `scripts/spu_pic_pieces.json`; the EDGE pieces' ids moved by four, their
@@ -1931,6 +1934,17 @@ arguments (`native/spu_g6_noise.c`, on by default): the gate 24.20 -> 25.63 flip
 full then. With it the gate is set by the chain through the main thread and EDGE (+25% of either:
 4-5%), the frame clock thread close behind at 92%, and the render thread gives nothing yet.
 
+### 2.29 Update, 2026-11-06: the main thread
+
+[The review](2026-11-06-main-thread-review.md). The fight is bound by the main thread: 25% more of its
+work costs 14%, 25% more of anything else nothing. Its time is 72% lifted PPU code in a flat profile,
+so what pays is the code every function shares. `PPU_MM_LEAN`, two rounds, took the executable's
+`.text` from 111.9 to 93.1 MB: the warm fight 23.0 -> 24.8 flips/s, the gate 25.4 -> 26.4. Next is lazy
+CR and XER, about 13% fewer instructions in the lifted code.
+
+A baseline in a bench goes in a folder of its own under the name `GowARecomp.exe`, with a copy of
+`build/gowa.ini`: the same binary ran ~2% slower in the fight as `m1.exe`.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
@@ -2275,6 +2289,8 @@ Each item is small and is measured on its own.
     shorter in God of War HD.
   - The VMX float helpers as vector code.
   - `-mavx2` for the lifted PPU code (it gets FMA, so AVX, today).
+  - **The memory helpers and what follows a call. Done 2026-11-06** (`PPU_MM_LEAN`, 2.29).
+  - Lazy CR and XER next: [the review](2026-11-06-main-thread-review.md) has the sizing.
   - Then guest registers and CR fields in locals inside a function, with 2.1's rules, starting
     with the main thread's hottest functions.
 - **2.4 Profile-guided builds** of the lifted code (clang's instrumented build, profiles from the

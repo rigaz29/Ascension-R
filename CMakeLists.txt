@@ -521,6 +521,11 @@ if(PORT_PPU_PGO STREQUAL "gen")
 elseif(PORT_PPU_PGO)
     list(APPEND recomp_opts "-fprofile-instr-use=${PORT_PPU_PGO}")
 endif()
+# PORT_PPU_RESTRICT: the lifted PPU functions take their context as __restrict (ppu_recomp.h).
+option(PORT_PPU_RESTRICT "Lifted PPU functions take their context as __restrict" OFF)
+if(PORT_PPU_RESTRICT)
+    list(APPEND recomp_opts /clang:-mllvm /clang:-capture-tracking-max-uses-to-explore=1000000)
+endif()
 set_source_files_properties(${RECOMP_SOURCES} ${LIBSRE_SOURCES} PROPERTIES
     COMPILE_OPTIONS "${recomp_opts}")
 
@@ -540,6 +545,9 @@ endif()
 option(PORT_PPU_MM_LEAN "Lifted game code: the lean memory helpers" ON)
 if(PORT_PPU_MM_LEAN)
     set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_MM_LEAN)
+endif()
+if(PORT_PPU_RESTRICT)
+    set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_CTX_RESTRICT)
 endif()
 
 # ---------------------------------------------------------------------------
