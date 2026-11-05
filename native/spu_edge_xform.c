@@ -29,6 +29,7 @@
 #include "spu_helpers.h"
 #include "spu_edge_verify.h"
 #include "spu_edge_simd.h"
+#include "spu_edge_memo.h"
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -212,6 +213,7 @@ static void xf_verify_report(void) { edge_vreport(&s_vxf); }
 int gowa_edge_xform_f538(spu_context* ctx)
 {
     if (t_xf_guard == ctx) return 0;
+    if (edge_memo_left_out(ctx)) return 1;
     static int on = -1;
     if (on < 0) {
         const char* e = getenv("GOWA_EDGE_NATIVE");

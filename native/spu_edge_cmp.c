@@ -212,6 +212,8 @@ EC_INL void c7_blocks(const int lean, uint8_t* ls, const uint32_t lo[7], uint32_
 }
 
 extern int edge_gpul_lean_pack(void);
+extern int edge_gpul_defer_test(void);
+#include "spu_edge_memo.h"
 
 static int c7_apart(uint32_t a0, uint32_t a1, uint32_t b0, uint32_t b1) { return a1 <= b0 || b1 <= a0; }
 static void c7_put32(uint8_t* p, uint32_t v)
@@ -251,10 +253,23 @@ static int c7_native(spu_context* ctx)
 
     const unsigned csr = _mm_getcsr();
     const int force = ec_force_exact();
-    ec_fl_clear(csr);
-    if (!edge_verify_on() && edge_gpul_lean_pack()) c7_blocks(1, ls, lo, m, out, force, csr);
-    else c7_blocks(0, ls, lo, m, out, force, csr);
-    ec_fl_set(csr);
+    const int lean = !edge_verify_on() && edge_gpul_lean_pack();
+    /* a kept result (spu_edge_memo.c): its first 24 bytes of each vertex; the pass writes the rest */
+    const uint8_t* kept = full && lean ? edge_memo_vtx(n, 24) : NULL;
+    if (kept) {
+        for (uint32_t v = 0; v < n; v++) {
+            uint8_t* d = ls + out + 54u * v;
+            _mm_storeu_si128((__m128i*)d, _mm_loadu_si128((const __m128i*)(kept + 24u * v)));
+            _mm_storel_epi64((__m128i*)(d + 16), _mm_loadl_epi64((const __m128i*)(kept + 24u * v + 16)));
+        }
+    } else {
+        edge_memo_revoke(ctx);
+        ec_fl_clear(csr);
+        if (lean) c7_blocks(1, ls, lo, m, out, force, csr);
+        else c7_blocks(0, ls, lo, m, out, force, csr);
+        ec_fl_set(csr);
+        if (full && (lean || edge_gpul_defer_test())) edge_memo_vtx_note(ls + out, n, 54, 24);
+    }
     __atomic_add_fetch(&s_c7_verts, (long long)m, __ATOMIC_RELAXED);
 
     if (full) {
@@ -311,6 +326,7 @@ int gowa_edge_cmp_755b80(spu_context* ctx)
         __atomic_add_fetch(&s_c7_calls, 1, __ATOMIC_RELAXED);
         return 1;
     }
+    edge_memo_revoke(ctx);
     __atomic_add_fetch(&s_c7_declined, 1, __ATOMIC_RELAXED);
     return 0;
 }
@@ -355,9 +371,16 @@ static int c8_native(spu_context* ctx)
     const uint32_t lo = ec_be32(ls + c + 0x10 + 4 * idx) & (SPU_LS_SIZE - 16), len = 16u * (n + 8);
     if (lo + len > SPU_LS_SIZE || !c7_apart(lo, lo + len, out, end + 16) || !c7_apart(c, c + 0x170, out, end + 16))
         return 0;
-    /* each store's last 4 bytes are the next vertex's first, written after */
-    for (uint32_t v = 0; v < n; v++)
-        _mm_storeu_si128((__m128i*)(ls + out + 12u * v), _mm_loadu_si128((const __m128i*)(ls + lo + 16u * v)));
+    /* a kept result (spu_edge_memo.c) */
+    const uint8_t* kept = edge_memo_vtx(n, 12);
+    if (kept) memcpy(ls + out, kept, 12u * n);
+    else {
+        edge_memo_revoke(ctx);
+        /* each store's last 4 bytes are the next vertex's first, written after */
+        for (uint32_t v = 0; v < n; v++)
+            _mm_storeu_si128((__m128i*)(ls + out + 12u * v), _mm_loadu_si128((const __m128i*)(ls + lo + 16u * v)));
+        edge_memo_vtx_note(ls + out, n, 12, 12);
+    }
     uint8_t q[16] = { 0 };
     memcpy(q + 8, ls + end - 8, 8);
     memcpy(ls + end, q, 16);
@@ -391,6 +414,7 @@ int gowa_edge_pos_765b70(spu_context* ctx)
         __atomic_add_fetch(&s_c8_calls, 1, __ATOMIC_RELAXED);
         return 1;
     }
+    edge_memo_revoke(ctx);
     __atomic_add_fetch(&s_c8_declined, 1, __ATOMIC_RELAXED);
     return 0;
 }

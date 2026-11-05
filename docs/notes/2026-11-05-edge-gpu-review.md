@@ -8,7 +8,9 @@ counts from `logs/edge-ana/rev1`.
 **Since then:** A and B are done: the gate went from 22.96 to ~24.1 flips/s, A and B giving ~3% and
 ~2%, about the table's estimates for A and below them for B. Performance plan 2.26 has the numbers,
 and what they correct here: culling cost the frame clock thread ~3 points, not 16 (that was the
-pieces), and the pieces' own cost was ~1.6 ms a flip.
+pieces), and the pieces' own cost was ~1.6 ms a flip. C went another way: with culling on the RSX
+most jobs repeat, so [their results are kept](2026-11-05-edge-job-results.md); with that the gate is
+at 24.40. The glue stayed lifted: its profile is too flat to pay.
 
 **The result:** 2b.3 as written, the other stages moved to the GPU one at a time, is not the best
 next step. The stages are 37% of an EDGE job. The job's shell (the runtime, DMA, the lifted glue,

@@ -25,7 +25,9 @@ typedef struct {
     uint16_t nverts, nidx;              /* the segment header's counts (slot 13) */
 } ej_view;
 
-/* 0, or EJ_BAD_LAYOUT when the input set does not look as described. */
-int ej_read(const spu_context* ctx, ej_view* v);
+/* 0, or EJ_BAD_LAYOUT when the input set does not look as described. base: the job's buffer set, or
+ * 0 at its entry, where the previous job's set says which is its own (wrong after another module's
+ * jobs). */
+int ej_read(const spu_context* ctx, ej_view* v, uint32_t base);
 
 #endif

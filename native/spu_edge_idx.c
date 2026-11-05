@@ -45,6 +45,7 @@
 #include "spu_context.h"
 #include "spu_helpers.h"
 #include "spu_edge_verify.h"
+#include "spu_edge_memo.h"
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -280,10 +281,26 @@ int gowa_edge_idx_e4d0(spu_context* ctx)
     if (!on) return 0;
     if (edge_verify_on())
         return edge_verify(ctx, &s_vx11, x11_native, jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E4D0, &t_x11_guard);
-    if (x11_native(ctx)) {
-        __atomic_add_fetch(&s_x11_calls, 1, __ATOMIC_RELAXED);
+    /* a kept result (spu_edge_memo.c): the list in place, and what the stage leaves in c */
+    uint8_t* const ls = ctx->ls;
+    const uint32_t c = ctx->gpr[3]._u32[0], src = ctx->gpr[4]._u32[0];
+    uint32_t bytes;
+    if (edge_memo_idx(ctx, src, &bytes)) {
+        x11_put32(ls + c + 0x58, src + bytes);
+        x11_put32(ls + c + 0x50, src);
+        ctx->gpr[3]._u32[0] = 0x00010203u; ctx->gpr[3]._u32[1] = 0x14151617u;
+        ctx->gpr[3]._u32[2] = 0x18191A1Bu; ctx->gpr[3]._u32[3] = 0x1C1D1E1Fu;
         return 1;
     }
+    if (x11_native(ctx)) {
+        __atomic_add_fetch(&s_x11_calls, 1, __ATOMIC_RELAXED);
+        if (x11_be16(ls + c + 0x190) && (ls[c + 6] >> 4 == 2 || ls[c + 6] >> 4 == 3))
+            edge_memo_idx_note(ctx, src, ((uint32_t)ls[c + 0x58] << 24 | (uint32_t)ls[c + 0x59] << 16 |
+                                          (uint32_t)ls[c + 0x5A] << 8 | ls[c + 0x5B]) - src);
+        else edge_memo_cancel();
+        return 1;
+    }
+    edge_memo_cancel();
     __atomic_add_fetch(&s_x11_declined, 1, __ATOMIC_RELAXED);
     return 0;
 }

@@ -1915,6 +1915,13 @@ binormals or ids 27-30.
   `cellGcm_fifo_kick_wait`, under a stale return address from the pump a loop before. The thread's
   own table says the same: ~80% busy, and the sampled run was slower.
 
+### 2.27 Update, 2026-11-05: EDGE's job results, kept
+
+Option C of the review went another way: [EDGE's job results, kept](2026-11-05-edge-job-results.md).
+With culling on the RSX a job's output no longer depends on the camera, and 95% of the unskinned
+jobs repeat one already done, so a result is kept and the stages left out. All of A, B and this: the
+gate 22.89 -> 24.40 flips/s, the warm fight 21.17 -> 21.56, EDGE 114 -> 87 ms of worker time a frame.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

@@ -7,7 +7,9 @@ implementation of the whole job, and its design. The implementation is to be:
 - the reference that step 3's GPU path is checked against;
 - able to run in the job's place.
 
-Nothing here is implemented yet. The measurements came from temporary probes (not kept).
+The measurements came from temporary probes (not kept). The steps below stopped at the glue's
+largest pieces: see [EDGE's job results, kept](2026-11-05-edge-job-results.md) for why, and for what
+took their place.
 
 ## What the analysis found
 

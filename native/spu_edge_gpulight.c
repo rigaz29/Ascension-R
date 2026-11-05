@@ -61,6 +61,7 @@
  */
 #include "spu_context.h"
 #include "spu_helpers.h"
+#include "spu_edge_memo.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -214,7 +215,13 @@ static void eg_binorm_late(spu_context* ctx)
 /* the output stage native, before the packing: a job with no stage skipped has its binormals */
 void edge_gpul_binorm_now(spu_context* ctx)
 {
-    if (t_eg.state != 2) eg_binorm_late(ctx);
+    if (t_eg.state != 2) { edge_memo_revoke_lit(ctx); eg_binorm_late(ctx); }
+}
+
+/* spu_edge_memo.c: the stage is skipped in this run, and the bytes it leaves are the pass's */
+int edge_gpul_lean_on(void)
+{
+    return eg_mode() == 2 && eg_lean();
 }
 
 /* the output piece (spu_edge_cmp.c): the stage is skipped, and the pass will write ids 27-30 */
@@ -264,7 +271,7 @@ int edge_gpul_capture(spu_context* ctx)
              (uint64_t)r12 + o0 + 16 * n <= SPU_LS_SIZE && (uint64_t)r12 + o1 + 16 * n <= SPU_LS_SIZE &&
              (uint64_t)r12 + o2 + 16 * n <= SPU_LS_SIZE;
     }
-    if (!ok) { EG_COUNT(s_eg_declined); eg_binorm_late(ctx); return 0; }
+    if (!ok) { EG_COUNT(s_eg_declined); edge_memo_revoke_lit(ctx); eg_binorm_late(ctx); return 0; }
     const uint32_t n = n0 + n1 + n2;
     eg_rec* r = &t_eg.rec;
     r->n0 = n0; r->n1 = n1; r->n2 = n2; r->flags = flags;
@@ -302,11 +309,13 @@ void edge_gpul_unskip(spu_context* ctx)
 {
     if (t_eg.state != 2) {
         t_eg.state = 0;
+        edge_memo_revoke_lit(ctx);
         eg_binorm_late(ctx);
         return;
     }
     t_eg.state = 0;
     EG_COUNT(s_eg_unskipped);
+    edge_memo_revoke_lit(ctx);
     eg_binorm_late(ctx);
     u128 regs[128];
     memcpy(regs, ctx->gpr, sizeof regs);

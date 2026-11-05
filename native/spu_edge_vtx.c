@@ -52,6 +52,7 @@
 #include "spu_helpers.h"
 #include "spu_edge_verify.h"
 #include "spu_edge_simd.h"
+#include "spu_edge_memo.h"
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -199,6 +200,53 @@ static void v9_general(uint8_t* ls, uint32_t sp, uint32_t Ge, uint32_t Go, int w
     }
 }
 
+/* the arrays: cnt records from src; sp the frame with the patterns */
+static void v9_decode(uint8_t* ls, uint32_t sp, const uint8_t* src, uint32_t cnt, uint32_t P0, uint32_t N0, uint32_t T0)
+{
+    const unsigned csr = _mm_getcsr();
+    const int force = ec_force_exact();
+    ec_fl_clear(csr);
+    for (uint32_t v = 0; v < cnt; v += 8) {
+        const int nv = (int)(cnt - v < 8 ? cnt - v : 8);
+        uint32_t gn[8] = { 0 }, gt[8] = { 0 };
+        for (int j = 0; j < nv; j++) {
+            const uint8_t* r = src + 18u * (v + (uint32_t)j);
+            gn[j] = ((uint32_t)r[12] << 16) | ((uint32_t)r[13] << 8) | r[14];
+            gt[j] = ((uint32_t)r[15] << 16) | ((uint32_t)r[16] << 8) | r[17];
+            /* the position: x y z, w = 1.0 (big-endian 3F800000) */
+            const __m128i q = _mm_blend_epi32(_mm_loadu_si128((const __m128i*)r), _mm_set1_epi32(0x0000803F), 8);
+            _mm_storeu_si128((__m128i*)(ls + P0 + 16u * (v + (uint32_t)j)), q);
+        }
+        const __m256i GN = _mm256_loadu_si256((const __m256i*)gn), GT = _mm256_loadu_si256((const __m256i*)gt);
+        __m256i on[4], ot[4];
+        int fast = !force;
+        if (fast) {
+            v9_vec8(1, GN, on);
+            v9_vec8(1, GT, ot);
+            if (ec_fl_read() & EC_FLAGS_BAD) {
+                fast = 0;
+                __atomic_add_fetch(&s_v9_redone, 1, __ATOMIC_RELAXED);
+            }
+        }
+        if (!fast) {
+            v9_vec8(0, GN, on);
+            v9_vec8(0, GT, ot);
+            ec_fl_clear(csr);
+        }
+        v9_store8(ls, N0, v, on, nv);
+        v9_store8(ls, T0, v, ot, nv);
+        /* a pattern past the 12 (the caller's stack): the pair as the piece makes it */
+        for (int j = 0; j < nv; j += 2) {
+            const int wn = ((gn[j] & 15) >= 12) | (((gn[j + 1] & 15) >= 12) << 1);
+            const int wt = ((gt[j] & 15) >= 12) | (((gt[j + 1] & 15) >= 12) << 1);
+            if (wn) v9_general(ls, sp, gn[j], gn[j + 1], wn, N0, v + (uint32_t)j);
+            if (wt) v9_general(ls, sp, gt[j], gt[j + 1], wt, T0, v + (uint32_t)j);
+            if (wn | wt) __atomic_add_fetch(&s_v9_general, 1, __ATOMIC_RELAXED);
+        }
+    }
+    ec_fl_set(csr);
+}
+
 static int v9_native(spu_context* ctx)
 {
     if ((_mm_getcsr() & EC_MXCSR_RZFZ) != EC_MXCSR_RZFZ) return v9_no(0);
@@ -263,48 +311,8 @@ static int v9_native(spu_context* ctx)
     memset(ls + N0 + len, 0, 32);
     memset(ls + T0 + len, 0, 32);
 
-    const unsigned csr = _mm_getcsr();
-    const int force = ec_force_exact();
-    ec_fl_clear(csr);
-    for (uint32_t v = 0; v < cnt; v += 8) {
-        const int nv = (int)(cnt - v < 8 ? cnt - v : 8);
-        uint32_t gn[8] = { 0 }, gt[8] = { 0 };
-        for (int j = 0; j < nv; j++) {
-            const uint8_t* r = ls + src + 18u * (v + (uint32_t)j);
-            gn[j] = ((uint32_t)r[12] << 16) | ((uint32_t)r[13] << 8) | r[14];
-            gt[j] = ((uint32_t)r[15] << 16) | ((uint32_t)r[16] << 8) | r[17];
-            /* the position: x y z, w = 1.0 (big-endian 3F800000) */
-            const __m128i q = _mm_blend_epi32(_mm_loadu_si128((const __m128i*)r), _mm_set1_epi32(0x0000803F), 8);
-            _mm_storeu_si128((__m128i*)(ls + P0 + 16u * (v + (uint32_t)j)), q);
-        }
-        const __m256i GN = _mm256_loadu_si256((const __m256i*)gn), GT = _mm256_loadu_si256((const __m256i*)gt);
-        __m256i on[4], ot[4];
-        int fast = !force;
-        if (fast) {
-            v9_vec8(1, GN, on);
-            v9_vec8(1, GT, ot);
-            if (ec_fl_read() & EC_FLAGS_BAD) {
-                fast = 0;
-                __atomic_add_fetch(&s_v9_redone, 1, __ATOMIC_RELAXED);
-            }
-        }
-        if (!fast) {
-            v9_vec8(0, GN, on);
-            v9_vec8(0, GT, ot);
-            ec_fl_clear(csr);
-        }
-        v9_store8(ls, N0, v, on, nv);
-        v9_store8(ls, T0, v, ot, nv);
-        /* a pattern past the 12 (the caller's stack): the pair as the piece makes it */
-        for (int j = 0; j < nv; j += 2) {
-            const int wn = ((gn[j] & 15) >= 12) | (((gn[j + 1] & 15) >= 12) << 1);
-            const int wt = ((gt[j] & 15) >= 12) | (((gt[j + 1] & 15) >= 12) << 1);
-            if (wn) v9_general(ls, sp, gn[j], gn[j + 1], wn, N0, v + (uint32_t)j);
-            if (wt) v9_general(ls, sp, gt[j], gt[j + 1], wt, T0, v + (uint32_t)j);
-            if (wn | wt) __atomic_add_fetch(&s_v9_general, 1, __ATOMIC_RELAXED);
-        }
-    }
-    ec_fl_set(csr);
+    /* a kept result (spu_edge_memo.c): the list is filled, the arrays can wait */
+    if (!edge_memo_unpack(ctx, 1, src, cnt, P0, N0, T0)) v9_decode(ls, sp, ls + src, cnt, P0, N0, T0);
 
     for (int k = 0; k < 4; k++) { ctx->gpr[1]._u32[k] += 224u; ctx->gpr[3]._u32[k] = 0; }
     __atomic_add_fetch(&s_v9_verts, (long long)cnt, __ATOMIC_RELAXED);
@@ -377,6 +385,25 @@ static const uint32_t* p10_pool(int q)
     return q < 12 ? v9_pool[v9_frame_q[q]] : v9_pool[q == 12 ? 12 : 18];
 }
 
+static void p10_decode(uint8_t* ls, uint32_t src, uint32_t cnt, uint32_t P0)
+{
+    for (uint32_t v = 0; v < cnt; v++) {
+        const __m128i q = _mm_blend_epi32(_mm_loadu_si128((const __m128i*)(ls + src + 18u * v)), _mm_set1_epi32(0x0000803F), 8);
+        _mm_storeu_si128((__m128i*)(ls + P0 + 16u * v), q);
+    }
+}
+
+/* The arrays of a lit job that left them out (spu_edge_memo.c), late, its frame below the stack
+ * pointer: the stream as it came, a[] its place, the records and the arrays. */
+void edge_vtx_unpack_late(spu_context* ctx, const uint8_t* stream, const uint32_t a[5])
+{
+    uint8_t* ls = ctx->ls;
+    const uint32_t sp = ctx->gpr[1]._u32[0] - 224u;
+    for (int k = 0; k < 12; k++)
+        for (int w = 0; w < 4; w++) v9_put32(ls + sp + 0x20 + 16 * k + 4 * w, v9_pool[v9_frame_q[k]][w]);
+    v9_decode(ls, sp, stream, a[1], a[2], a[3], a[4]);
+}
+
 static int p10_native(spu_context* ctx)
 {
     uint8_t* ls = ctx->ls;
@@ -416,10 +443,8 @@ static int p10_native(spu_context* ctx)
     memcpy(ls + c + 0x160, ids, 16);
     v9_put32(ls + c + 0x5C, base);
     for (int k = 0; k < 12; k++) memcpy(ls + sp + 0x20 + 16 * k, ls + pool + 16 * k, 16);
-    for (uint32_t v = 0; v < cnt; v++) {
-        const __m128i q = _mm_blend_epi32(_mm_loadu_si128((const __m128i*)(ls + src + 18u * v)), _mm_set1_epi32(0x0000803F), 8);
-        _mm_storeu_si128((__m128i*)(ls + P0 + 16u * v), q);
-    }
+    /* a kept result (spu_edge_memo.c): the list is filled, the array can wait */
+    if (!edge_memo_unpack(ctx, 0, src, cnt, P0, 0, 0)) p10_decode(ls, src, cnt, P0);
     for (int k = 0; k < 4; k++) { ctx->gpr[1]._u32[k] += 224u; ctx->gpr[3]._u32[k] = 0; }
     __atomic_add_fetch(&s_p10_verts, (long long)cnt, __ATOMIC_RELAXED);
     return 1;
@@ -457,5 +482,6 @@ int gowa_edge_pos_764d10(spu_context* ctx)
 
 #else
 int gowa_edge_vtx_75bd10(spu_context* ctx) { (void)ctx; return 0; }
+void edge_vtx_unpack_late(spu_context* ctx, const uint8_t* stream, const uint32_t a[5]) { (void)ctx; (void)stream; (void)a; }
 int gowa_edge_pos_764d10(spu_context* ctx) { (void)ctx; return 0; }
 #endif

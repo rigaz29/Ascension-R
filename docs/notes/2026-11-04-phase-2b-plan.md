@@ -458,6 +458,8 @@ on the frame clock thread (then 2b.2's switch), the job as C code, and the stage
 - 2026-11-04: 2b.1 done. The backend's vertex pass (a compute command list before the batch's),
   EDGE's lighting on it, the SPU's stage skipped: within tolerance of the SPU at the gate, the
   same screenshots, +6.6% at the gate. On by default in the game.
+- 2026-11-05: [EDGE's job results, kept](2026-11-05-edge-job-results.md), in place of the review's
+  C: EDGE 114 -> 87 ms of worker time a frame with A and B, the gate 22.89 -> 24.40 flips/s.
 - 2026-11-05: the review's A and B done (performance plan 2.26): the binormals and ids 27-30 left
   out with the stage, a draw's pieces in one call, the constant bank by generation, no culling on
   the SPU by default. The gate 22.96 -> ~24.1 flips/s.

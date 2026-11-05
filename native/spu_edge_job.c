@@ -17,6 +17,7 @@
 #include "spu_context.h"
 #include "spu_helpers.h"
 #include "spu_edge_job.h"
+#include "spu_edge_memo.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,12 +42,17 @@ static int ej_index(const uint32_t* t, int n, uint32_t ea)
     return n;
 }
 
-int ej_read(const spu_context* ctx, ej_view* v)
+int ej_read(const spu_context* ctx, ej_view* v, uint32_t base)
 {
     const uint8_t* ls = ctx->ls;
     memset(v, 0, sizeof *v);
-    const uint32_t prev = ej_be32(ls + 0x10918);
-    v->base = prev == 0x11000 ? 0x1D000 : 0x11000;
+    if (base) {
+        if (base != 0x11000 && base != 0x1D000) return EJ_BAD_LAYOUT;
+        v->base = base;
+    } else {
+        const uint32_t prev = ej_be32(ls + 0x10918);
+        v->base = prev == 0x11000 ? 0x1D000 : 0x11000;
+    }
     v->end = v->base + 0xC000;
     const uint8_t* lst = ls + v->end - 176;
     uint32_t a = v->base;
@@ -104,6 +110,7 @@ static void ej_stats(void)
 
 int gowa_edge_job_ad98(spu_context* ctx)
 {
+    edge_memo_job();
     static int on = -1, stats;
     if (on < 0) {
         const char* e = getenv("GOWA_EDGE_JOB");
@@ -113,7 +120,7 @@ int gowa_edge_job_ad98(spu_context* ctx)
     }
     if (!on) return 0;
     ej_view v;
-    const int bad = ej_read(ctx, &v);
+    const int bad = ej_read(ctx, &v, 0);
     const long long n = __atomic_add_fetch(&s_jobs, 1, __ATOMIC_RELAXED);
     if (bad) __atomic_add_fetch(&s_bad, 1, __ATOMIC_RELAXED);
     else {

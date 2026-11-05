@@ -552,6 +552,16 @@ static edge_vstat s_v618 = { "cull D618", 0, 1, 0, 0, 0, 0, 0 };
 static void d618_verify_report(void) { edge_vreport(&s_v618); }
 
 /* The hook at 0xD618's entry: 1 when the call is done (the function returns). */
+int edge_cull_left_out(void)
+{
+    static int nc = -1;
+    if (nc < 0) {
+        const char* e = getenv("GOWA_EDGE_NOCULL");
+        nc = e ? e[0] == '1' : !(getenv("SPU_JOB_REPLAY") || getenv("SPU_JOB_CAPTURE") || edge_verify_on());
+    }
+    return nc;
+}
+
 int gowa_edge_cull_d618(spu_context* ctx)
 {
     if (t_d618_guard == ctx) return 0;
@@ -559,13 +569,7 @@ int gowa_edge_cull_d618(spu_context* ctx)
      * mode, r4, 0): the count stays, the indexes stay as decompressed, and the RSX's face culling and
      * clipping do the work (EDGE's draws are drawn culling back faces). On in the game; off with
      * GOWA_EDGE_NOCULL=0, and by default in a replay, a capture and GOWA_EDGE_VERIFY's check. */
-    {   static int nc = -1;
-        if (nc < 0) {
-            const char* e = getenv("GOWA_EDGE_NOCULL");
-            nc = e ? e[0] == '1' : !(getenv("SPU_JOB_REPLAY") || getenv("SPU_JOB_CAPTURE") || edge_verify_on());
-        }
-        if (nc) memset(&ctx->gpr[4], 0, sizeof ctx->gpr[4]);
-    }
+    if (edge_cull_left_out()) memset(&ctx->gpr[4], 0, sizeof ctx->gpr[4]);
     static int on = -1;
     if (on < 0) {
         const char* e = getenv("GOWA_EDGE_NATIVE");
@@ -586,6 +590,7 @@ int gowa_edge_cull_d618(spu_context* ctx)
 
 
 #else
+int edge_cull_left_out(void) { return 0; }
 int gowa_edge_cull_d250(spu_context* ctx) { (void)ctx; return 0; }
 int gowa_edge_cull_d618(spu_context* ctx) { (void)ctx; return 0; }
 #endif
