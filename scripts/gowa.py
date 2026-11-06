@@ -337,6 +337,7 @@ def lift_wws_pm(elf):
     os.makedirs(WWS_PM_DIR)
     if run([sys.executable, os.path.join(TOOLS, "spu_lifter.py"), wrapped,
             "--auto-functions", wrapped, "--symbol-prefix", "wwspm_", "-o", WWS_PM_DIR,
+            *(["--merge-chunks"] if os.environ.get("GOWA_PM_MERGE", "1") != "0" else []),
             "--extra-funcs", ",".join("0x%X" % a for a in WWS_PM_EXTRA_FUNCS),
             "--float-spec", str(SPU_FLOAT_SPEC)]):
         die("spu_lifter failed on the Wws_Job policy module")
