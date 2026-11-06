@@ -2105,7 +2105,9 @@ the input list's copies are 4.3.
 [The review](2026-11-06-gpu-review-3.md), at 37.6 flips/s. EDGE to the GPU is finished: native EDGE code is 13% of
 EDGE and the runtime under the jobs 48%. Nothing else of size can go. Bindless textures are new and small (~1.6 ms
 of the RSX thread, weeks). The cheapest time left is not GPU work: `tex_csum`, `PeekMessageA` and
-`rsx_texture_layout` are 22% of the RSX thread, for small changes, not tried yet.
+`rsx_texture_layout` were 22% of the RSX thread. Done: gate 33.3 -> 35.3, the fight unchanged at 34.2 on a warm machine.
+Heat sets the fight's numbers: a first run on a cool machine reads 36-39, one straight after another 32-36. In the fight,
+compare runs from the same place in a chain.
 
 ## 3. The budget for 33 ms
 

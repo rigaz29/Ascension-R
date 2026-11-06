@@ -280,6 +280,13 @@ static DWORD WINAPI frame_clock(LPVOID)
     if (const char* e = getenv("GOWA_FLIP_MIN_MS")) flip_min_ms = (ULONGLONG)atoi(e);
     unsigned drain_poll_ms = 1;
     if (const char* e = getenv("GOWA_DRAIN_POLL_MS")) drain_poll_ms = (unsigned)atoi(e);
+    /* The window's messages every 8 ms, not on every pass: 8% of this thread was in
+     * PeekMessageA with an empty queue, and the drain, which writes the labels the
+     * title waits on, does not run meanwhile. The pads are read by polling, so
+     * nothing a player does waits for it. GOWA_PUMP_MS overrides, 0 every pass. */
+    ULONGLONG pump_ms = 8;
+    if (const char* e = getenv("GOWA_PUMP_MS")) pump_ms = (ULONGLONG)atoi(e);
+    ULONGLONG last_pump_ms = 0;
     ULONGLONG last_flip_ms = 0;
     /* A flip the drain reached and the ticker took, still waiting for its
      * 16 ms. Nothing drains while it waits, so the frame presented when it is
@@ -371,8 +378,10 @@ static DWORD WINAPI frame_clock(LPVOID)
          * (D3D12_RECORD_AHEAD), instead of all of them at the frame's end,
          * when the title is waiting for the drain to reach its flip. */
         if (rsx_ok) rsx_backend_record_ahead();
+        const bool pump = now - last_pump_ms >= pump_ms;
+        if (pump) last_pump_ms = now;
         if (rsx_ok) {
-            if (rsx_backend_pump() != 0) {
+            if (pump && rsx_backend_pump() != 0) {
                 /* The window was closed, which is how a player quits. Nothing
                  * else stops the title, which went on running with no window.
                  * Terminate rather than exit: guest threads are still running

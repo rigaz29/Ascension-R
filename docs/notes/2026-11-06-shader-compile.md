@@ -88,13 +88,16 @@ programs through the real `rsx_dxc.c`, all accepted.
 
 ## Reading the fight's numbers
 
-Two things moved the fight's medians during this work, and neither was the compiler.
+Three things moved the fight's medians during this work, and none was the compiler.
 
 - **Restarting Windows:** the same build went from ~30.6 flips/s (21:04) to 34.9-36.2 (22:00 on). Before the restart
-  `Winmgmt`'s svchost held 6.2 GB. The gate went from ~31.6 to 34. Old medians do not compare with new ones.
+  `Winmgmt`'s svchost held 6.2 GB. The gate went from ~31.6 to 34. Old medians do not compare with new ones. How much of
+  it is the restart is not known: the machine also cooled, see the next point.
+- **Heat:** a run on a cool machine reads 36-39, one straight after another 32-36. Found later,
+  [here](2026-11-06-gpu-review-3.md#what-came-of-it). The DXC run below at 37.23 was a first run and the one at 33.59 was not.
 - **Where Kratos is at the moment:** on the chain 34.3-36.9 fps, on the floor 32.0-33.7, on either compiler, and which
-  one a run gets changes with its timing. So one run against one run says little: D3DCompile's three runs read
-  36.17, 35.08 and 34.88, DXC's two 37.23 and 33.59.
+  one a run gets changes with its timing. Heat was not separated from this. So one run against one run says little:
+  D3DCompile's three runs read 36.17, 35.08 and 34.88, DXC's two 37.23 and 33.59.
 
 ## Left
 
