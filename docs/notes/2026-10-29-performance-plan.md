@@ -2026,6 +2026,27 @@ Every list the same (w6's 13 differences in `logs/jobcap7` were there before).
 The two runs differ by the game's state: General6 and EDGE move with it. Over all three, flips/s follows the
 workers: 166 ms gives 31.4, 170 gives 30.3, 178 gives 29.1, 187 gives 28.4, 197 gives 28. The gate: 31.55.
 
+Then, in the same direction:
+- `SPU_RdDec` on the time stamp counter: `QueryPerformanceCounter` took ~150 ns here, five times a job.
+- A DMA list's elements prefetched before the first copy: a job's input is a dozen small cold blocks.
+- `--loop-locals` on by default (`GOWA_LOOP_LOCALS=0`: off). It was left off in 2.18 because the frames did not
+  follow; now they do.
+
+| the fight, 5 runs (`logs/edge-ana/j4`, `j4b`) | median flips/s | lowest window |
+|---|---|---|
+| | 31.95, 30.62, 31.06, 30.27, 31.26 | 28.7 |
+
+- From t=100 on every window is at 30.2 or more. The windows at t=70-90, the start of the fight, go down to
+  28.7-29.6: General6 and audio are at their highest there. One run lost its last 30 s to Firefox's updater (a
+  service stop in the system log at that second; every workload's ms a flip went up by the same quarter).
+- There is no cap at 30: windows reach 32.3, and the gate is at 31.6. The third review's "at the game's 30
+  cap" was wrong: it was the frame clock thread and the workers.
+- **The levels look like a feedback.** General6 is ~920 ms a second in the windows above 30 flips/s, whatever
+  the flips, and ~1,215 ms a second on the slow level: two rates of the game's own work, 1.4-1.5 apart, and
+  the fast one has now held from the start in most runs. The slower the frames, the more physics a second.
+  That fits sub-steps of a fixed time, 3 a frame against 2 past 33.3 ms, but that was not read in the game's code.
+- The main thread has room now: 27% of its time is waiting (`poll_mwaitx`, `sys_timer_usleep`).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

@@ -460,10 +460,10 @@ JOBMOD_MERGE_SKIP = {"jobmod_a67e549fa0ab_e41E8", "jobmod_1bdd67b54c3b_e7F60"}
 
 
 def loop_locals_args():
-    """GOWA_LOOP_LOCALS=1: the job modules and pieces lifted with --loop-locals, but not the
-    loops a native routine takes (spu_native_hooks.json): their lifted copy runs one iteration.
-    GOWA_LOOP_LOCALS_MAX=N: only loops that name at most N registers."""
-    if os.environ.get("GOWA_LOOP_LOCALS") != "1":
+    """The job modules and pieces lifted with --loop-locals (GOWA_LOOP_LOCALS=0: without), but
+    not the loops a native routine takes (spu_native_hooks.json): their lifted copy runs one
+    iteration. GOWA_LOOP_LOCALS_MAX=N: only loops that name at most N registers."""
+    if os.environ.get("GOWA_LOOP_LOCALS", "1") != "1":
         return []
     args = ["--loop-locals"]
     if os.path.exists(NATIVE_HOOKS_FILE):
