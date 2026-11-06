@@ -1,6 +1,11 @@
 {
  "jobmod_1bdd67b54c3b_e7F60": {
-  "jobmod_1bdd67b54c3b_e7F60_spu_func_00009FB8": "gowa_g6_memset_9fb8"
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_00004138": "gowa_g6_solve_4138",
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_000053E0": "?gowa_g6_slerp_53e0",
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_00005C40": "gowa_g6_solve_5c40",
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_00007520": "gowa_g6_blend_7520",
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_00009FB8": "gowa_g6_memset_9fb8",
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_0000A588": "?gowa_g6_joint_a588"
  },
  "jobmod_a67e549fa0ab_e41E8": {
   "jobmod_a67e549fa0ab_e41E8_spu_func_00004930": "?gowa_g6_noise_4930"
