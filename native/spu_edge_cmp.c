@@ -256,7 +256,9 @@ static int c7_native(spu_context* ctx)
     const int lean = !edge_verify_on() && edge_gpul_lean_pack();
     /* a kept result (spu_edge_memo.c): its first 24 bytes of each vertex; the pass writes the rest */
     const uint8_t* kept = full && lean ? edge_memo_vtx(n, 24) : NULL;
-    if (kept) {
+    if (kept && edge_memo_resident()) {
+        memcpy(ls + out, kept, 16);         /* all the ring gets (spu_edge_memo.c) */
+    } else if (kept) {
         for (uint32_t v = 0; v < n; v++) {
             uint8_t* d = ls + out + 54u * v;
             _mm_storeu_si128((__m128i*)d, _mm_loadu_si128((const __m128i*)(kept + 24u * v)));
@@ -373,7 +375,7 @@ static int c8_native(spu_context* ctx)
         return 0;
     /* a kept result (spu_edge_memo.c) */
     const uint8_t* kept = edge_memo_vtx(n, 12);
-    if (kept) memcpy(ls + out, kept, 12u * n);
+    if (kept) memcpy(ls + out, kept, edge_memo_resident() ? 16u : 12u * n);
     else {
         edge_memo_revoke(ctx);
         /* each store's last 4 bytes are the next vertex's first, written after */

@@ -21,6 +21,8 @@ void edge_memo_idx_note(const spu_context* ctx, uint32_t src, uint32_t bytes);
 void edge_memo_cancel(void);
 /* the packing: a result's n records of rec bytes, or NULL */
 const uint8_t* edge_memo_vtx(uint32_t n, uint32_t rec);
+int edge_memo_resident(void);
+void edge_memo_publish(uint32_t vio);
 /* the packing made n records, stride apart, the first rec bytes of each to keep */
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec);
 /* the arrays are wanted after all: in any job; in a lit job */

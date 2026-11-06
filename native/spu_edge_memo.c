@@ -25,6 +25,11 @@
  *    survive that long in the local store, so a lit result keeps it too. A position's array comes
  *    back from the result itself.
  *
+ * GOWA_EDGE_RESIDENT=1 (the default in the game; 0 off, as in a replay or a capture): a job with a
+ * result puts nothing in the ring but its vertexes' first 16 bytes. The block is published to the
+ * backend (rsx_kept.h), which draws from a resident copy: the same bytes went to the ring and from the
+ * ring to the GPU every frame.
+ *
  * A result is kept in an arena, the second time its job is seen: 128-bit hash, list and records.
  * Results are never written after they are published. When an arena is full the table moves to the other one, emptied: the jobs
  * still reading a result of the old one end long before it is used again (a change waits 5 s).
@@ -35,6 +40,7 @@
 #include "spu_edge_job.h"
 #include "spu_edge_memo.h"
 #include "spu_edge_verify.h"
+#include "rsx_kept.h"
 #include <immintrin.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,6 +61,7 @@ typedef struct memo_entry {
     uint32_t idx_bytes;         /* the list as the index stage leaves it, passes included */
     uint32_t nverts, rec;       /* records and their size */
     uint32_t stream_bytes;      /* a lit job's vertex stream, for a late unpack */
+    rsx_kept kb;                /* the backend's view of the list and the records */
     uint8_t  data[];            /* the list, 16-aligned; the records, 16-aligned; the stream */
 } memo_entry;
 
@@ -98,6 +105,19 @@ static int memo_mode(void)
     v = e ? atoi(e) : getenv("SPU_JOB_REPLAY") ? 0 : 1;
     if (v < 0 || v > 2) v = 0;
     if (getenv("SPU_JOB_CAPTURE") || edge_verify_on()) v = 0;
+    m = v;
+    return v;
+}
+
+/* GOWA_EDGE_RESIDENT: 1 on, 0 off, 2 the blocks published with the ring's bytes put as well */
+static int memo_resident_mode(void)
+{
+    static volatile int m = -1;
+    int v = m;
+    if (v >= 0) return v;
+    const char* e = getenv("GOWA_EDGE_RESIDENT");
+    v = e ? atoi(e) : 1;
+    if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
     m = v;
     return v;
 }
@@ -221,6 +241,10 @@ static void memo_keep(uint64_t k0, uint64_t k1, const uint8_t* idx, uint32_t idx
     if (stride == rec) memcpy(d, src, (size_t)n * rec);
     else for (uint32_t v = 0; v < n; v++) memcpy(d + (size_t)v * rec, src + (size_t)v * stride, rec);
     if (stream_bytes) memcpy(d + rb, stream, stream_bytes);
+    memset(&e->kb, 0, sizeof e->kb);
+    e->kb.list = e->data; e->kb.verts = d;
+    e->kb.list_bytes = idx_bytes; e->kb.nverts = n; e->kb.rec = rec; e->kb.stride = stride;
+    memcpy(e->kb.tag, src, 16);
 
     uint32_t i = (uint32_t)k0 & (MEMO_SLOTS - 1);
     for (int p = 0; p < MEMO_PROBES; p++, i = (i + 1) & (MEMO_SLOTS - 1)) {
@@ -367,6 +391,18 @@ const uint8_t* edge_memo_vtx(uint32_t n, uint32_t rec)
     return memo_records(t_m.e);
 }
 
+/* This job's list and vertexes stay out of the ring. */
+int edge_memo_resident(void)
+{
+    return t_m.state == 2 && memo_resident_mode() == 1;
+}
+
+/* Every job's output stage: the block at vio is a kept result's, or nobody's. */
+void edge_memo_publish(uint32_t vio)
+{
+    if (memo_resident_mode()) rsx_d3d12_kept_publish(vio, t_m.state == 2 ? (rsx_kept*)&t_m.e->kb : NULL);
+}
+
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec)
 {
     if (t_m.state == 3) {
@@ -461,6 +497,8 @@ int edge_memo_idx(spu_context* ctx, uint32_t src, uint32_t* bytes) { (void)ctx; 
 void edge_memo_idx_note(const spu_context* ctx, uint32_t src, uint32_t bytes) { (void)ctx; (void)src; (void)bytes; }
 void edge_memo_cancel(void) { }
 const uint8_t* edge_memo_vtx(uint32_t n, uint32_t rec) { (void)n; (void)rec; return NULL; }
+int edge_memo_resident(void) { return 0; }
+void edge_memo_publish(uint32_t vio) { (void)vio; }
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec) { (void)src; (void)n; (void)stride; (void)rec; }
 void edge_memo_revoke(spu_context* ctx) { (void)ctx; }
 void edge_memo_revoke_lit(spu_context* ctx) { (void)ctx; }

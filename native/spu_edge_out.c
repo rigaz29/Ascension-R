@@ -45,7 +45,9 @@ extern void rsx_d3d12_register_vertex_ring(uint32_t io_offset, uint32_t size);
 extern void edge_gpul_unskip(spu_context* ctx);
 extern void edge_gpul_binorm_now(spu_context* ctx);
 extern int edge_gpul_defer_test(void);
+#include "spu_edge_memo.h"
 extern void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride);
+extern int edge_gpul_can_publish(const spu_context* ctx, uint32_t stride);
 
 #define LD(a)    spu_ls_read128(ctx, (uint32_t)(a))
 #define ST(a, v) spu_ls_write128(ctx, (uint32_t)(a), (v))
@@ -154,8 +156,12 @@ static void eo_af38(spu_context* ctx, u128 r3, u128 r4, u128 r5, u128 r6, u128 r
     }
 }
 
-/* 0xC340 (indexes) and 0xC490 (vertexes): one PUT into the ring, at the allocation's cursor. */
-static int eo_put(spu_context* ctx, int vertexes, u128 c, u128 count, u128 local, u128 out, u128 sp)
+/* 0xC340 (indexes) and 0xC490 (vertexes): one PUT into the ring, at the allocation's cursor. With
+ * `kept` a kept result's: the cursor moves as ever, the indexes wait in *late and the vertexes put 16
+ * bytes (spu_edge_memo.c). */
+typedef struct { u128 src, ea, bytes, tag; } eo_late;
+static int eo_put(spu_context* ctx, int vertexes, u128 c, u128 count, u128 local, u128 out, u128 sp,
+                  int kept, eo_late* late)
 {
     if (vertexes) {
         const u128 r6 = LD(W(c));
@@ -206,7 +212,9 @@ static int eo_put(spu_context* ctx, int vertexes, u128 c, u128 count, u128 local
     const u128 tag = LD(W(c) + 0x150);
     if ((W(r29) & 15) || (W(src) & 15) || W(tag) > 31)
         return eo_halt(ctx, vertexes ? 0xC5A0 : 0xC40C);
-    eo_af38(ctx, src, spu_rotqmbyi(r29, -4), bytes, tag, spu_il(32));
+    if (!kept) eo_af38(ctx, src, spu_rotqmbyi(r29, -4), bytes, tag, spu_il(32));
+    else if (vertexes) eo_af38(ctx, src, spu_rotqmbyi(r29, -4), spu_il(16), tag, spu_il(32));
+    else { late->src = src; late->ea = spu_rotqmbyi(r29, -4); late->bytes = bytes; late->tag = tag; }
     const u128 r83 = spu_a(r29, bytes);
     const u128 r13 = LD(W(local));
     const u128 r10 = spu_a(r81, bytes);
@@ -1302,7 +1310,16 @@ int gowa_edge_out_9080(spu_context* ctx)
                     spu_shlqbyi(spu, 0)))                                /* the ring allocation */
             goto done;
         ctx->gpr[1] = sp;
-        if (eo_put(ctx, 0, c, icount, local, spu_ai(sp, 96), spu_ai(sp, -144))) goto done;
+        /* a kept result: its list and vertexes stay out of the ring, if the record can go out */
+        eo_late late;
+        memset(&late, 0, sizeof late);
+        int kept = 0;
+        if (edge_memo_resident() && !edge_gpul_defer_test()) {
+            const u128 line = LD(0x10C00);
+            const uint32_t ea0 = W(LD(W(local))), st = W(eo_d118(ctx, c));
+            kept = ea0 >= line._u32[0] && ea0 < line._u32[2] && (st == 12 || edge_gpul_can_publish(ctx, st));
+        }
+        if (eo_put(ctx, 0, c, icount, local, spu_ai(sp, 96), spu_ai(sp, -144), kept, &late)) goto done;
         /* Phase 2b.1 (spu_edge_gpulight.c): the vertexes go to the cursor; their IO offset from the
          * ring line (start EA, IO offset, end EA). A skipped lighting stage that cannot be
          * published for runs now, before the packing (GOWA_EDGE_GPU_DEFER=1: every one, a test). */
@@ -1315,11 +1332,17 @@ int gowa_edge_out_9080(spu_context* ctx)
             edge_gpul_binorm_now(ctx);
         }
         eo_d158(ctx, c, spu_ai(sp, -80));
-        if (eo_put(ctx, 1, c, icount, local, spu_ai(sp, 32), spu_ai(sp, -176))) goto done;
-        if (vio && W(LD(W(local))) != vea)
+        if (kept && !edge_memo_resident()) {        /* given up in the packing: the list goes out after all */
+            kept = 0;
+            if (W(late.bytes)) eo_af38(ctx, late.src, late.ea, late.bytes, late.tag, spu_il(32));
+        }
+        if (eo_put(ctx, 1, c, icount, local, spu_ai(sp, 32), spu_ai(sp, -176), kept, &late)) goto done;
+        if (vio && W(LD(W(local))) != vea) {
             edge_gpul_publish(ctx, vio, W(spu_rotqbyi(LD(W(c)), 6)) & 0xFFFFu, W(eo_d118(ctx, c)));
-        else
+            edge_memo_publish(vio);
+        } else {
             edge_gpul_unskip(ctx);
+        }
         const u128 cursor = spu_ai(sp, 64);
         const u128 r32 = LD(W(desc));
         if (eo_c9a8(ctx, c, cursor, spu_rotqbyi(r32, 4), local, 1, spu_ai(sp, -144))) {

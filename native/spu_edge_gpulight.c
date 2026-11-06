@@ -337,6 +337,14 @@ void edge_gpul_unskip(spu_context* ctx)
 
 /* The output stage native, after the vertex PUT: the vertexes at IO offset vio, n of them, with
  * the given stride and attribute list. Every job's: one without a record clears the key. */
+/* What edge_gpul_publish needs of a job whose vertexes it will not see in the local store. */
+int edge_gpul_can_publish(const spu_context* ctx, uint32_t stride)
+{
+    const uint8_t* ls = ctx->ls;
+    return t_eg.state == 2 && stride == EG_STRIDE && !memcmp(ls + 0x107A0 + 0x160, eg_ids, 8) &&
+           !memcmp(ls + 0x107A0, t_eg.head, 16);
+}
+
 void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride)
 {
     if (!eg_mode()) return;
@@ -464,9 +472,10 @@ static void eg_cpu(const void* rv, const uint8_t* src, uint8_t* dst, uint32_t nv
  * (vp_vb), t1 the batch's table, u0 the lit copies (vp_lit), b0 the dispatch's first segment; a
  * group a segment. A segment's entry, 32 bytes at index * 32 of t1: the source copy's header (16
  * attribute bases), the lit copy's header, the start of attribute 0's copy from the header, its
- * vertex count, the record's offset in t1, the segment's bytes from the header. The segment is
- * copied word by word but for attribute 0's vertexes, the header's bases moved to the lit copy;
- * then a thread does two vertexes (108 bytes, 27 words, 4-aligned since the copy starts 16-aligned). */
+ * vertex count, the record's offset in t1, the segment's bytes from the header, and where the vertexes
+ * are if not in the copy (a kept block's, resident). The segment is copied word by word but for
+ * attribute 0's vertexes, the header's bases moved to the lit copy; then a thread does two vertexes
+ * (108 bytes, 27 words, 4-aligned since the copy starts 16-aligned). */
 static const char s_eg_hlsl[] =
     "ByteAddressBuffer vsrc : register(t0);\n"
     "ByteAddressBuffer vtab : register(t1);\n"
@@ -562,7 +571,7 @@ static const char s_eg_hlsl[] =
     "    uint e = (seg_base + gid.x) * 32u;\n"
     "    uint4 s0 = vtab.Load4(e);\n"
     "    uint2 s1 = vtab.Load2(e + 16u);\n"
-    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w, rec = s1.x;\n"
+    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w, rec = s1.x, sv = vtab.Load(e + 24u);\n"
     "    uint dw0 = data >> 2, dw1 = (data >> 2) + ((nv * 54u + 3u) >> 2), nw = (s1.y + 3u) >> 2;\n"
     "    for (uint i = ti; i < nw; i += 64u) {\n"
     "        if (i >= dw0 && i < dw1) continue;\n"
@@ -580,7 +589,7 @@ static const char s_eg_hlsl[] =
     "    GroupMemoryBarrierWithGroupSync();\n"
     "    uint np = (nv + 1u) >> 1;\n"
     "    for (uint p = ti; p < np; p += 64u) {\n"
-    "        uint a = sh + data + p * 108u, b = dh + data + p * 108u;\n"
+    "        uint a = (sv != 0u ? sv : sh + data) + p * 108u, b = dh + data + p * 108u;\n"
     "        uint w[27]; uint4 q; uint k;\n"
     "        [unroll] for (k = 0u; k < 24u; k += 4u) { q = vsrc.Load4(a + k * 4u); w[k] = q.x; w[k + 1u] = q.y; w[k + 2u] = q.z; w[k + 3u] = q.w; }\n"
     "        uint3 q3 = vsrc.Load3(a + 96u); w[24] = q3.x; w[25] = q3.y; w[26] = q3.z;\n"
