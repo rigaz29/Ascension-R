@@ -2077,8 +2077,25 @@ phases. EDGE ~10 ms, RenJobSet ~6, RenderJobs ~8, MeshProc and Batch ~3, EDGE ~1
 EDGE is half of the chain now, at width 3.3, and its limit is the title's: priority 0 on SPUs 4 and 5, and ring
 lines for SPUs 0-3 only (`0x73254300 + 0x80 (spu + 1)`). The label array has room for six SPUs
 (`0x20000C80 + 16 spu`, the next array at `0xCE0`). SPUs 4 and 5 stand idle in the first EDGE phase. Letting EDGE
-use them needs two more ring lines; a rough test, sharing the rings of SPUs 2 and 3, was stopped by low memory
-before its first run.
+use them needs two more ring lines.
+
+**Tested 2026-11-06, dropped: width is not what the frame waits for any more.** EDGE on SPUs 4 and 5 at SPU 3's
+priority, sharing the rings of SPUs 2 and 3 under a lock around the allocation (4,882 waits in 5.8 million
+allocations, none long). One fight each, after Windows was restarted, the windows from t = 130 s to 170 s:
+
+| | flips/s | EDGE ms a flip | all workers ms a flip | fragment pipelines |
+|---|---|---|---|---|
+| as the title has it | 35.7 | 46.2-47.8 | 146-152 | 348 |
+| EDGE on SPUs 4 and 5 | 35.3 | 47.2-47.4 | 152-153 | 1,170 |
+
+- The picture stayed whole in the two shots taken.
+- At this rate the process keeps 8.3 logical CPUs busy of the 12, and the main thread is 96% busy. The work is the
+  same, so more of it side by side only moves it.
+- **Fragment pipelines tripled with no new scene,** and 409 programs were compiled on a warm cache. With SPU 4 alone
+  it was 2,169 and 654, and that run, at 25-29 flips/s, was stopped by low memory at t = 140 s, so its rate says
+  nothing. The pipeline file went from 12 to 54 MB. Sharing a ring leaves its label out of order, which may let
+  something be overwritten early, but this was not looked into. It would have to be understood before any further
+  try, with rings of their own or not.
 
 A position hit is 30.3 µs now, a lit one 38.8, the job manager 15 of either (269 labels, was 357), of which
 the input list's copies are 4.3.
