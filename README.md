@@ -44,6 +44,10 @@ python -m venv ..\.venv
 The launcher shows the game's folder in its System tab. Browse picks another one, and Auto detect looks for the game
 on every disk; it starts by itself when the game is not where the settings say.
 
+`build` copies `dxcompiler.dll` and `dxil.dll` from the Windows SDK next to the exe, and guest shaders compile with
+them. Without the two files they compile with D3DCompile, about 2.4 times slower. `graphics.shader_compiler = fxc`
+asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
+
 ## Layout
 
 - `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, lle, build, run, symbolize).

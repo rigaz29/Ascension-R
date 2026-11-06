@@ -158,6 +158,9 @@ def link_dir(link, target):
     say("linked %s -> %s" % (os.path.relpath(link, ROOT), target))
 
 
+DXC_DLLS = ("dxcompiler.dll", "dxil.dll")
+
+
 def find_ffmpeg():
     """A shared FFmpeg build (headers + DLLs) for the runtime's video and audio
     decoding: local.json's "ffmpeg_dir", or the one folder under ../ffmpeg.
@@ -169,6 +172,19 @@ def find_ffmpeg():
         cands += [os.path.join(base, d) for d in sorted(os.listdir(base))]
     for c in cands:
         if c and os.path.isfile(os.path.join(c, "include", "libavcodec", "avcodec.h")):
+            return c
+    return None
+
+
+def find_dxc():
+    """The folder with dxcompiler.dll and dxil.dll, for guest shaders: local.json's
+    "dxc_dir", or the newest Windows SDK that has them. Returns it, or None."""
+    cands = [load_local().get("dxc_dir")]
+    kits = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Windows Kits", "10", "bin")
+    if os.path.isdir(kits):
+        cands += [os.path.join(kits, d, "x64") for d in sorted(os.listdir(kits), reverse=True)]
+    for c in cands:
+        if c and all(os.path.isfile(os.path.join(c, f)) for f in DXC_DLLS):
             return c
     return None
 
@@ -227,6 +243,10 @@ def cmd_doctor(args):
           "git submodule update --init" if not os.path.exists(TOOLS) else
           subprocess.run(["git", "-C", PS3RECOMP, "rev-parse", "--abbrev-ref", "HEAD"],
                          capture_output=True, text=True).stdout.strip())
+    if os.name == "nt":
+        dxc = find_dxc()
+        say("  [%s] %-22s %s" % ("ok" if dxc else "--", "DXC", dxc or
+                                 "no Windows SDK with dxcompiler.dll: shaders stay on D3DCompile, ~2.4x slower"))
 
     say("game")
     sfo = os.path.join(VFS_GAME, "PARAM.SFO")
@@ -1015,7 +1035,21 @@ def cmd_build(args):
     rc = run(["cmake", "--build", BUILD, "-j", args.jobs], env=env)
     if not rc:
         write_settings(ffmpeg)
+        copy_dxc()
     return rc
+
+
+def copy_dxc():
+    """The runtime takes the two DLLs from the exe's folder only; without them guest
+    shaders are compiled by D3DCompile, ~2.4 times slower."""
+    src = find_dxc()
+    if not src:
+        say("note: no dxcompiler.dll in a Windows SDK; guest shaders stay on D3DCompile")
+        return
+    for f in DXC_DLLS:
+        to = os.path.join(BUILD, f)
+        if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
+            shutil.copy2(os.path.join(src, f), to)
 
 
 def ini_set(lines, section, key, value, keep=False):
