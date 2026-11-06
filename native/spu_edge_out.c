@@ -1339,7 +1339,7 @@ int gowa_edge_out_9080(spu_context* ctx)
         if (eo_put(ctx, 1, c, icount, local, spu_ai(sp, 32), spu_ai(sp, -176), kept, &late)) goto done;
         if (vio && W(LD(W(local))) != vea) {
             edge_gpul_publish(ctx, vio, W(spu_rotqbyi(LD(W(c)), 6)) & 0xFFFFu, W(eo_d118(ctx, c)));
-            edge_memo_publish(vio);
+            edge_memo_publish(vio, W(spu_rotqbyi(LD(W(c)), 6)) & 0xFFFFu);
         } else {
             edge_gpul_unskip(ctx);
         }

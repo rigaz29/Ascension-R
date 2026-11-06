@@ -398,9 +398,11 @@ int edge_memo_resident(void)
 }
 
 /* Every job's output stage: the block at vio is a kept result's, or nobody's. */
-void edge_memo_publish(uint32_t vio)
+void edge_memo_publish(uint32_t vio, uint32_t nverts)
 {
-    if (memo_resident_mode()) rsx_d3d12_kept_publish(vio, t_m.state == 2 ? (rsx_kept*)&t_m.e->kb : NULL);
+    if (!memo_resident_mode()) return;
+    if (t_m.state == 2) ((rsx_kept*)&t_m.e->kb)->put_verts = nverts;
+    rsx_d3d12_kept_publish(vio, t_m.state == 2 ? (rsx_kept*)&t_m.e->kb : NULL);
 }
 
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec)
@@ -498,7 +500,7 @@ void edge_memo_idx_note(const spu_context* ctx, uint32_t src, uint32_t bytes) { 
 void edge_memo_cancel(void) { }
 const uint8_t* edge_memo_vtx(uint32_t n, uint32_t rec) { (void)n; (void)rec; return NULL; }
 int edge_memo_resident(void) { return 0; }
-void edge_memo_publish(uint32_t vio) { (void)vio; }
+void edge_memo_publish(uint32_t vio, uint32_t nverts) { (void)vio; (void)nverts; }
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec) { (void)src; (void)n; (void)stride; (void)rec; }
 void edge_memo_revoke(spu_context* ctx) { (void)ctx; }
 void edge_memo_revoke_lit(spu_context* ctx) { (void)ctx; }
