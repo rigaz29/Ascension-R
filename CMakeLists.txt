@@ -263,6 +263,7 @@ endif()
 add_executable(${PROJECT_NAME}
     main.cpp
     launcher.cpp
+    game_find.cpp
     stubs.cpp
     poll_wait.cpp
     patches.cpp

@@ -41,6 +41,9 @@ python -m venv ..\.venv
 ..\.venv\Scripts\python scripts\gowa.py run
 ```
 
+The launcher shows the game's folder in its System tab. Browse picks another one, and Auto detect looks for the game
+on every disk; it starts by itself when the game is not where the settings say.
+
 ## Layout
 
 - `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, lle, build, run, symbolize).

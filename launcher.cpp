@@ -17,11 +17,16 @@
  * every tab into PNG files there and quits, to look at the window without
  * opening it.
  *
+ * The System tab shows the game's folder: Browse picks it, Auto detect looks
+ * for it on every disk (game_find.cpp), and a window that opens with no game
+ * starts looking by itself. Either sets the two links the port reads it through.
+ *
  * This file also holds this port's defaults (gowa_port_defaults), so the
  * game and the Defaults button take them from the same tables.
  */
 #include "win32_compat.h"
 #include "ps3emu/ps3_settings.h"
+#include "game_find.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -32,6 +37,7 @@
 #include <commctrl.h>   /* SetWindowSubclass: the keyboard window's buttons */
 #include <shellapi.h>   /* ShellExecuteA: Open save folder */
 #include <objbase.h>
+#include <shobjidl.h>   /* IFileOpenDialog: Browse */
 #include <d2d1.h>
 #include <dwrite.h>
 #include <wincodec.h>
@@ -455,6 +461,94 @@ static struct {
     int pad;        /* an XInput controller is plugged in */
 } s_rc;
 
+static const wchar_t* W(const char* s);
+
+/* The game's folder, as the links give it. */
+static struct {
+    GameInfo g;                        /* what <vfs>\PS3_GAME leads to */
+    wchar_t vfs[GAME_PATH_MAX], hdd0[GAME_PATH_MAX];              /* [paths], else next to the exe */
+    wchar_t link_vfs[GAME_PATH_MAX], link_hdd0[GAME_PATH_MAX];    /* <vfs>\PS3_GAME, <hdd0>\game\NPUA80918 */
+    wchar_t note[GAME_PATH_MAX + 128]; /* what the last search or Browse came to, if no folder was set */
+} s_game;
+
+/* The search, on a thread of its own. */
+static struct {
+    HANDLE thread;
+    volatile long stop;
+    wchar_t under[GAME_PATH_MAX];      /* the folder Browse gave; empty, every disk */
+    GameInfo best;
+    SRWLOCK lock;                      /* over now */
+    wchar_t now[GAME_PATH_MAX];        /* the folder being read */
+} s_find;
+
+static void path_slashes(wchar_t* p) { for (; *p; p++) if (*p == L'/') *p = L'\\'; }
+
+static void game_links(void)
+{
+    const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);
+    const char* hdd0 = ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL);
+    wchar_t here[GAME_PATH_MAX];
+    if (!GetModuleFileNameW(NULL, here, GAME_PATH_MAX)) here[0] = 0;
+    if (wchar_t* s = wcsrchr(here, L'\\')) *s = 0;
+    if (vfs && *vfs) swprintf(s_game.vfs, GAME_PATH_MAX, L"%ls", W(vfs));
+    else swprintf(s_game.vfs, GAME_PATH_MAX, L"%ls\\vfs", here);
+    if (hdd0 && *hdd0) swprintf(s_game.hdd0, GAME_PATH_MAX, L"%ls", W(hdd0));
+    else swprintf(s_game.hdd0, GAME_PATH_MAX, L"%ls\\gamedata\\dev_hdd0", here);
+    path_slashes(s_game.vfs);
+    path_slashes(s_game.hdd0);
+    swprintf(s_game.link_vfs, GAME_PATH_MAX, L"%ls\\PS3_GAME", s_game.vfs);
+    swprintf(s_game.link_hdd0, GAME_PATH_MAX, L"%ls\\game\\NPUA80918", s_game.hdd0);
+}
+
+/* What the links lead to now, and whether the game can start. */
+static void game_refresh(void)
+{
+    game_links();
+    wchar_t dir[GAME_PATH_MAX];
+    if (!game_link_target(s_game.link_vfs, dir, GAME_PATH_MAX))
+        swprintf(dir, GAME_PATH_MAX, L"%ls", s_game.link_vfs);   /* a real folder, or none */
+    game_probe(dir, &s_game.g);
+    const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
+    s_rc.elf_ok = elf && *elf && GetFileAttributesA(elf) != INVALID_FILE_ATTRIBUTES;
+}
+
+static const wchar_t* game_path_shown(void)
+{
+    return GetFileAttributesW(s_game.link_vfs) == INVALID_FILE_ATTRIBUTES ? L"Not set" : s_game.g.dir;
+}
+
+/* 1.12, from the 01.12 of PARAM.SFO. */
+static const wchar_t* game_version(void)
+{
+    const char* v = s_game.g.app_ver;
+    return W(*v == '0' ? v + 1 : v);
+}
+
+/* A line on what the folder holds; the level as check_line takes it. */
+static int game_status(wchar_t* b, size_t n)
+{
+    const GameInfo& g = s_game.g;
+    if (s_game.note[0]) { swprintf(b, n, L"%ls", s_game.note); return -1; }
+    switch (g.state) {
+    case GAME_OK:
+        swprintf(b, n, L"God of War: Ascension \x00B7 %ls \x00B7 %ls", W(g.title_id), game_version());
+        return 1;
+    case GAME_OTHER_BUILD:
+        swprintf(b, n, L"%ls %ls, but not the GOWA.elf this port was made from: it may not run", W(g.title_id),
+                 game_version());
+        return 0;
+    case GAME_NO_ELF:
+        swprintf(b, n, L"Decrypt USRDIR\\GOWA.SELF to GOWA.elf with RPCS3 (Utilities > Decrypt PS3 Binaries)");
+        return -1;
+    case GAME_OTHER_TITLE:
+        swprintf(b, n, L"That is %ls %ls. This port runs NPUA80918 1.12", W(g.title_id), game_version());
+        return -1;
+    default:
+        swprintf(b, n, L"No game there. Auto detect looks on every disk, or Browse to its folder");
+        return -1;
+    }
+}
+
 /* XInput, as cellPad finds it: from System32, at run time. */
 static int pad_connected(void)
 {
@@ -477,8 +571,7 @@ static int pad_connected(void)
 
 static void ready_check(void)
 {
-    const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
-    s_rc.elf_ok = elf && *elf && GetFileAttributesA(elf) != INVALID_FILE_ATTRIBUTES;
+    game_refresh();
     s_rc.profiles = 0;
     if (saves_dir(s_rc.saves, sizeof s_rc.saves)) {
         char pat[1200];
@@ -506,8 +599,6 @@ static void ready_check(void)
         }
         fac->Release();
     }
-    const char* vfs = ps3_settings_str("paths", "vfs", NULL, NULL);
-    snprintf(s_rc.vfs, sizeof s_rc.vfs, "%s", vfs ? vfs : "");
     s_rc.pad = pad_connected();
 }
 
@@ -625,6 +716,17 @@ static IWICFormatConverter* load_png(const char* path)
     return cv;
 }
 
+/* The game's pictures, through the link. */
+static void art_load(void)
+{
+    char p[3700];
+    WideCharToMultiByte(CP_UTF8, 0, s_game.link_vfs, -1, s_rc.vfs, sizeof s_rc.vfs, NULL, NULL);
+    snprintf(p, sizeof p, "%s\\PIC1.PNG", s_rc.vfs);
+    s_img_bg = load_png(p);
+    snprintf(p, sizeof p, "%s\\ICON0.PNG", s_rc.vfs);
+    s_img_logo = load_png(p);
+}
+
 static int ui_init(void)
 {
     if (FAILED(D2D1CreateFactory(D2D1_FACTORY_TYPE_SINGLE_THREADED, &s_d2d)) ||
@@ -663,11 +765,7 @@ static int ui_init(void)
         if (dots) s_tf_path->SetTrimming(&at_folder, dots);
         if (dots) dots->Release();
     }
-    char p[1200];
-    snprintf(p, sizeof p, "%s\\PS3_GAME\\PIC1.PNG", s_rc.vfs);
-    s_img_bg = load_png(p);
-    snprintf(p, sizeof p, "%s\\PS3_GAME\\ICON0.PNG", s_rc.vfs);
-    s_img_logo = load_png(p);
+    art_load();
     return 1;
 }
 
@@ -679,11 +777,27 @@ static void rt_release(void)
     if (s_rt) { s_rt->Release(); s_rt = NULL; }
 }
 
+static void rt_bitmaps(void)
+{
+    if (s_img_bg) s_rt->CreateBitmapFromWicBitmap(s_img_bg, NULL, &s_bm_bg);
+    if (s_img_logo) s_rt->CreateBitmapFromWicBitmap(s_img_logo, NULL, &s_bm_logo);
+}
+
 static void rt_resources(void)
 {
     s_rt->CreateSolidColorBrush(col(C_TEXT), &s_br);
-    if (s_img_bg) s_rt->CreateBitmapFromWicBitmap(s_img_bg, NULL, &s_bm_bg);
-    if (s_img_logo) s_rt->CreateBitmapFromWicBitmap(s_img_logo, NULL, &s_bm_logo);
+    rt_bitmaps();
+}
+
+/* The pictures of another folder. */
+static void art_reload(void)
+{
+    if (s_bm_bg) { s_bm_bg->Release(); s_bm_bg = NULL; }
+    if (s_bm_logo) { s_bm_logo->Release(); s_bm_logo = NULL; }
+    if (s_img_bg) { s_img_bg->Release(); s_img_bg = NULL; }
+    if (s_img_logo) { s_img_logo->Release(); s_img_logo = NULL; }
+    art_load();
+    if (s_rt) rt_bitmaps();
 }
 
 static void fill(D2D1_RECT_F r, unsigned rgb, float a = 1.0f)
@@ -728,7 +842,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
  * -----------------------------------------------------------------------*/
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
-    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_DDITEM = 9000,
+    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_GAME_BROWSE, H_GAME_AUTO, H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
 static Hit s_hit[400];
@@ -740,6 +854,7 @@ static int s_dd = -1;            /* the option whose list is open, or -1 */
 static D2D1_RECT_F s_dd_at;      /* the box it opened from */
 static int s_dd_top;             /* the first entry shown */
 static char s_toast[64];
+static int s_toast_bad;          /* not good news: red, with a cross */
 static ULONGLONG s_toast_until;
 
 static void hit(D2D1_RECT_F r, int id)
@@ -869,7 +984,7 @@ static const wchar_t* const k_tab_icon[T_N] = { L"\xE768", L"\xE790", L"\xE7F4",
 static const wchar_t* const k_tab_desc[T_N] = {
     L"", L"How the picture is scaled, smoothed and filtered.", L"The window, its pace and the frame rate display.",
     L"Controller and keyboard.", L"Switches that change what the game draws, for speed.",
-    L"Language, saves and this window." };
+    L"The game's folder, language, saves and this window." };
 
 static void draw_sidebar(void)
 {
@@ -970,7 +1085,12 @@ static void draw_play(void)
     text(L"ASCENSION", s_tf_head, R(x0 + 2, 108, 520, 26), C_GOLD);
     text(L"Recompiled from the PlayStation 3 version: PPU and SPU code lifted to x86, the RSX drawn with Direct3D 12.",
          s_tf_small, R(x0, 138, 470, 40), C_TEXT2);
-    draw_chip(L"BCUS98232 \x00B7 1.12", x0, 190, 150);
+    {
+        wchar_t b[60];
+        if (s_game.g.title_id[0]) swprintf(b, 60, L"%ls \x00B7 %ls", W(s_game.g.title_id), game_version());
+        else swprintf(b, 60, L"NPUA80918 \x00B7 1.12");
+        draw_chip(b, x0, 190, 150);
+    }
     draw_chip(L"Direct3D 12", x0 + 160, 190, 110);
     draw_chip(L"720p internal", x0 + 280, 190, 120);
 
@@ -980,8 +1100,19 @@ static void draw_play(void)
     const D2D1_RECT_F c1 = R(x0, cy, cw, chh);
     w_card(c1, L"READY CHECK");
     float y = cy + 54;
-    check_line(x0 + 22, y, cw - 44, s_rc.elf_ok ? 1 : -1,
-               s_rc.elf_ok ? L"Game files found (GOWA.elf)" : L"Game files missing: run gowa.py build");
+    if (s_find.thread) {
+        check_line(x0 + 22, y, cw - 44, 2, L"Looking for the game\x2026");
+    } else if (!s_rc.elf_ok) {
+        check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"GOWA.elf missing (System tab)"
+                                                                           : L"Game not found");
+        w_button(L"Find game", R(x0 + cw - 118, y - 2, 96, 30), H_GAME_AUTO, 0);
+    } else if (s_game.g.state == GAME_OTHER_BUILD) {
+        check_line(x0 + 22, y, cw - 44, 0, L"Game found, but another GOWA.elf");
+    } else {
+        wchar_t b[100];
+        swprintf(b, 100, L"Game found: %ls %ls", s_game.g.title_id[0] ? W(s_game.g.title_id) : L"GOWA.elf", game_version());
+        check_line(x0 + 22, y, cw - 44, 1, b);
+    }
     y += 34;
     {
         wchar_t b[200];
@@ -1016,6 +1147,8 @@ static void draw_play(void)
                                                                 : L"No controller: keyboard and mouse");
     }
     Opt* fps = opt_find("display", "show_fps");
+    text(L"Game folder", s_tf_cap, R(x0 + 22, cy + chh - 94, cw - 44, 18), C_MUTED);
+    text(game_path_shown(), s_tf_path, R(x0 + 22, cy + chh - 76, cw - 44, 20), C_TEXT2);
     text(L"Settings file", s_tf_cap, R(x0 + 22, cy + chh - 52, cw - 44, 18), C_MUTED);
     text(W(ps3_settings_path()), s_tf_path, R(x0 + 22, cy + chh - 34, cw - 44, 20), C_TEXT2);
 
@@ -1058,6 +1191,31 @@ static void draw_play(void)
     }
 }
 
+/* The game's folder: the first row of the System tab. */
+static const float GAME_ROW_H = 106.0f;
+
+static void draw_game_row(float x, float y, float w)
+{
+    const float bw = 116.0f;
+    const int busy = s_find.thread != NULL;
+    text(L"Game folder", s_tf_ui_b, R(x, y + 16, w - 2 * bw - 30, 22), C_TEXT);
+    w_button(L"Browse\x2026", R(x + w - 2 * bw - 10, y + 10, bw, SEG_H), H_GAME_BROWSE, 0);
+    w_button(busy ? L"Stop" : L"Auto detect", R(x + w - bw, y + 10, bw, SEG_H), H_GAME_AUTO, 0);
+    text(game_path_shown(), s_tf_path, R(x, y + 50, w, 20), C_TEXT2);
+    if (busy) {
+        wchar_t b[GAME_PATH_MAX + 16];
+        AcquireSRWLockShared(&s_find.lock);
+        swprintf(b, sizeof b / sizeof b[0], L"Searching: %ls", s_find.now);
+        ReleaseSRWLockShared(&s_find.lock);
+        text(L"\xE721", s_tf_icon, R(x, y + 74, 22, 26), C_GOLD, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+        text(b, s_tf_path, R(x + 32, y + 74, w - 32, 26), C_TEXT2);
+    } else {
+        wchar_t b[GAME_PATH_MAX + 128];
+        const int level = game_status(b, sizeof b / sizeof b[0]);
+        check_line(x, y + 74, w, level, b);
+    }
+}
+
 static void draw_settings(int tab)
 {
     const float x0 = SIDE_W + 40, hh = 120.0f;
@@ -1076,9 +1234,15 @@ static void draw_settings(int tab)
     for (int r = 0; r < nr; r++) ch += opt_row_h(*rows[r], rw);
     if (tab == T_CONTROLS) { klh = label_h(keys_desc, rw - 212, &kdh); ch += row_h(klh); }
     if (tab == T_PATCHES) ch += 34.0f;
+    if (tab == T_SYSTEM) ch += GAME_ROW_H;
     ch += 16.0f;
     w_card(R(x0, cy, cw, ch), NULL);
     float y = cy + 16;
+    if (tab == T_SYSTEM) {
+        draw_game_row(rx, y, rw);
+        y += GAME_ROW_H;
+        w_rule(rx, y, rw);
+    }
     for (int r = 0; r < nr; r++) {
         Opt& o = *rows[r];
         if (r) w_rule(rx, y, rw);
@@ -1127,8 +1291,10 @@ static void draw_footer(void)
     summary(sum, 300);
     const int pn = preset_now();
     if (s_toast[0] && GetTickCount64() < s_toast_until) {
-        text(L"\xE73E", s_tf_icon, R(SIDE_W + 32, y, 20, FOOT_H), C_OK, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-        text(W(s_toast), s_tf_ui_b, R(SIDE_W + 60, y, 300, FOOT_H), C_OK);
+        const unsigned c = s_toast_bad ? C_BAD : C_OK;
+        text(s_toast_bad ? L"\xE711" : L"\xE73E", s_tf_icon, R(SIDE_W + 32, y, 20, FOOT_H), c, 1.0f,
+             DWRITE_TEXT_ALIGNMENT_CENTER);
+        text(W(s_toast), s_tf_ui_b, R(SIDE_W + 60, y, 300, FOOT_H), c);
     } else {
         wchar_t p[80];
         if (pn >= 0) swprintf(p, 80, L"%ls preset", W(k_presets[pn].name));
@@ -1205,7 +1371,159 @@ static void paint(void)
 static void toast(const char* s)
 {
     snprintf(s_toast, sizeof s_toast, "%s", s);
+    s_toast_bad = 0;
     s_toast_until = GetTickCount64() + 2000;
+}
+
+static void toast_bad(const char* s)
+{
+    toast(s);
+    s_toast_bad = 1;
+    s_toast_until = GetTickCount64() + 4000;
+}
+
+/* --- the game's folder -------------------------------------------------------- */
+enum { WM_GAME_FOUND = WM_APP + 1 };
+
+static const char* U8(const wchar_t* s)
+{
+    static char b[2][GAME_PATH_MAX * 3];
+    static int k;
+    char* o = b[k++ & 1];
+    if (!WideCharToMultiByte(CP_UTF8, 0, s, -1, o, sizeof b[0], NULL, NULL)) o[0] = 0;
+    return o;
+}
+
+/* [paths], for a copy of the port that no `gowa.py build` wrote them for. */
+static void game_paths_fill(void)
+{
+    int changed = 0;
+    const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);
+    const char* hdd0 = ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL);
+    const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
+    if (!vfs || !*vfs) { ps3_settings_set("paths", "vfs", U8(s_game.vfs)); changed = 1; }
+    if (!hdd0 || !*hdd0) { ps3_settings_set("paths", "hdd0", U8(s_game.hdd0)); changed = 1; }
+    if (!elf || !*elf || GetFileAttributesA(elf) == INVALID_FILE_ATTRIBUTES) {
+        wchar_t p[GAME_PATH_MAX + 32];
+        swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.elf", s_game.link_vfs);
+        ps3_settings_set("paths", "elf", U8(p));
+        changed = 1;
+    }
+    if (changed) ps3_settings_save(NULL);
+}
+
+/* Both links to a folder, checked before either changes. */
+static int game_use(const wchar_t* dir)
+{
+    wchar_t err[GAME_PATH_MAX + 64] = L"";
+    const size_t n = sizeof err / sizeof err[0];
+    s_game.note[0] = 0;
+    if (!game_link_possible(s_game.link_vfs, dir, err, n) || !game_link_possible(s_game.link_hdd0, dir, err, n) ||
+        !game_link(s_game.link_vfs, dir, err, n) || !game_link(s_game.link_hdd0, dir, err, n)) {
+        swprintf(s_game.note, sizeof s_game.note / sizeof s_game.note[0], L"%ls", err);
+        return 0;
+    }
+    game_paths_fill();
+    game_refresh();
+    art_reload();
+    return 1;
+}
+
+static void find_now(const wchar_t* dir)
+{
+    AcquireSRWLockExclusive(&s_find.lock);
+    swprintf(s_find.now, GAME_PATH_MAX, L"%ls", dir);
+    ReleaseSRWLockExclusive(&s_find.lock);
+}
+
+static DWORD WINAPI find_thread(LPVOID)
+{
+    GameSearch s = { s_find.under[0] ? s_find.under : NULL, &s_find.stop, find_now, 60, 0 };
+    GameInfo close, best;
+    memset(&close, 0, sizeof close);
+    if (s.under) game_locate(s.under, &close);   /* the folder itself, or the usual places in it */
+    if (close.state >= GAME_NO_ELF) best = close;
+    else {
+        game_search(&s, &best);
+        if (close.state > best.state) best = close;
+    }
+    s_find.best = best;
+    PostMessageA(s_main, WM_GAME_FOUND, 0, 0);
+    return 0;
+}
+
+static void find_start(const wchar_t* under)
+{
+    if (s_find.thread) return;
+    swprintf(s_find.under, GAME_PATH_MAX, L"%ls", under ? under : L"");
+    s_find.stop = 0;
+    s_find.now[0] = 0;
+    s_game.note[0] = 0;
+    s_find.thread = CreateThread(NULL, 0, find_thread, NULL, 0, NULL);
+}
+
+static void find_end(void)
+{
+    if (!s_find.thread) return;
+    WaitForSingleObject(s_find.thread, INFINITE);
+    CloseHandle(s_find.thread);
+    s_find.thread = NULL;
+}
+
+/* What the search came to. */
+static void find_done(void)
+{
+    find_end();
+    if (s_find.stop) return;
+    const GameInfo& b = s_find.best;
+    const int picked = s_find.under[0] != 0;
+    const size_t n = sizeof s_game.note / sizeof s_game.note[0];
+    if (b.state >= GAME_NO_ELF && (picked || b.state >= s_game.g.state)) {
+        if (game_use(b.dir)) toast(b.state == GAME_OK ? "Game found" : "Game folder set");
+        else toast_bad("The game's folder could not be set");
+    } else if (b.state == GAME_OTHER_TITLE) {
+        swprintf(s_game.note, n, L"Found %ls in %ls. This port runs NPUA80918 1.12", W(b.title_id), b.dir);
+        toast_bad("Another release of the game");
+    } else if (picked) {
+        swprintf(s_game.note, n, L"No game in %ls", s_find.under);
+        toast_bad("No game in that folder");
+    } else if (s_game.g.state >= GAME_NO_ELF) {
+        toast("No better copy found");
+    } else {
+        swprintf(s_game.note, n, L"Not found on this PC. Browse to its folder (NPUA80918)");
+        toast_bad("Game not found");
+    }
+}
+
+static void game_browse(void)
+{
+    if (s_find.thread) {   /* a search under way gives way */
+        s_find.stop = 1;
+        find_end();
+    }
+    IFileOpenDialog* d = NULL;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d)))) return;
+    DWORD o = 0;
+    d->GetOptions(&o);
+    d->SetOptions(o | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    d->SetTitle(L"The game's folder: NPUA80918, or a folder it is under");
+    IShellItem* start = NULL;
+    if (s_game.g.state != GAME_NONE && SUCCEEDED(SHCreateItemFromParsingName(s_game.g.dir, NULL, IID_PPV_ARGS(&start)))) {
+        d->SetFolder(start);
+        start->Release();
+    }
+    if (SUCCEEDED(d->Show(s_main))) {
+        IShellItem* it = NULL;
+        if (SUCCEEDED(d->GetResult(&it))) {
+            PWSTR p = NULL;
+            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
+                find_start(p);
+                CoTaskMemFree(p);
+            }
+            it->Release();
+        }
+    }
+    d->Release();
 }
 
 static void act(int id)
@@ -1217,11 +1535,26 @@ static void act(int id)
     }
     if (id >= H_PLAY) {
         switch (id) {
-        case H_PLAY: if (save_all()) s_done = 1; break;
+        case H_PLAY:
+            if (!s_rc.elf_ok) {
+                s_tab = T_SYSTEM;
+                toast_bad("Set the game's folder first");
+                break;
+            }
+            /* The second link, if only the first was made. */
+            if (s_game.g.state >= GAME_NO_ELF && GetFileAttributesW(s_game.link_hdd0) == INVALID_FILE_ATTRIBUTES)
+                game_link(s_game.link_hdd0, s_game.g.dir, NULL, 0);
+            if (save_all()) s_done = 1;
+            break;
         case H_SAVE: if (save_all()) toast("Saved"); break;
         case H_QUIT: s_done = 2; break;
         case H_KEYS: if (!s_keys) open_keys(); break;
         case H_SAVES: open_saves(); break;
+        case H_GAME_BROWSE: game_browse(); break;
+        case H_GAME_AUTO:
+            if (s_find.thread) s_find.stop = 1;
+            else find_start(NULL);
+            break;
         case H_DEFAULTS:
             for (int i = 0; i < N_OPT; i++) opt_set(s_opt[i], s_opt[i].def);
             for (int i = 0; i < s_npopt; i++) opt_set(s_popt[i], s_popt[i].def);
@@ -1390,8 +1723,13 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
             return 0;
         }
         break;
+    case WM_GAME_FOUND:
+        find_done();
+        redraw();
+        return 0;
     case WM_TIMER: {
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
+        if (s_find.thread) redraw();   /* the folder it is in */
         static int tick;
         if (++tick % 4 == 0) {   /* every 2 s: a controller plugged in or out */
             const int pad = pad_connected();
@@ -1406,8 +1744,9 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
     return DefWindowProcA(h, m, w, l);
 }
 
-/* GOWA_LAUNCHER_SHOT=<folder>: every tab, and the Display tab with its list
- * open, into PNG files at the window's size times 1.25 (a 125% display). */
+/* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open
+ * and the System tab during a search, into PNG files at the window's size times
+ * 1.25 (a 125% display). */
 static void shots(const char* dir)
 {
     const float dpi = 120.0f;
@@ -1421,10 +1760,14 @@ static void shots(const char* dir)
     }
     rt_resources();
     CreateDirectoryA(dir, NULL);
-    for (int t = 0; t <= T_N; t++) {
-        s_tab = t < T_N ? t : T_DISPLAY;
+    for (int t = 0; t <= T_N + 1; t++) {
+        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : T_SYSTEM;
         s_dd = -1;
         s_hover = -1;
+        if (t == T_N + 1) {   /* a search under way: nothing runs, the row only says so */
+            s_find.thread = GetCurrentThread();
+            swprintf(s_find.now, GAME_PATH_MAX, L"D:\\Games\\PS3\\RPCS3\\dev_hdd0\\game");
+        }
         if (t == T_N) {   /* the window size list, open */
             paint();
             for (int i = 0; i < s_nhit; i++)
@@ -1450,6 +1793,7 @@ static void shots(const char* dir)
         if (enc) enc->Release();
         if (st) st->Release();
     }
+    s_find.thread = NULL;
     rt_release();
     bmp->Release();
 }
@@ -1539,6 +1883,7 @@ extern "C" int gowa_launcher(void)
     ShowWindow(s_main, SW_SHOW);
     SetForegroundWindow(s_main);
     SetTimer(s_main, 1, 500, NULL);
+    if (!s_rc.elf_ok) find_start(NULL);   /* no game yet: look for it */
 
     MSG msg;
     while (!s_done && GetMessageA(&msg, NULL, 0U, 0U) > 0) {
@@ -1556,6 +1901,8 @@ extern "C" int gowa_launcher(void)
         DispatchMessageA(&msg);
     }
     KillTimer(s_main, 1);
+    s_find.stop = 1;
+    find_end();
     if (s_keys) DestroyWindow(s_keys);
     DestroyWindow(s_main);
     /* Let the destroy messages through before the game opens its window. */

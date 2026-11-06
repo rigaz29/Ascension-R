@@ -1307,6 +1307,11 @@ int main(int argc, char** argv)
     int launcher = !no_launcher && ps3_settings_bool("launcher", "show", NULL, 1);
 #ifdef _WIN32
     if (!no_launcher && (GetAsyncKeyState(VK_SHIFT) & 0x8000)) launcher = 1;
+    /* No game where the settings say: the launcher looks for it, whatever the setting. */
+    if (!no_launcher && !elf) {
+        const char* e = ps3_settings_str("paths", "elf", NULL, NULL);
+        if (!e || !*e || GetFileAttributesA(e) == INVALID_FILE_ATTRIBUTES) launcher = 1;
+    }
 #endif
     if (launcher && !gowa_launcher()) return 0;
     title_environment();
