@@ -45,6 +45,35 @@ M, P and G are done, on by default (`native/spu_g6_native.c`, `native/spu_g6_rou
 - **What small steps give:** each of the cheap pieces is 0.2-1 µs a job, 0.3-1.7 ms a flip, +0.05-0.3%.
 - Both are weeks, and the last estimates ran high by a factor of four. Not started.
 
+## What the GPU can still take
+
+Asked after M, P and G: what else can go to the GPU or be bypassed, for easy to medium work. From the
+samples and the captured jobs' GETs and PUTs (`logs/jobcap6`, `logs/jobcap7`). A millisecond is taken at what G
+gave, 0.17% of the frames.
+
+| work | ms a flip | what it is | for the GPU? |
+|---|---|---|---|
+| General6's noise jobs | 4 | 376 bytes in, a 16 KB F16 tile out; 100% the same at the gate, 97% in the fight | **yes, and it needs no GPU: the output repeats** |
+| EDGE, moving rigid objects | ~1 | 4% of the jobs miss, a matrix in the key | K's way, but too small |
+| EDGE, hits | 45 | the job's shell | S and J, not easy |
+| General6's `0xBF60` jobs | 35 | joints and constraints, read back by what follows | no: the game needs the results |
+| w6 | 12 | 65 KB in, 7 KB of floats out, to where the game reads them | no, for the same reason |
+| RenderJobs | 25 | 95 KB in, 44 KB of RSX commands out, integer code | no |
+| RenJobSet | 28 | small jobs, integer, one walks memory in 885 small GETs a job | no |
+| MeshProc | 4.5 | integer, writes nothing out | no |
+| audio | 22 | not per frame; the CPU's by nature | no |
+| the frame clock thread | 25 | per method and per draw, flat; 28% of it idle | nothing left in one piece |
+
+So EDGE to the GPU is done, as far as easy to medium work goes. What is left of EDGE is the job around the
+math, and the rest of the SPU work is integer code or feeds the game.
+
+Two things remain worth their work, and neither is a GPU step:
+- **The noise jobs:** leave the pixel loop and the PUTs out while the record's words that count repeat. With
+  the noise's arguments zero, the words that move every frame have no effect. -4 ms, +0.7%, a day or two.
+- **General6's waiting:** 7-24 ms of worker time a flip, and the fight's two levels. Where it goes was not
+  found. If workers spin at the job list's syncs, a worker could go to other work meanwhile. Up to +1-4%, and
+  the slower level's 8% if that is its cause. Medium, and not certain.
+
 ## Where things stand
 
 | | gate | fight |
