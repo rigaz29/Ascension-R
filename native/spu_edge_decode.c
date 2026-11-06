@@ -57,6 +57,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+extern int edge_memo_skip_decode(void);
+
 #if defined(__AVX2__) && defined(__FMA__)
 
 #define DEC_MXCSR_RZFZ 0xE040u   /* round toward zero, FTZ, DAZ (SPU_MXCSR_RZFZ) */
@@ -452,6 +454,10 @@ void gowa_edge_decode_30310(spu_context* ctx)
     }
     const int n = (int)((0u - (uint32_t)c19) >> 5) - 1;
     if (n <= 0) return;
+    if (edge_memo_skip_decode()) {      /* the lifted loop's one pass, at the array's start */
+        ctx->gpr[19]._u32[0] = (uint32_t)-32;
+        return;
+    }
     __atomic_add_fetch(&s_d1_calls, 1, __ATOMIC_RELAXED);
 
     d30310_fix F;
@@ -603,6 +609,10 @@ void gowa_edge_decode_304a0(spu_context* ctx)
     }
     const int n = (int)((0u - (uint32_t)c35) >> 5) - 1;
     if (n <= 0) return;
+    if (edge_memo_skip_decode()) {
+        ctx->gpr[35]._u32[0] = (uint32_t)-32;
+        return;
+    }
     __atomic_add_fetch(&s_d2_calls, 1, __ATOMIC_RELAXED);
 
     d304_fix F;

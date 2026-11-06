@@ -293,9 +293,11 @@ static int sm_native(spu_context* cp)
     t_sm_guard = NULL;
     return 1;
 }
+extern int edge_memo_skin_e550(spu_context* ctx);
 int gowa_edge_skinmat_e550(spu_context* ctx)
 {
     if (t_sm_guard == ctx) return 0;
+    if (edge_memo_skin_e550(ctx)) return 1;
     static int on = -1;
     if (on < 0) { on = edge_verify_on() && sm_on(); if (on) atexit(sm_vreport); }
     if (!on) return 0;

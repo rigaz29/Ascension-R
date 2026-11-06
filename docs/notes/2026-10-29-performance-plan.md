@@ -1953,6 +1953,25 @@ are 49-63% of EDGE's time, and the step around the job manager's `0x17E0` is 12.
 moving stages stays poor. What the GPU can take is the geometry itself: kept results in GPU memory,
 then skinning from cached inputs.
 
+### 2.31 Update, 2026-11-06: lazy flags, and EDGE's geometry in GPU memory
+
+All under one executable name, two runs a side; [the second review](2026-11-06-edge-gpu-review-2.md) has
+the details.
+
+| | gate, flips/s | fight, flips/s |
+|---|---|---|
+| lazy CR and XER | 26.41 -> 26.77 | 24.56 -> 24.90 |
+| G, kept results in GPU memory | 26.44 -> 29.09 | 25.12 -> 26.11 |
+| K, skinned jobs from kept inputs, skinning in the vertex pass | 28.84 -> 29.98 | 26.16 -> 27.39 |
+
+- **Lazy flags** gave less than estimated (+1.4% against 3-5%), **G** far more (+10% and +4%, against +2%
+  and +1%): the gate was held by the frame clock thread.
+- **The gate is at the game's 30 flips/s** in half of its windows.
+- **The fight** now has the main thread at 91% and the workers at ~547%, the frame clock thread at 68%.
+- **A bench trap.** The same binary runs ~2% slower in the fight under another name than
+  `GowARecomp.exe`. A baseline goes in a folder of its own, under that name, with a copy of `build/gowa.ini`
+  (a new tree's has only paths: no FSR 1, no SMAA).
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

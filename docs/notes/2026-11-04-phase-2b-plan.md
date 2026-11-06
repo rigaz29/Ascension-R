@@ -454,6 +454,10 @@ on the frame clock thread (then 2b.2's switch), the job as C code, and the stage
 
 ## Progress log
 
+- 2026-11-06: G and K done, on by default ([second review](2026-11-06-edge-gpu-review-2.md), "What came of
+  it"). Kept results stay in GPU memory (`GOWA_EDGE_RESIDENT`, `VTX_RESIDENT_MB`, `rsx_kept.h`): gate +10%,
+  fight +4%. Skinned jobs hit on their geometry, and the vertex pass applies the palette (`GOWA_EDGE_SKIN`,
+  `spu_edge_gpuskin.c`): gate +3.9%, at the game's 30 flips/s, fight +4.7%.
 - 2026-11-06: [second review](2026-11-06-edge-gpu-review-2.md). EDGE counts again in both scenes. The
   stages are 18-23% of it, jobs with a kept result 49-63%, and the step around the job manager's `0x17E0`
   12.5 µs of every job. Proposed: kept results in GPU memory, then skinning from cached inputs.

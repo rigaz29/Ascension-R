@@ -62,6 +62,7 @@
 #include "spu_context.h"
 #include "spu_helpers.h"
 #include "spu_edge_memo.h"
+#include "spu_edge_gpuskin.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -85,7 +86,8 @@ typedef struct {
 extern void rsx_d3d12_vertex_pass_set(const char* hlsl, uint32_t stride, uint32_t max_record,
                                       void (*cpu)(const void* rec, const uint8_t* src, uint8_t* dst, uint32_t n));
 extern void rsx_d3d12_vertex_pass_publish(uint32_t io_offset, uint32_t nverts, const void* rec,
-                                          uint32_t bytes, uint32_t applied, const void* tag16);
+                                          uint32_t bytes, uint32_t applied, const void* tag16,
+                                          const void* skin, uint32_t skin_bytes);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_000073E0(spu_context* ctx);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000A880(spu_context* ctx);
 
@@ -123,7 +125,7 @@ static int eg_mode(void)
         if (nat && (atoi(nat) & 131072) == 0) m = 0;
         s_eg_stats = getenv("GOWA_EDGE_NATIVE_STATS") != NULL;
         if (m) {
-            rsx_d3d12_vertex_pass_set(eg_hlsl(), EG_STRIDE, (uint32_t)sizeof(eg_rec), eg_cpu);
+            rsx_d3d12_vertex_pass_set(eg_hlsl(), EG_STRIDE, (uint32_t)(sizeof(eg_rec) + sizeof(ek_rec)), eg_cpu);
             if (s_eg_stats) atexit(eg_report);
             fprintf(stderr, "[edge-gpu] lighting on the GPU: mode %d (%s)\n", m,
                     m == 1 ? "check: the SPU lights too" : "the SPU skips it");
@@ -349,7 +351,7 @@ void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t
 {
     if (!eg_mode()) return;
     t_eg.binorm = 0;
-    if (!t_eg.state) { rsx_d3d12_vertex_pass_publish(vio, 0, NULL, 0, 0, NULL); return; }
+    if (!t_eg.state) { rsx_d3d12_vertex_pass_publish(vio, 0, NULL, 0, 0, NULL, NULL, 0); return; }
     const int applied = t_eg.state == 1;
     t_eg.state = 0;
     const uint8_t* ls = ctx->ls;
@@ -358,10 +360,12 @@ void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t
         buf > SPU_LS_SIZE - 16) {
         /* not the job or the layout the record was taken for */
         EG_COUNT(s_eg_lost);
-        rsx_d3d12_vertex_pass_publish(vio, 0, NULL, 0, 0, NULL);
+        rsx_d3d12_vertex_pass_publish(vio, 0, NULL, 0, 0, NULL, NULL, 0);
         return;
     }
-    rsx_d3d12_vertex_pass_publish(vio, nverts, &t_eg.rec, EG_REC_BYTES(t_eg.n), (uint32_t)applied, ls + buf);
+    uint32_t skin_bytes = 0;
+    const void* const skin = edge_memo_skin_part(&skin_bytes);
+    rsx_d3d12_vertex_pass_publish(vio, nverts, &t_eg.rec, EG_REC_BYTES(t_eg.n), (uint32_t)applied, ls + buf, skin, skin_bytes);
     EG_COUNT(s_eg_published);
     if (applied) {
         static int st = -1;
@@ -472,10 +476,12 @@ static void eg_cpu(const void* rv, const uint8_t* src, uint8_t* dst, uint32_t nv
  * (vp_vb), t1 the batch's table, u0 the lit copies (vp_lit), b0 the dispatch's first segment; a
  * group a segment. A segment's entry, 32 bytes at index * 32 of t1: the source copy's header (16
  * attribute bases), the lit copy's header, the start of attribute 0's copy from the header, its
- * vertex count, the record's offset in t1, the segment's bytes from the header, and where the vertexes
- * are if not in the copy (a kept block's, resident). The segment is copied word by word but for
- * attribute 0's vertexes, the header's bases moved to the lit copy; then a thread does two vertexes
- * (108 bytes, 27 words, 4-aligned since the copy starts 16-aligned). */
+ * vertex count, the record's offset in t1, the segment's bytes from the header, where the vertexes
+ * are if not in the copy (a kept block's, resident), and a skinned block's part of the record in t1
+ * (bit 0: a position's block, 12-byte vertexes and no lights). The segment is copied word by word
+ * but for attribute 0's vertexes, the header's bases moved to the lit copy; then a thread does two
+ * vertexes (108 bytes, 27 words, 4-aligned since the copy starts 16-aligned). A skinned block's
+ * vertexes are worked out first (spu_edge_gpuskin.c). */
 static const char s_eg_hlsl[] =
     "ByteAddressBuffer vsrc : register(t0);\n"
     "ByteAddressBuffer vtab : register(t1);\n"
@@ -566,18 +572,79 @@ static const char s_eg_hlsl[] =
     "    wr16(w, o + 42u, f16spu(neg.x)); wr16(w, o + 44u, f16spu(neg.y)); wr16(w, o + 46u, f16spu(neg.z));\n"
     "    wr16(w, o + 48u, f16spu(pt.x)); wr16(w, o + 50u, f16spu(pt.y)); wr16(w, o + 52u, f16spu(pt.z));\n"
     "}\n"
+    "float4 ldf(uint a) { return asfloat(vtab.Load4(a)); }\n"
+    "void skin_rows(uint sk, uint2 bb, out float4 R0, out float4 R1, out float4 R2) {\n"
+    "    const float inv = asfloat(0x3B808080u);\n"
+    "    uint pal = sk + 16u;\n"
+    "    float w = (float)(bb.x & 0xFFu) * inv;\n"
+    "    uint a = pal + ((bb.x >> 8) & 0xFFu) * 48u;\n"
+    "    R0 = w * ldf(a); R1 = w * ldf(a + 16u); R2 = w * ldf(a + 32u);\n"
+    "    w = (float)((bb.x >> 16) & 0xFFu) * inv;\n"
+    "    a = pal + (bb.x >> 24) * 48u;\n"
+    "    R0 = mad(w, ldf(a), R0); R1 = mad(w, ldf(a + 16u), R1); R2 = mad(w, ldf(a + 32u), R2);\n"
+    "    w = (float)(bb.y & 0xFFu) * inv;\n"
+    "    a = pal + ((bb.y >> 8) & 0xFFu) * 48u;\n"
+    "    R0 = mad(w, ldf(a), R0); R1 = mad(w, ldf(a + 16u), R1); R2 = mad(w, ldf(a + 32u), R2);\n"
+    "    w = (float)((bb.y >> 16) & 0xFFu) * inv;\n"
+    "    a = pal + (bb.y >> 24) * 48u;\n"
+    "    R0 = mad(w, ldf(a), R0); R1 = mad(w, ldf(a + 16u), R1); R2 = mad(w, ldf(a + 32u), R2);\n"
+    "}\n"
+    "float3 skin_pos(float4 p, float4 R0, float4 R1, float4 R2) {\n"
+    "    precise float3 o;\n"
+    "    o.x = mad(p.z, R2.x, mad(p.y, R1.x, mad(p.x, R0.x, R0.w)));\n"
+    "    o.y = mad(p.x, R2.y, mad(p.z, R1.y, mad(p.y, R0.y, R1.w)));\n"
+    "    o.z = mad(p.y, R2.z, mad(p.x, R1.z, mad(p.z, R0.z, R2.w)));\n"
+    "    return o;\n"
+    "}\n"
+    "float4 skin_rot(float4 v, float4 R0, float4 R1, float4 R2) {\n"
+    "    float4 o;\n"
+    "    o.x = mad(v.z, R2.x, mad(v.y, R1.x, v.x * R0.x));\n"
+    "    o.y = mad(v.x, R2.y, mad(v.z, R1.y, v.y * R0.y));\n"
+    "    o.z = mad(v.y, R2.z, mad(v.x, R1.z, v.z * R0.z));\n"
+    "    o.w = v.w;\n"
+    "    return o;\n"
+    "}\n"
+    "float4 skin_norm(float4 v) { return float4(v.xyz * rsqrt(dot(v.xyz, v.xyz)), v.w); }\n"
+    "void skin_vertex(inout uint w[27], uint o, uint a, uint sk, uint fl) {\n"
+    "    float4 p = asfloat(vsrc.Load4(a)), n = asfloat(vsrc.Load4(a + 16u)), t = asfloat(vsrc.Load4(a + 32u));\n"
+    "    float4 R0, R1, R2;\n"
+    "    skin_rows(sk, vsrc.Load2(a + 48u), R0, R1, R2);\n"
+    "    float3 P = skin_pos(p, R0, R1, R2);\n"
+    "    float4 N = skin_rot(n, R0, R1, R2), T = skin_rot(t, R0, R1, R2);\n"
+    "    if ((fl & 1u) != 0u) N = skin_norm(N);\n"
+    "    if ((fl & 2u) != 0u) T = skin_norm(T);\n"
+    "    wr32(w, o, asuint(P.x)); wr32(w, o + 4u, asuint(P.y)); wr32(w, o + 8u, asuint(P.z));\n"
+    "    int4 ni = (int4)(mad(N, 32767.5, -0.5) * 65536.0);\n"
+    "    wr16(w, o + 12u, ((uint)ni.x) >> 16); wr16(w, o + 14u, ((uint)ni.y) >> 16);\n"
+    "    wr16(w, o + 16u, ((uint)ni.z) >> 16); wr16(w, o + 18u, ((uint)ni.w) >> 16);\n"
+    "    float3 tt = mad(T.xyz, float3(asfloat(0x3F7FE000u), asfloat(0x3F7FE000u), asfloat(0x3F7FC000u)),\n"
+    "                    float3(asfloat(0xBA000000u), asfloat(0xBA000000u), asfloat(0xBA800000u)));\n"
+    "    int3 ti = (int3)(tt * 2147483648.0);\n"
+    "    wr32(w, o + 20u, ((((uint)ti.x) >> 21) & 0x7FFu) | (((((uint)ti.y) >> 21) & 0x7FFu) << 11) | (((((uint)ti.z) >> 22) & 0x3FFu) << 22));\n"
+    "}\n"
     "[numthreads(64, 1, 1)]\n"
     "void main(uint3 gid : SV_GroupID, uint ti : SV_GroupIndex) {\n"
     "    uint e = (seg_base + gid.x) * 32u;\n"
     "    uint4 s0 = vtab.Load4(e);\n"
     "    uint2 s1 = vtab.Load2(e + 16u);\n"
-    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w, rec = s1.x, sv = vtab.Load(e + 24u);\n"
+    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w, rec = s1.x, sv = vtab.Load(e + 24u), sk = vtab.Load(e + 28u);\n"
     "    uint dw0 = data >> 2, dw1 = (data >> 2) + ((nv * 54u + 3u) >> 2), nw = (s1.y + 3u) >> 2;\n"
     "    for (uint i = ti; i < nw; i += 64u) {\n"
     "        if (i >= dw0 && i < dw1) continue;\n"
     "        uint v = vsrc.Load(sh + i * 4u);\n"
     "        if (i < 16u) v += dh - sh;\n"
     "        vdst.Store(dh + i * 4u, v);\n"
+    "    }\n"
+    "    if ((sk & 1u) != 0u) {\n"
+    "        sk &= ~1u;\n"
+    "        for (uint v = ti; v < nv; v += 64u) {\n"
+    "            uint a = sv + v * 32u;\n"
+    "            float4 R0, R1, R2;\n"
+    "            skin_rows(sk, vsrc.Load2(a + 16u), R0, R1, R2);\n"
+    "            float3 P = skin_pos(asfloat(vsrc.Load4(a)), R0, R1, R2);\n"
+    "            vdst.Store3(dh + data + v * 12u, uint3(bs(asuint(P.x)), bs(asuint(P.y)), bs(asuint(P.z))));\n"
+    "        }\n"
+    "        return;\n"
     "    }\n"
     "    if (ti == 0u) { gHead = vtab.Load4(rec); gInt = asfloat(vtab.Load4(rec + 16u)); }\n"
     "    GroupMemoryBarrierWithGroupSync();\n"
@@ -591,8 +658,15 @@ static const char s_eg_hlsl[] =
     "    for (uint p = ti; p < np; p += 64u) {\n"
     "        uint a = (sv != 0u ? sv : sh + data) + p * 108u, b = dh + data + p * 108u;\n"
     "        uint w[27]; uint4 q; uint k;\n"
-    "        [unroll] for (k = 0u; k < 24u; k += 4u) { q = vsrc.Load4(a + k * 4u); w[k] = q.x; w[k + 1u] = q.y; w[k + 2u] = q.z; w[k + 3u] = q.w; }\n"
-    "        uint3 q3 = vsrc.Load3(a + 96u); w[24] = q3.x; w[25] = q3.y; w[26] = q3.z;\n"
+    "        if (sk != 0u) {\n"
+    "            [unroll] for (k = 0u; k < 27u; k++) w[k] = 0u;\n"
+    "            uint fl = vtab.Load(sk);\n"
+    "            skin_vertex(w, 0u, sv + p * 128u, sk, fl);\n"
+    "            if (p * 2u + 1u < nv) skin_vertex(w, 54u, sv + p * 128u + 64u, sk, fl);\n"
+    "        } else {\n"
+    "            [unroll] for (k = 0u; k < 24u; k += 4u) { q = vsrc.Load4(a + k * 4u); w[k] = q.x; w[k + 1u] = q.y; w[k + 2u] = q.z; w[k + 3u] = q.w; }\n"
+    "            uint3 q3 = vsrc.Load3(a + 96u); w[24] = q3.x; w[25] = q3.y; w[26] = q3.z;\n"
+    "        }\n"
     "        light_vertex(w, 0u);\n"
     "        if (p * 2u + 1u < nv) {\n"
     "            light_vertex(w, 54u);\n"

@@ -17,6 +17,50 @@ below were temporary. The question: how to go on with EDGE on the GPU, after
 - What the GPU can still take: kept results that stay in GPU memory, then skinning from cached
   inputs. Both make the geometry resident, as in a PC game, instead of sent every frame.
 
+## What came of it
+
+G and K are done, on by default. One executable name, two runs a side.
+
+| | estimate, gate / fight | measured, gate | measured, fight |
+|---|---|---|---|
+| G | +2% / +1% | 26.44 -> 29.09 (+10%) | 25.12 -> 26.11 (+4%) |
+| K | +2.5% / +4% | 28.84 -> 29.98 (+3.9%) | 26.16 -> 27.39 (+4.7%) |
+
+- **G was underestimated.** The gate was held by the frame clock thread more than this review thought:
+  its work went from ~36 to 32.5 ms a flip.
+- **K's gate figure is capped.** Half of the windows are at the game's own 30 flips/s.
+- **After both**, per flip:
+
+  | | gate | fight |
+  |---|---|---|
+  | frame clock thread | 31.7 ms, 92% | 25.7 ms, 68% |
+  | main thread | 91% | 91% |
+  | workers (pm) | 530% | 547% |
+
+**G: what the plan missed.**
+- A job's list runs past what it puts: the index stage's end, with junk after the job's count. A block's
+  index range has to come from what is drawn. Over the whole list a 160-vertex block looked like 65,460.
+- A lit draw has arrays outside the block, the mesh's own. They are copied as the raw path copies them.
+- A fill has to stay inside what the job puts, or it writes over the next job's block in the ring, whose
+  checks then fail. Found by forcing it: `VTX_RESIDENT_MB=0` fills every draw, `=8` refills the resident
+  part hundreds of times a run. The default fills nothing at the gate or in the fight.
+
+**K: how it went.**
+- The probe: without the palette in the key the geometry repeats. A skinned job's slots 5, 10, 11, 13, 14
+  and 16 are the same every frame, and the descriptor words in the key too.
+- The upper bound, by freezing the pose (a temporary test): +7.5% at the gate, +4.9% in the fight, a run
+  each.
+- `GOWA_EDGE_SKIN=2` works every skinned job's vertexes out on the CPU and compares them with what the job
+  packs. In the fight, 1,556,480 jobs and 565 million vertexes:
+  - positions: bit for bit the same;
+  - tangents: at most a unit off, 1.8% of them;
+  - normals: 98.4% within 2 units of 32767. `0xBBC8` scales by an estimate and this by `1 / sqrt`.
+- `0xE550` ends by calling `0xBBC8` itself (returning to `0xF484` and `0xF490`). In the gate and the fight no skinned
+  job goes on to `0xF538`, so a job that does stays on the SPU: that path was never exercised, so it is not
+  in the shader.
+- What a hit leaves of `0xE550` is one word: `c + 0x58`, the free space it hands back.
+- The resident part holds 64-96 MB in the fight, the arena 107 of its 128 MB.
+
 ## Where things stand
 
 | | gate | fight |

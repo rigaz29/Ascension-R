@@ -155,6 +155,23 @@ The same binary ran slower as `build/m1.exe` than as `GowARecomp.exe` in another
 
 ### Lazy CR and XER
 
+**Done** (`ps3recomp/tools/ppu_lazy_flags.py`, `gowa.py lift --lazy-flags`, on by default). CR fields 0, 1,
+5, 6, 7 and XER[CA] live in function locals, CR2-4 stay in `ctx`. They are dead at calls, returns and
+indirect tail calls; a direct tail call flushes what its target reads before writing. `--lazy-flags check`
+keeps the exact accesses and compares at every read: no difference.
+
+| | before | after |
+|---|---|---|
+| `.text` | 93.1 MB | 84.7 MB |
+| `ppu_recomp_047.cpp`, instructions | 196,923 | 167,685 |
+| gate, flips/s | 26.41 | 26.77 |
+| fight, flips/s | 24.56 | 24.90 |
+
++1.4% in both scenes, against the 3-5% estimated below. The workers are nearly full in the fight
+(pm 556-565%), so a faster main thread has less to win than its own share suggests.
+
+What follows is the review as written.
+
 In `ppu_recomp_047.cpp`, 22.5% of the statements touch `ctx->cr` or `ctx->xer`: ~1,900 compares, ~1,900
 conditional branches and ~2,000 carry updates.
 

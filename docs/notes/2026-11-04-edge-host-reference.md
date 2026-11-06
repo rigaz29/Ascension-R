@@ -434,9 +434,10 @@ bit 524288, on by default).**
 - **Who calls it.** Every skinned lit job, twice, and no other kind of job (the job hook's
   kinds, one replayed job at a time: 3 of 3 such jobs in the gate's corpus, 18 of 18 in
   `jobcap-l3`).
-  - At `0x5A68` and `0x5A78` it normalizes the two arrays (r80, r82) the transform `0xF538` has
-    just written in place, when r84 is not zero.
-  - Its other call sites are `0x5AC4` and `0xF46C`-`0xF4AC` (up to four arrays).
+  - Those two calls return to `0xF484` and `0xF490`: `0xE550` normalizes the tangents and the normals
+    at its end. (Seen 2026-11-06, in the game; this note had them at `0x5A68` and `0x5A78`.)
+  - Its other call sites are `0x5AC4` and, at `0x5A68` and `0x5A78`, the two arrays (r80, r82) the
+    transform `0xF538` has just written in place, when r84 is not zero. No skinned job gets there.
 
   The gate's corpus has only 3 skinned lit jobs (6 calls). The later captures from the game
   have 13-18 in each set of 180 jobs (26-36 calls).
