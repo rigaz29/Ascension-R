@@ -1981,8 +1981,16 @@ small job manager loops native, then General6's routines. S and J after that, +3
 
 Done since: `memset`, the job manager's loops and five of General6's routines, written by
 `scripts/spu_to_native.py`. The work went down by a fifth, the fight by +1.5% (27.65 -> 28.06), against the
-+6% estimated: much of General6's time on six workers is waiting. S and J look like +1.5% and +2.4% now, for
-weeks each, and are not started.
++6% estimated. S and J look like +1.5% and +2.4% now, for weeks each, and are not started.
+
+### 2.33 Update, 2026-11-06: what the GPU can still take
+
+[The same review](2026-11-06-worker-time-review.md#what-the-gpu-can-still-take). For easy to medium work EDGE to
+the GPU is done: what is left of EDGE is the job around the math, and the rest of the SPU work is integer code
+or feeds the game. The fight's levels are not waiting: the slower one is 56% more of General6's work, the
+game's own (`0xA588` 12,600 to 19,600 calls a flip), with the threads 98% on a processor. The noise job's
+tile has 32 different pixels in 2,048, so its pixel loop makes one pass in 16: General6 -5.4 ms a flip, about
++1%.
 
 ## 3. The budget for 33 ms
 

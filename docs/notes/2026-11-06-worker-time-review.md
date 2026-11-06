@@ -25,9 +25,8 @@ M, P and G are done, on by default (`native/spu_g6_native.c`, `native/spu_g6_rou
 | General6, ms a flip, on three workers | | 44 -> 35-40 |
 | General6's `0xBF60` jobs in the replay | | 452 -> 322 µs |
 
-- The work went down by a fifth, the frames did not follow: much of General6's time on six workers is
-  waiting, not work. That the review had in hand (its own work ~42 ms, wide runs +7-24 ms) and did not take
-  into the estimate.
+- The work went down by a fifth, the frames did not follow. This said at first that much of General6's time
+  on six workers is waiting. It is not: see [the fight's two levels](#the-fights-two-levels).
 - Three workers for General6 is still no setting to change: 27.87, 26.26, 27.46 flips/s.
 - The first version of the tool's routines was no faster than the lifted code: a fence on every value kept
   them in memory. A test on what leaves a pass, and the flags cleared once a loop, gave the gain.
@@ -73,6 +72,16 @@ Two things remain worth their work, and neither is a GPU step:
 - **General6's waiting:** 7-24 ms of worker time a flip, and the fight's two levels. Where it goes was not
   found. If workers spin at the job list's syncs, a worker could go to other work meanwhile. Up to +1-4%, and
   the slower level's 8% if that is its cause. Medium, and not certain.
+
+**What came of them.**
+- **The waiting does not exist.** General6's threads are on a processor 98% of the time on both levels, and
+  the slower level is 56% more work: [the fight's two levels](#the-fights-two-levels). Nothing to take back.
+- **The noise jobs gave more than the table says, by another way.** A key on the record would have missed
+  whenever the camera moved: words 9 and 17 move the tile. But with the noise zero a tile has 32 different
+  pixels in 2,048, so the pixel loop now makes one pass in 16, with no key and nothing kept:
+  [the noise review](2026-11-05-general6-noise-review.md). General6 -5.4 ms a flip, about +1%.
+- **No other job looks like it.** Of what the jobs in `logs/jobcap6` and `logs/jobcap7` PUT, the noise jobs
+  repeat 95%. The others repeat 1-54%, and the 54% is w9's 1.4 KB a job.
 
 ## Where things stand
 
@@ -145,10 +154,35 @@ The same build gives 25-28 flips/s, and a run sits on a level for a minute or mo
 
   So General6's own work is ~42 ms a flip, and wide runs add 7-24 ms of waiting or cold code. But fewer
   workers lengthen it, and it is on the chain, so the frames do not follow. It is no setting to change.
-- **Not explained:** what brings the slower level on, and whether the extra time is spinning at the job
+- **Not explained then:** what brings the slower level on, and whether the extra time is spinning at the job
   list's syncs or cold code.
 - **For benches:** a single fight run says little. Read General6's µs a run with the flips, and compare ms a
   flip by workload, which hold still.
+
+**Since then: the levels are the game's work.** Temporary counters, after M, P and G (`logs/edge-ana/h1`,
+`h2`), three runs each:
+
+| | fastest | between | slowest |
+|---|---|---|---|
+| flips/s | 28.6 | 28.3 | 27.0 |
+| General6, ms a flip | 37.6 | 40.2 | 51.8 |
+| calls of `0xA588` a flip | 12,600 | 14,200 | 19,600 |
+| calls of `0x5C40` a flip | 2,370 | 2,650 | 3,700 |
+| its passes a call | 21.5 | 21.5 | 21.6 |
+| a busy run: on a processor | 98% | | 98% |
+
+- **No waiting.** A run's thread has the processor 98% of the time, on both levels: its cycle count against
+  its wall time. General6 is ~12 ms a flip and 2 µs a call of `0xA588`, on all three: the slower level's runs
+  take longer because there is 56% more in them.
+- **Not sub-steps, not the picture.** General6's busy runs a flip stay at 17, so the same job lists have more
+  in them. EDGE, RenderJobs and RenJobSet do not move, so nothing more is drawn.
+- **It changes within a run, and only down so far.** One run went from ~18,500 to ~14,200 calls a flip at 100
+  s, one from ~15,000 to ~12,500, and one stayed at 19,600 to the end. That looks like things in the fight
+  coming to rest, or a state of the fight; what the calls are for was not looked for.
+- **So the "7-24 ms of waiting" above is withdrawn.** The runs on fewer workers had no counters; they may have
+  sat on a lower level. That the sampler's runs never showed the slow level stays unexplained.
+- **Benches:** compare at the same level, or General6 less 2 µs a call. One run a side is then enough for a
+  change in General6.
 
 ## Where the workers' time goes
 

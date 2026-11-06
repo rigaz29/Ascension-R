@@ -9,6 +9,8 @@ came from a temporary hook.
 default in a replay and a capture; 2 the check). Replay of `logs/jobcap6` in each mode, state compare:
 0 differences. The gate with it, two runs: 25.36 flips/s.
 
+**And since then, 2026-11-06:** the pixel loop runs one pass in 16: see [the cells](#the-cells).
+
 **The result:** no native code is needed. In the levels the game sets the noise's scale to zero, so
 every call computes the noise at (0, 0, 0, 0) and gets 0. A test of the four arguments at the
 routine's entry is the whole fix, and it is exact.
@@ -111,6 +113,48 @@ level does.
   the check mode stays for what the two scenes do not show.
 - `0x4930` is a function with its own frame: it returns r3 and restores r80 and up, so leaving it at
   its entry changes only r3.
+
+## The cells
+
+Option D as written was a key on the record's other words. Looking at the tiles first gave something better.
+
+**A tile has 32 different pixels in 2,048.** Every captured row has two: a job's tile is 2 cells of 64 pixels
+by 16 rows, and a band 32 cells. A job's arguments say so, in the object at 0x6CE0: the record at LS `0x8F00`,
+the tile at `0x9040`, then 64, 32, 16, 2 and the column. A pass of `0x63B4` makes 4 pixels: three channels are
+the cell's, in r127, and the fourth comes from a running sum per pixel, in the array at r125, which row 0
+clears. The noise's arguments are the pass's position times 16 constants, r109-r124. With those zero, the
+sums stay zero and a cell is one colour.
+
+**A key would have missed.** Replay with each word of the record moved four ways, 23 jobs. At scale zero the
+tile moves with words 9, 17, 28-34, 56-58 and 60-79, and with no others. Words 9 and 17 follow the camera, so
+a key misses at each camera move, ~5-12 times a second in the fight, in each of the three bands.
+
+**So nothing is kept.** At the loop's entry, with r109-r124 zero and the cell's sums zero, the pointers and
+the count go to the last pass, and at the exit its 32 bytes go to the passes left out
+(`gowa_g6_cell_63b4`, `gowa_g6_cell_6a90`; `GOWA_G6_CELL`, 0 off, 2 the check). Any other record runs the loop
+as it was, the main menu's for one.
+
+| checked | |
+|---|---|
+| the replay, `logs/jobcap6`, on and in the check | 0 differences, state compare |
+| 2,300 random records, half with scale zero, on against off | every byte of the local store the same |
+| the fight, the check: every pass runs and the cell is compared | 1.57 M cells, 0 wrong |
+| the gate, the same | 1.05 M cells, 0 wrong |
+| the gate's pictures, on against the check | the same to the eye, mean 63.65 and 63.70 |
+
+| the fight, one run a side, one exe | the check | on |
+|---|---|---|
+| flips/s | 27.29 | 27.60 |
+| General6, ms a flip | 52.3 | 49.3 |
+| calls of `0xA588` a flip | 19,600 | 21,100 |
+| General6 less 2 µs a call | 12.7 | 6.7 |
+
+- -5.4 ms a flip, against -3 to -4 estimated. It takes noise calls from 1,920 a job to 120.
+- The frames: at the 0.17% a millisecond that G gave, +0.9%. The one run a side has +1.1%, on the same level
+  with 8% more work in it; one run is no measure of that.
+- The replay's noise jobs: 162 µs a job less.
+- One of the gate's runs froze at 30 s with the main thread at 100%, before the level: the start hang of
+  `ab2-gate` and `nm2`, 7 runs in ~950, on builds without this. The run was repeated.
 
 ## What sets the frame after it
 
