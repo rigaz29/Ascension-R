@@ -121,6 +121,7 @@ extern "C" void rsx_d3d12_backend_present(void);
 extern "C" int  rsx_d3d12_backend_pump_messages(void);
 extern "C" void rsx_d3d12_backend_record_ahead(void);
 extern "C" int  rsx_d3d12_backend_generating(void);
+extern "C" void rsx_d3d12_backend_camera_register(int reg);
 #  define rsx_backend_init    rsx_d3d12_backend_init
 #  define rsx_backend_present rsx_d3d12_backend_present
 #  define rsx_backend_pump    rsx_d3d12_backend_pump_messages
@@ -240,6 +241,11 @@ static DWORD WINAPI frame_clock(LPVOID)
     const char* title = getenv("PS3_TITLE");
     if (!title || !*title) title = "ps3recomp";
 
+#if defined(_WIN32)
+    /* The title's view-projection: c264-c267 in 85 of the 102 vertex programs of a level,
+     * the rest being full-screen and HUD programs. */
+    rsx_d3d12_backend_camera_register(264);
+#endif
     int rsx_ok = (rsx_backend_init(WINDOW_WIDTH, WINDOW_HEIGHT, title) == 0);
     fprintf(stderr, "[rsx] %s backend init %s\n", RSX_BACKEND_NAME,
             rsx_ok ? "OK -- window open" : "FAILED");
