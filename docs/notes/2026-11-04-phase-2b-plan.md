@@ -454,6 +454,7 @@ on the frame clock thread (then 2b.2's switch), the job as C code, and the stage
 
 ## Progress log
 
+- 2026-11-06: [third review](2026-11-06-worker-time-review.md): after G and K, General6 before S or J.
 - 2026-11-06: G and K done, on by default ([second review](2026-11-06-edge-gpu-review-2.md), "What came of
   it"). Kept results stay in GPU memory (`GOWA_EDGE_RESIDENT`, `VTX_RESIDENT_MB`, `rsx_kept.h`): gate +10%,
   fight +4%. Skinned jobs hit on their geometry, and the vertex pass applies the palette (`GOWA_EDGE_SKIN`,

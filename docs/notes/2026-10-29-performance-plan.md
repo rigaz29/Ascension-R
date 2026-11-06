@@ -1972,6 +1972,13 @@ the details.
   `GowARecomp.exe`. A baseline goes in a folder of its own, under that name, with a copy of `build/gowa.ini`
   (a new tree's has only paths: no FSR 1, no SMAA).
 
+### 2.32 Update, 2026-11-06: where the workers' time goes
+
+[The third review](2026-11-06-worker-time-review.md). The gate is at the game's 30 flips/s. The fight sits on
+two levels, ~27.6 and ~25.5 flips/s, with General6 at 49 or 66 ms a flip; timing brings the slower one on.
+A millisecond of General6, RenderJobs or RenJobSet is worth about twice one of EDGE. Next: `memset` and two
+small job manager loops native, then General6's routines. S and J after that, +3% to +3.5% each.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
