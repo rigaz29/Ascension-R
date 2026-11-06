@@ -2047,6 +2047,42 @@ Then, in the same direction:
   That fits sub-steps of a fixed time, 3 a frame against 2 past 33.3 ms, but that was not read in the game's code.
 - The main thread has room now: 27% of its time is waiting (`poll_mwaitx`, `sys_timer_usleep`).
 
+Eight runs of this build, 77 windows from t=70: median 30.6, 71% at 30 or more, 92% at 29 or more, against 0%
+and 5% before. Two runs lost 20-30 s to the host: Firefox's updater, then Windows Update, each at the second the
+system log says. Runs differ by ±1 flip/s with nothing changed: every workload's ms a flip moves together.
+
+Tried and dropped:
+- **The local store at its fixed place in the context** (`ls_store`, not `ls`), so that a store can be told
+  from a guest register. 3% fewer instructions in one function, the replay the same, General6 5% slower: the values
+  go to stack slots, as with the PPU's `__restrict`.
+- **A worker watching its slot with MWAITX before it sleeps.** 31.80 flips/s without, 30.12 with 40 µs, 29.48 with
+  150 µs. The ~27 µs "wake" did not move: it is the coordinator's lock, held for its pass, not the OS. So
+  frames cost more than the cycles they use: on this laptop more waiting threads means slower ones.
+- **A longer back-off for idle probes** (`si->idle` up to 6, 8): the same run rates. The ~5,600 empty runs a
+  second are asked for (ready count above contention), not probes.
+- **`sync` and `dsync` as a compiler barrier:** no change in the replay.
+
+What the frame looks like now (12 s of `PS3_FTRACE`, `logs/edge-ana/j9.ft`): 372 frames, median 31.9 ms, a chain of
+phases. EDGE ~10 ms, RenJobSet ~6, RenderJobs ~8, MeshProc and Batch ~3, EDGE ~10 with General6 beside it.
+
+| ms a frame | SPU busy | with a run open | width |
+|---|---|---|---|
+| EDGE | 54.5 | 16.7 | 3.28 |
+| General6 | 33.8 | 10.8 | 3.13 |
+| RenJobSet | 23.1 | 5.6 | 4.22 |
+| RenderJobs | 20.3 | 4.7 | 4.34 |
+| Batch | 11.7 | 2.3 | 5.05 |
+| MeshProc | 3.6 | 1.3 | 2.98 |
+
+EDGE is half of the chain now, at width 3.3, and its limit is the title's: priority 0 on SPUs 4 and 5, and ring
+lines for SPUs 0-3 only (`0x73254300 + 0x80 (spu + 1)`). The label array has room for six SPUs
+(`0x20000C80 + 16 spu`, the next array at `0xCE0`). SPUs 4 and 5 stand idle in the first EDGE phase. Letting EDGE
+use them needs two more ring lines; a rough test, sharing the rings of SPUs 2 and 3, was stopped by low memory
+before its first run.
+
+A position hit is 30.3 µs now, a lit one 38.8, the job manager 15 of either (269 labels, was 357), of which
+the input list's copies are 4.3.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
