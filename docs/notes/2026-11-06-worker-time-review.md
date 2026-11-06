@@ -13,6 +13,38 @@ temporary. The question: J or S next, after G and K ([the second review](2026-11
   with no protocol around it, and the replay can check it exactly.
 - S and J are worth about the same, +3% to +3.5% each, for weeks of work. They stay for after.
 
+## What came of it
+
+M, P and G are done, on by default (`native/spu_g6_native.c`, `native/spu_g6_routines.c`,
+`scripts/spu_to_native.py`). Exact: the replay's General6 jobs are the same in strict mode.
+
+| | estimate | measured |
+|---|---|---|
+| the fight, flips/s, two runs a side | +6% | 27.65 -> 28.06, +1.5% |
+| General6, ms a flip, as the title runs it | -15 | 51 -> 47 |
+| General6, ms a flip, on three workers | | 44 -> 35-40 |
+| General6's `0xBF60` jobs in the replay | | 452 -> 322 µs |
+
+- The work went down by a fifth, the frames did not follow: much of General6's time on six workers is
+  waiting, not work. That the review had in hand (its own work ~42 ms, wide runs +7-24 ms) and did not take
+  into the estimate.
+- Three workers for General6 is still no setting to change: 27.87, 26.26, 27.46 flips/s.
+- The first version of the tool's routines was no faster than the lifted code: a fence on every value kept
+  them in memory. A test on what leaves a pass, and the flags cleared once a loop, gave the gain.
+- `0x4ED0` stays lifted: it has the speculative forms already. `0x63B4` calls the noise routine four times
+  a pass.
+
+**S and J, looked at again** with the traces of this review, before starting them.
+
+- **S.** A hit's own code is flat: 14.5 µs in some 25 places, the largest `0xDBC8` 1.6-3.1 µs and `0x5C88` 1.8-2.5.
+  What a hit could leave out is ~5 µs of a position job and ~10 of a lit one, not all of the code: the
+  rings, `0x17E0`, the draw constants and the record have to run. About -8 ms a flip, +1.5%.
+- **J.** Of the job manager's 15.6 µs, the tag wait's 4.7 is the transfers, which no rewrite takes away. The
+  other ~11 µs is 350 labels of flat code. Native at half of that: -5 µs a job, -9 ms a flip of EDGE and
+  -2 of the rest, +2.4%.
+- **What small steps give:** each of the cheap pieces is 0.2-1 µs a job, 0.3-1.7 ms a flip, +0.05-0.3%.
+- Both are weeks, and the last estimates ran high by a factor of four. Not started.
+
 ## Where things stand
 
 | | gate | fight |

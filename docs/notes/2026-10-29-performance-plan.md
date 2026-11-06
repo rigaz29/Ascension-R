@@ -1979,6 +1979,11 @@ two levels, ~27.6 and ~25.5 flips/s, with General6 at 49 or 66 ms a flip; timing
 A millisecond of General6, RenderJobs or RenJobSet is worth about twice one of EDGE. Next: `memset` and two
 small job manager loops native, then General6's routines. S and J after that, +3% to +3.5% each.
 
+Done since: `memset`, the job manager's loops and five of General6's routines, written by
+`scripts/spu_to_native.py`. The work went down by a fifth, the fight by +1.5% (27.65 -> 28.06), against the
++6% estimated: much of General6's time on six workers is waiting. S and J look like +1.5% and +2.4% now, for
+weeks each, and are not started.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
