@@ -2100,6 +2100,13 @@ allocations, none long). One fight each, after Windows was restarted, the window
 A position hit is 30.3 µs now, a lit one 38.8, the job manager 15 of either (269 labels, was 357), of which
 the input list's copies are 4.3.
 
+### 2.35 Update, 2026-11-06: what the GPU can still take, third look
+
+[The review](2026-11-06-gpu-review-3.md), at 37.6 flips/s. EDGE to the GPU is finished: native EDGE code is 13% of
+EDGE and the runtime under the jobs 48%. Nothing else of size can go. Bindless textures are new and small (~1.6 ms
+of the RSX thread, weeks). The cheapest time left is not GPU work: `tex_csum`, `PeekMessageA` and
+`rsx_texture_layout` are 22% of the RSX thread, for small changes, not tried yet.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
