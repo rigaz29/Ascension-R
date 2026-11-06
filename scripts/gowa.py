@@ -344,6 +344,7 @@ def lift_wws_pm(elf):
     from build_spu_workloads import debase_includes
     for f in ("spu_recomp.h", "spu_recomp.c"):
         debase_includes(os.path.join(WWS_PM_DIR, f))
+    native_hooks(os.path.dirname(WWS_PM_DIR), only="wwspm")
     entry = "wwspm_spu_func_%08X" % WWS_PM_BASE
     jobs = wws_job_modules(elf)
     regions = "".join("    spu_overlay_register_region(0x%08XU, 0x%X, %d);  /* %s */\n"
@@ -502,18 +503,19 @@ def lift_jobmods(elf):
 # code's options): scripts/spu_native_hooks.json names, per lifted module, the
 # function and the native routine called at its entry. A routine does what work
 # it can and leaves the registers as the lifted code expects them, which then
-# goes on (native/spu_edge_skin.c). A module is a job module (spu/jobmods) or,
-# named pic_<EA>, a position-independent piece (spu/picfrags).
+# goes on (native/spu_edge_skin.c). A module is a job module (spu/jobmods), or,
+# named pic_<EA>, a position-independent piece (spu/picfrags), or wwspm, the job
+# manager (spu/wwspm).
 # A routine named "?name" may take the whole function instead: it returns int, and
 # nonzero makes the function return to its link (native/spu_edge_cull.c).
 NATIVE_HOOKS_FILE = os.path.join(ROOT, "scripts", "spu_native_hooks.json")
 
 
-def native_hooks(lift_dir, pic=False):
+def native_hooks(lift_dir, pic=False, only=None):
     if not os.path.exists(NATIVE_HOOKS_FILE):
         return
     for module, funcs in sorted(json.load(open(NATIVE_HOOKS_FILE)).items()):
-        if module.startswith("pic_") != pic:
+        if module.startswith("pic_") != pic or (module == "wwspm") != (only == "wwspm"):
             continue
         path = os.path.join(lift_dir, module, "spu_recomp.c")
         if not os.path.exists(path):

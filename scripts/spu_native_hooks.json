@@ -1,4 +1,7 @@
 {
+ "jobmod_1bdd67b54c3b_e7F60": {
+  "jobmod_1bdd67b54c3b_e7F60_spu_func_00009FB8": "gowa_g6_memset_9fb8"
+ },
  "jobmod_a67e549fa0ab_e41E8": {
   "jobmod_a67e549fa0ab_e41E8_spu_func_00004930": "?gowa_g6_noise_4930"
  },
@@ -47,5 +50,9 @@
  },
  "pic_00765B70": {
   "pic_00765B70_spu_func_00030000": "?gowa_edge_pos_765b70"
+ },
+ "wwspm": {
+  "wwspm_spu_func_00000A60": "gowa_pm_stub_a60",
+  "wwspm_spu_func_00000AAC": "gowa_pm_stub_aac"
  }
 }
