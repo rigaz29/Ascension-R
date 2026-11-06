@@ -159,6 +159,8 @@ def link_dir(link, target):
 
 
 DXC_DLLS = ("dxcompiler.dll", "dxil.dll")
+FSR_DLLS = ("amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll",
+            "amd_fidelityfx_upscaler_dx12.dll")
 
 
 def find_ffmpeg():
@@ -185,6 +187,19 @@ def find_dxc():
         cands += [os.path.join(kits, d, "x64") for d in sorted(os.listdir(kits), reverse=True)]
     for c in cands:
         if c and all(os.path.isfile(os.path.join(c, f)) for f in DXC_DLLS):
+            return c
+    return None
+
+
+def find_fsr():
+    """The folder with the FSR API's DLLs: local.json's "fsr_dir", or signedbin in an SDK
+    unpacked under ../fsr-sdk. Returns it, or None."""
+    cands = [load_local().get("fsr_dir")]
+    base = os.path.join(os.path.dirname(ROOT), "fsr-sdk")
+    if os.path.isdir(base):
+        cands += [os.path.join(base, d, "Kits", "FidelityFX", "signedbin") for d in sorted(os.listdir(base), reverse=True)]
+    for c in cands:
+        if c and all(os.path.isfile(os.path.join(c, f)) for f in FSR_DLLS):
             return c
     return None
 
@@ -247,6 +262,8 @@ def cmd_doctor(args):
         dxc = find_dxc()
         say("  [%s] %-22s %s" % ("ok" if dxc else "--", "DXC", dxc or
                                  "no Windows SDK with dxcompiler.dll: shaders stay on D3DCompile, ~2.4x slower"))
+        fsr = find_fsr()
+        say("  [%s] %-22s %s" % ("ok" if fsr else "--", "FSR SDK", fsr or "none in ../fsr-sdk: no FSR 3"))
 
     say("game")
     sfo = os.path.join(VFS_GAME, "PARAM.SFO")
@@ -1036,6 +1053,7 @@ def cmd_build(args):
     if not rc:
         write_settings(ffmpeg)
         copy_dxc()
+        copy_fsr()
     return rc
 
 
@@ -1047,6 +1065,18 @@ def copy_dxc():
         say("note: no dxcompiler.dll in a Windows SDK; guest shaders stay on D3DCompile")
         return
     for f in DXC_DLLS:
+        to = os.path.join(BUILD, f)
+        if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
+            shutil.copy2(os.path.join(src, f), to)
+
+
+def copy_fsr():
+    """The FSR API's DLLs beside the exe: frame generation needs them, the rest of the port does not."""
+    src = find_fsr()
+    if not src:
+        say("note: no FSR SDK in ../fsr-sdk; no FSR 3")
+        return
+    for f in FSR_DLLS:
         to = os.path.join(BUILD, f)
         if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
             shutil.copy2(os.path.join(src, f), to)

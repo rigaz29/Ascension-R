@@ -31,6 +31,13 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
 
+## AMD FSR API
+
+The runtime carries the FSR API's headers, unchanged, from
+[FSR SDK 2.4.0](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) in `ps3recomp/third_party/fsr_api/`, and
+`gowa.py build` copies the SDK's signed DLLs beside the exe. They are not in this repository. MIT License,
+Copyright (C) Advanced Micro Devices, Inc.; the full text is at the top of each header.
+
 ## AMD FidelityFX Super Resolution 1
 
 The runtime carries `ffx_a.h` and `ffx_fsr1.h`, unchanged, from
