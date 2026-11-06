@@ -120,10 +120,12 @@ extern "C" int  rsx_d3d12_backend_init(uint32_t w, uint32_t h, const char* title
 extern "C" void rsx_d3d12_backend_present(void);
 extern "C" int  rsx_d3d12_backend_pump_messages(void);
 extern "C" void rsx_d3d12_backend_record_ahead(void);
+extern "C" int  rsx_d3d12_backend_generating(void);
 #  define rsx_backend_init    rsx_d3d12_backend_init
 #  define rsx_backend_present rsx_d3d12_backend_present
 #  define rsx_backend_pump    rsx_d3d12_backend_pump_messages
 #  define rsx_backend_record_ahead rsx_d3d12_backend_record_ahead
+#  define rsx_backend_generating rsx_d3d12_backend_generating
 #  define RSX_BACKEND_NAME    "D3D12"
 #elif defined(__APPLE__)
 extern "C" int  rsx_metal_backend_init(uint32_t w, uint32_t h, const char* title);
@@ -144,6 +146,7 @@ extern "C" int  rsx_null_backend_pump_messages(void);
 #endif
 #if !defined(_WIN32)
 #  define rsx_backend_record_ahead() ((void)0)
+#  define rsx_backend_generating() 0
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -257,7 +260,7 @@ static DWORD WINAPI frame_clock(LPVOID)
      * restores beat-only completion. GOWA_FLIP_MIN_MS changes the 16 ms; 0, with
      * D3D12_VSYNC=0, lets the title run past 60 fps, for measuring it. */
     const bool flip_on_reach = getenv("GOWA_FLIP_ON_BEAT") == nullptr;
-    ULONGLONG flip_min_ms = 16;
+    ULONGLONG flip_min_us = 16000;
     /* [display] frame_cap = 20 or 30 (the launcher's "Frame rate cap"): a flip
      * completes and is presented no sooner than ~1/cap s after the one before,
      * on the vblank beat as on the drain's own path, so with VSync on every
@@ -269,15 +272,21 @@ static DWORD WINAPI frame_clock(LPVOID)
     bool frame_cap = false;
     {
         const char* cap = ps3_settings_str("display", "frame_cap", "GOWA_FRAME_CAP", "off");
-        const int fps = cap ? atoi(cap) : 0;
+        int fps = cap ? atoi(cap) : 0;
+        /* Frame generation shows two frames for each flip, so a 60 Hz display takes 30 of
+         * them a second, and it is the cap that holds that. A flip lands on the pass after
+         * its time, ~0.8 ms late: 32.5 ms here is 59.7 frames on the display, 33.4 ms 58.1. */
+        const bool generating = rsx_ok && rsx_backend_generating();
+        if (generating && (fps < 10 || fps > 30)) fps = 30;
         if (fps >= 10 && fps <= 60) {
-            flip_min_ms = (ULONGLONG)(1000 / fps - 2);
+            flip_min_us = (ULONGLONG)(1000000 / fps - (generating ? 833 : 2000));
             frame_cap = true;
             fprintf(stderr, "[gowa] frame cap %d fps: a flip no sooner than %llu ms after the last\n",
-                    fps, (unsigned long long)flip_min_ms);
+                    fps, (unsigned long long)flip_min_us / 1000);
         }
     }
-    if (const char* e = getenv("GOWA_FLIP_MIN_MS")) flip_min_ms = (ULONGLONG)atoi(e);
+    if (const char* e = getenv("GOWA_FLIP_MIN_MS")) flip_min_us = (ULONGLONG)atoi(e) * 1000;
+    if (const char* e = getenv("GOWA_FLIP_MIN_US")) flip_min_us = (ULONGLONG)atoi(e);
     unsigned drain_poll_ms = 1;
     if (const char* e = getenv("GOWA_DRAIN_POLL_MS")) drain_poll_ms = (unsigned)atoi(e);
     /* The window's messages every 8 ms, not on every pass: 8% of this thread was in
@@ -287,7 +296,7 @@ static DWORD WINAPI frame_clock(LPVOID)
     ULONGLONG pump_ms = 8;
     if (const char* e = getenv("GOWA_PUMP_MS")) pump_ms = (ULONGLONG)atoi(e);
     ULONGLONG last_pump_ms = 0;
-    ULONGLONG last_flip_ms = 0;
+    ULONGLONG last_flip_us = 0;
     /* A flip the drain reached and the ticker took, still waiting for its
      * 16 ms. Nothing drains while it waits, so the frame presented when it is
      * released is still exactly that frame. */
@@ -308,7 +317,7 @@ static DWORD WINAPI frame_clock(LPVOID)
         while ((long long)(now_us - (beat0 + beats * 1001000ull / 60ull)) >= 0 && fired < 240) {
             cellGcmTickVBlank();
             /* frame_cap: not before its interval since the last flip. */
-            const bool cap_ok = !frame_cap || clock_ms() - last_flip_ms >= flip_min_ms;
+            const bool cap_ok = !frame_cap || clock_us() - last_flip_us >= flip_min_us;
             if (cap_ok) cellGcmTickFlip();
             /* Present a pending flip BEFORE draining any further. The flip
              * fires at a get==put frame boundary on the guest thread, so the
@@ -320,7 +329,7 @@ static DWORD WINAPI frame_clock(LPVOID)
                     held = 0;
                     present_guest_frame();
                     last_flip = cellGcm_flip_request_count();
-                    last_flip_ms = now;
+                    last_flip_us = now_us;
                 } else {
                     held = 1;
                 }
@@ -345,7 +354,7 @@ static DWORD WINAPI frame_clock(LPVOID)
             if (cellGcm_take_flip_pending()) {
                 present_guest_frame();
                 last_flip = cellGcm_flip_request_count();
-                last_flip_ms = now;
+                last_flip_us = now_us;
             }
             cellGcm_rsx_process_fifo();
         } else if (rsx_ok) {
@@ -366,9 +375,9 @@ static DWORD WINAPI frame_clock(LPVOID)
                 cellGcm_rsx_process_fifo();
                 held = cellGcm_take_flip_pending();
             }
-            if (held && clock_ms() - last_flip_ms >= flip_min_ms) {
+            if (held && clock_us() - last_flip_us >= flip_min_us) {
                 held = 0;
-                last_flip_ms = clock_ms();
+                last_flip_us = clock_us();
                 cellGcmTickFlip();
                 present_guest_frame();
                 last_flip = cellGcm_flip_request_count();
