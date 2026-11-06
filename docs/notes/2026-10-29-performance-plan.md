@@ -1992,6 +1992,40 @@ game's own (`0xA588` 12,600 to 19,600 calls a flip), with the threads 98% on a p
 tile has 32 different pixels in 2,048, so its pixel loop makes one pass in 16: General6 -5.4 ms a flip, about
 +1%.
 
+### 2.34 Update, 2026-11-06: an idiom taken for a ladder
+
+The target is now the fight at 30 flips/s. Looking at the job manager's time ("J") found a bug in the tools.
+
+`brsl $2, .+4; ai $2, $2, 8; bid $2` is how the SDK turns interrupts off and goes on at the next instruction,
+around every DMA of a job. `find_spu_functions` took it for a Duff's device, a computed jump into a ladder, and
+seeded 17 functions after each one. So the code that sets up every DMA ran one instruction a function, with
+an interrupt check each, and each idiom went through the dispatcher: 31 of an EDGE job's 67 indirect branches,
+80% of a RenJobSet job's. The "flat code" of the third review was largely this.
+
+- A ladder needs a register add on the way to the `bi`; without one only the target is seeded.
+- `compute_pc_jumps` lifts the idiom as a plain branch, with its D or E bit. Enabled interrupts are taken at the
+  target as before. EDGE's module goes from 1,086 functions to 592, with 4 indirect sites left.
+- The job manager is lifted with `--merge-chunks` too (`GOWA_PM_MERGE=0`: not).
+- `SPU_RdDec`, five times a job, did six 64-bit divides: now one multiply on the clock's own counts.
+
+| replay, µs a job | before | after |
+|---|---|---|
+| RenderJobs | 541 | 450 |
+| RenJobSet w8, w9, w10, w11 | 24.7, 44.7, 42.9, 547 | 19.4, 37.3, 34.2, 491 |
+| MeshProc | 4.1 | 3.0 |
+| EDGE w15, w16 | 19.9, 20.9 | 18.8, 19.6 |
+| General6 | 818 | 800 |
+
+Every list the same (w6's 13 differences in `logs/jobcap7` were there before).
+
+| the fight, one exe name, medians of the windows | flips/s | all workers, ms a flip |
+|---|---|---|
+| before | 27.99 | 197 |
+| after, two runs | 30.18, 31.41 | 184, 167 |
+
+The two runs differ by the game's state: General6 and EDGE move with it. Over all three, flips/s follows the
+workers: 166 ms gives 31.4, 170 gives 30.3, 178 gives 29.1, 187 gives 28.4, 197 gives 28. The gate: 31.55.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
