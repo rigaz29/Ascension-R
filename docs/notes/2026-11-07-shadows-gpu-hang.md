@@ -158,3 +158,30 @@ A probe at the jobs' first look (`GOWA_EK_PROBE`, not committed), the fight with
 The shader now does as the CPU does: `bone(i, nm)`, `nm` the palette's count at +4 of the skin
 record. Kratos and the fight look as before (`fx2`). It is not the hang: with it, three runs of
 five still hung, and DRED recorded no page fault.
+
+## The RSX thread at the gate with shadows on, by line (2026-11-08)
+
+After the fix the gate with shadows on runs ~28-30 flips/s with the frame clock thread at 97%: it
+holds the gate. A sampler run (`logs/edge-ana/fg7/rp/gm`, 4 ms, the last 60 s, 14,484 samples) on a
+build with line tables for the runtime (a temporary `PORT_RT_LINES`: `-gline-tables-only` on
+`ps3recomp_runtime`, `/DEBUG` at the link, mapped by `llvm-symbolizer` with inlined frames):
+
+| | % of the thread |
+|---|---|
+| `rf_prepass` | 16.2, of it `alias_note` 3.8, the depth pass over all 16 units 1.9, `off_rt_find` 1.9 |
+| `rsx_process_method` | 8.1, spread over its chain of compares |
+| `gcm_rsx_process_fifo_unlocked` | 6.1 |
+| `rf_vp_draws` | 5.9, `vp_sampler` 1.4 |
+| `gcm_3d_method` | 4.3, the trace's compares 1.6 |
+| `vp_get_fp_pso` | 3.4, `dr_cube_mask` 1.2 |
+| outside the executable (D3D12, the driver, memcpy) | 28 |
+
+Done (fork `72ff0c97`): a 1024-bit set of each table's offsets answers `alias_kind`'s and
+`off_rt_find`'s misses; the depth pass visits only the units with their `tex_zok` bit;
+`gcm_3d_method` tests the trace's switch before its compares. ABBA at the gate in one build: 29.34
+against 28.38 flips/s, +3.4%. The thread is still at 97-98%, and the main thread is now at 97% too.
+
+A trap on the way: running `cmake` on `build/` by hand, outside `gowa.py`'s toolchain environment,
+left mingw's tools and empty `CMAKE_*_FLAGS*` in the cache. The next rebuild compiled the lifted
+code without `/O2` (the gate at 11.7). The cache was put right from `build-jc`'s entries.
+
