@@ -301,6 +301,12 @@ static DWORD WINAPI frame_clock(LPVOID)
             while (hz / n > 60.5) n += 2;
             fps = hz / n;
             fprintf(stderr, "[gowa] frame generation: a %.2f Hz display, %.2f flips a second\n", hz, fps);
+            /* At half the refresh VSync holds that pace by itself, through the swap chain's queue:
+             * the title gets ~10 ms ahead of the display, and that takes up what a slow frame
+             * loses. A minimum as long as a frame throws it away: the gate went from 28.4 flips a
+             * second to 30.0, and from 93% of frames a refresh apart to 99.5. Only the 60 of the
+             * vblanks stays. */
+            if (n == 2 && ps3_settings_bool("display", "vsync", "D3D12_VSYNC", 1)) fps = 60.0;
         }
         if (fps >= 10 && fps <= 60.5) {
             flip_min_us = (ULONGLONG)(1000000.0 / fps - (generating ? 833 : 2000));

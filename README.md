@@ -61,7 +61,9 @@ local.json's `fsr_dir`. Without the DLLs the log says so and the game goes on wi
   holds the game at half the monitor's refresh rate: 30 frames a second at 60 Hz, 60 at 120 Hz. Past 120 Hz it halves that
   again, as 60 is the most a PS3 flips and a frame should stay on screen for a whole number of refreshes: 36 at 144 Hz, 60
   at 240 Hz. Only 60 Hz has been tried on a real display, and the game has not been played above 39 frames a second.
-  A Frame rate cap comes first, and suits a PC that cannot hold the rate: 30 on a 120 Hz monitor.
+  With VSync on, up to 120 Hz, that pace comes from VSync itself, which keeps the game up to about 15 ms ahead of the
+  display and takes up what a slow frame loses. A Frame rate cap comes first: it gives those milliseconds back for a less
+  even pace, and suits a PC that cannot hold the rate, 30 on a 120 Hz monitor.
   `graphics.frame_generation_refresh` gives the rate by hand, for a VRR display: 120 on a 144 Hz one is 60 frames a second.
   While the game is under 25 generation stands aside (`graphics.frame_generation_floor`).
 
