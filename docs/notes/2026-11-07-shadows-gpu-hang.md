@@ -185,3 +185,17 @@ A trap on the way: running `cmake` on `build/` by hand, outside `gowa.py`'s tool
 left mingw's tools and empty `CMAKE_*_FLAGS*` in the cache. The next rebuild compiled the lifted
 code without `/O2` (the gate at 11.7). The cache was put right from `build-jc`'s entries.
 
+### Methods the dispatcher does not take
+
+`rsx_process_method` (8.1% of the thread) ran ~90 tests for every method that reached its chain. A
+method none of them takes walked them all to the `-1` at the end, and `RSX_CENSUS` at the gate (10 s)
+counts ~320,000 a second of those: `0x0B00`-`0x0B64`, `0x1D00`-`0x1D3C`, the reports `0x1800` and
+`0x17C8`, `0x0300`, `0x0374`, `0x147C`, `0x1EF8`. A script over the function's compares
+(`m_tests.py` in the scratchpad: equality and range, names resolved from the headers) found no test
+for any of them, and found the two that look the same but are not: `0x018C` and `0x0194` end at `-1`
+too, after the chain sets the colour DMAs from them. Done (fork `ec08a1a4`): the
+fast switch returns `-1` for the first list.
+
+ABBA at the gate with shadows on: 30.76 and 28.03 against 28.47 and 27.53 (the old runs dipped to
+25.4 and 23.7 early in the scene), about +2-5%. The final build, one run: 30.41.
+
