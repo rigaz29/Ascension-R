@@ -114,12 +114,17 @@ atlas is being made anyway. `RT_GROW_NOW=1` makes it anew at once, as before.
 
 ## Also found
 
-- **A fence value used twice.** `wait_for_gpu_once` increments `fence_values[fi]` and signals it;
-  `move_to_next_frame` then signals `fence_values[fi]` again for the batch after it, the same value,
-  already complete. That batch is not waited for by the next `rf_open` (submissions 3,496 and 3,497
-  of a probe run had the same last value signalled, 3,593), so the next batch can be recorded while
-  it runs. Not the hang (`RF_IDLE_WAIT=1` still hung), not fixed here: the backend's single set of
-  draw view windows would be one thing to look at with it.
+- **A fence value used twice.** `wait_for_gpu_once` incremented `fence_values[fi]` and signalled it;
+  `move_to_next_frame` then signalled `fence_values[fi]` again for the batch after it, the same value,
+  already complete. That batch was not waited for by the next `rf_open` (submissions 3,496 and 3,497
+  of a probe run had the same last value signalled, 3,593): the next batch could reset its allocator
+  and texture ring under it, and its ZPASS counts and main-memory surfaces were read as done. Not the
+  hang (`RF_IDLE_WAIT=1` still hung).
+  - **Fixed after:** the wait signals the frame index's next value and leaves the one after it, as
+    D3D12's samples do; `D3D12_FENCE_REUSE=1` as before.
+  - Fight (the user's settings had Disable Shadows on again by then), the fix first, ABBA: 36.67 (the
+    first run, the machine cool), old 34.95 and 34.91, fix 34.83. Gate with shadows on, old then fix:
+    27.53, 27.88. No stuck wait in any run (`fn_*`, `gn_*`).
 - **The branch base.** `rsx_vp_decompile` takes branch targets as slots of the whole store less
   `rsx_vp_set_branch_base`, which only `rsx_live_draw.c` set. The D3D12 backend now sets it to the
   program's start (0 for `compile_vp`); `VP_BRANCH_BASE0=1` as before. This title's five branching
