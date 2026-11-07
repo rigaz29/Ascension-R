@@ -74,6 +74,11 @@ to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a 
 MLAA on: with MLAA the depth at the final composite is the next frame's, so FSR 3 stays off and the log says why. The
 [plan](docs/notes/2026-11-07-fsr31-plan.md) has the measurements.
 
+## Cheats
+
+The launcher's Cheats tab has Infinite health, hits take no health from Kratos, and One hit kill, every hit of his takes all
+of an enemy's health. Both are off by default and hook the title's damage code ([note](docs/notes/2026-11-07-cheats.md)).
+
 ## Layout
 
 - `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, lle, build, run, symbolize).

@@ -9,7 +9,7 @@
  * back.
  *
  * The window is drawn with Direct2D and DirectWrite: a sidebar of tabs (Play,
- * Graphics, Display, Controls, Game patches, System), a header with the
+ * Graphics, Display, Controls, Game patches, Cheats, System), a header with the
  * game's own art (PIC1.PNG and ICON0.PNG of the PS3_GAME folder the player
  * installed; nothing of the game is in this repository), cards of settings
  * as segmented buttons, switches and lists, and a bar with Play. The keyboard
@@ -66,7 +66,7 @@ extern "C" int  gowa_title_patch_default(int i);
 /* ---------------------------------------------------------------------------
  * What the window offers
  * -----------------------------------------------------------------------*/
-enum { T_PLAY, T_GRAPHICS, T_DISPLAY, T_CONTROLS, T_PATCHES, T_SYSTEM, T_N };
+enum { T_PLAY, T_GRAPHICS, T_DISPLAY, T_CONTROLS, T_PATCHES, T_CHEATS, T_SYSTEM, T_N };
 
 struct Opt {
     int tab;                   /* the tab it is on (T_*) */
@@ -165,6 +165,10 @@ static Opt s_opt[] = {
     { T_CONTROLS, "input", "enter_button", "cross", "Confirm button", 0, LIST(k_enter, k_enter_n), k_enter_n,
       "The button that confirms in the menus." },
     { T_CONTROLS, "input", "vibration", "on", "Vibration", 1, SW, "Controller rumble." },
+    { T_CHEATS, "cheats", "infinite_health", "off", "Infinite health", 1, SW,
+      "Hits take no health from Kratos." },
+    { T_CHEATS, "cheats", "one_hit_kill", "off", "One hit kill", 1, SW,
+      "Every hit from Kratos takes all the health an enemy has." },
     { T_SYSTEM, "system", "language", "auto", "Language", 0, LIST(k_lang, k_lang_n), NULL,
       "The game's language: text and speech." },
     { T_SYSTEM, "system", "esc_quits", "off", "Esc closes the game", 1, SW,
@@ -987,11 +991,12 @@ static float w_row(Opt& o, int oi, float x, float y, float w, int sw_id)
 }
 
 /* --- the parts of the window ---------------------------------------------- */
-static const wchar_t* const k_tab_name[T_N] = { L"Play", L"Graphics", L"Display", L"Controls", L"Game patches", L"System" };
-static const wchar_t* const k_tab_icon[T_N] = { L"\xE768", L"\xE790", L"\xE7F4", L"\xE7FC", L"\xE90F", L"\xE770" };
+static const wchar_t* const k_tab_name[T_N] = { L"Play", L"Graphics", L"Display", L"Controls", L"Game patches", L"Cheats", L"System" };
+static const wchar_t* const k_tab_icon[T_N] = { L"\xE768", L"\xE790", L"\xE7F4", L"\xE7FC", L"\xE90F", L"\xE945", L"\xE770" };
 static const wchar_t* const k_tab_desc[T_N] = {
     L"", L"How the picture is scaled, smoothed and filtered.", L"The window, its pace and the frame rate display.",
     L"Controller and keyboard.", L"Switches that change what the game draws, for speed.",
+    L"For an easier fight. The game reads these when it starts.",
     L"The game's folder, language, saves and this window." };
 
 static void draw_sidebar(void)

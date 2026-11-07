@@ -1118,6 +1118,7 @@ extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
 /* patches.cpp: the title patches switched on in [patches], applied once the
  * ELF is in guest memory and before the title runs. */
 extern "C" void gowa_title_patches_apply(void);
+extern "C" void gowa_cheats_apply(void);
 extern "C" void ps3_pad_tune(double stick_full, int flick_hold);
 
 /* A variable the title needs, unless the environment already has one. */
@@ -1395,6 +1396,7 @@ int main(int argc, char** argv)
         return 1;
     }
     gowa_title_patches_apply();   /* [patches]: the ones switched on (patches.cpp) */
+    gowa_cheats_apply();          /* [cheats]: cheats.cpp */
     /* The evade smooths the right stick over its reads and wants ~0.87: a flick at 30 frames a
      * second is two reads at most. The whole of it, cellPad.c. */
     ps3_pad_tune(0.85, 4);

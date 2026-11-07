@@ -1,5 +1,5 @@
 {
-  "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops",
+  "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops, the launcher's cheats (cheats.cpp) on a creature's damage",
   "hooks": [
     {"addr": "0x0049D708", "fn": "gowa_poll_wait",
      "note": "func_0049D688: until the least of seven u16 progress counters the SPU jobs raise reaches a target"},
@@ -10,6 +10,12 @@
     {"addr": "0x0044D154", "fn": "gowa_poll_wait",
      "note": "func_0044D120: the same scan, from its other caller"},
     {"addr": "0x0041DB50", "fn": "gowa_poll_wait",
-     "note": "func_0041D4E8: until the u16 at [*(r30 + 0xC)] + 0xE0 reads 0 (15% of the main thread in the first level)"}
+     "note": "func_0041D4E8: until the u16 at [*(r30 + 0xC)] + 0xE0 reads 0 (15% of the main thread in the first level)"},
+    {"addr": "0x00087440", "fn": "gowa_cheat_damage",
+     "note": "func_00087440, a creature's damage: r3 the creature, f1 the damage, negative to heal"},
+    {"addr": "0x00156950", "fn": "gowa_cheat_hit",
+     "note": "func_00156680, a hit: its call of func_00087440, with r31 the attacker, r3 the victim and f1 the damage"},
+    {"addr": "0x00154558", "fn": "gowa_cheat_hit",
+     "note": "func_00154460, a hit from a message: the same call, the same registers"}
   ]
 }

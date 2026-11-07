@@ -266,6 +266,7 @@ add_executable(${PROJECT_NAME}
     game_find.cpp
     stubs.cpp
     poll_wait.cpp
+    cheats.cpp
     patches.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
