@@ -135,7 +135,7 @@ static Opt s_opt[] = {
     { T_DISPLAY, "display", "vsync", "on", "VSync", 1, SW,
       "Wait for the display's refresh: no tearing." },
     { T_DISPLAY, "display", "frame_cap", "off", "Frame rate cap", 0, LIST(k_cap, k_cap_n), k_cap_s,
-      "An even pace instead of the highest rate the PC reaches. With frame generation, off means 30." },
+      "An even pace instead of the highest rate the PC reaches. With frame generation, off follows the monitor." },
     { T_DISPLAY, "display", "show_fps", "title", "Frame rate display", 0, LIST(k_fps, k_fps_n), k_fps_s,
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
@@ -146,8 +146,9 @@ static Opt s_opt[] = {
     { T_GRAPHICS, "graphics", "sharpening", "high", "FSR sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
       "The sharpening pass of FSR (RCAS). Only with FSR scaling." },
     { T_GRAPHICS, "graphics", "frame_generation", "off", "Frame generation", 1, SW,
-      "FSR 3.1: 60 frames a second on screen from the game's 30, with VSync on. A frame is made between each two, "
-      "which holds the picture back by about a frame. The game is held at 30, and below 25 it stands aside." },
+      "FSR 3.1: twice the frames on screen, with VSync on. The game is held at half the monitor's refresh rate, "
+      "30 at 60 Hz and 60 at 120 Hz. A frame is made between each two, which holds the picture back by about a "
+      "frame, and below 25 it stands aside." },
     { T_GRAPHICS, "graphics", "antialiasing", "off", "Anti-aliasing", 0, LIST(k_aa, k_aa_n), k_aa_s,
       "Smooths jagged edges after the game has drawn the frame. Costs next to nothing. FSR 3.1 scaling "
       "does this itself in play." },

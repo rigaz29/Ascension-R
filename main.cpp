@@ -121,6 +121,7 @@ extern "C" void rsx_d3d12_backend_present(void);
 extern "C" int  rsx_d3d12_backend_pump_messages(void);
 extern "C" void rsx_d3d12_backend_record_ahead(void);
 extern "C" int  rsx_d3d12_backend_generating(void);
+extern "C" double rsx_d3d12_backend_refresh_hz(void);
 extern "C" void rsx_d3d12_backend_camera_register(int reg, int prev_reg, int prev_attr);
 extern "C" void rsx_d3d12_backend_fsr3_refuse(const char* why);
 extern "C" int  gowa_title_patch_wanted(const char* id);
@@ -129,6 +130,7 @@ extern "C" int  gowa_title_patch_wanted(const char* id);
 #  define rsx_backend_pump    rsx_d3d12_backend_pump_messages
 #  define rsx_backend_record_ahead rsx_d3d12_backend_record_ahead
 #  define rsx_backend_generating rsx_d3d12_backend_generating
+#  define rsx_backend_refresh_hz rsx_d3d12_backend_refresh_hz
 #  define RSX_BACKEND_NAME    "D3D12"
 #elif defined(__APPLE__)
 extern "C" int  rsx_metal_backend_init(uint32_t w, uint32_t h, const char* title);
@@ -150,6 +152,7 @@ extern "C" int  rsx_null_backend_pump_messages(void);
 #if !defined(_WIN32)
 #  define rsx_backend_record_ahead() ((void)0)
 #  define rsx_backend_generating() 0
+#  define rsx_backend_refresh_hz() 0.0
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -283,17 +286,27 @@ static DWORD WINAPI frame_clock(LPVOID)
     bool frame_cap = false;
     {
         const char* cap = ps3_settings_str("display", "frame_cap", "GOWA_FRAME_CAP", "off");
-        int fps = cap ? atoi(cap) : 0;
-        /* Frame generation shows two frames for each flip, so a 60 Hz display takes 30 of
-         * them a second, and it is the cap that holds that. A flip lands on the pass after
-         * its time, ~0.8 ms late: 32.5 ms here is 59.7 frames on the display, 33.4 ms 58.1. */
+        double fps = cap ? atof(cap) : 0.0;
+        /* Frame generation shows two frames for each flip, so with no cap of its own it is held
+         * at what fills the display: half the refresh rate. Past the 60 a PS3 flips at, half of
+         * that again, or of a third, so a frame still stays on screen for a whole number of
+         * refreshes. A flip lands on the pass after its time, ~0.8 ms late: at 60 Hz 32.5 ms is
+         * 59.7 frames on the display, 33.4 ms 58.1. */
         const bool generating = rsx_ok && rsx_backend_generating();
-        if (generating && (fps < 10 || fps > 30)) fps = 30;
-        if (fps >= 10 && fps <= 60) {
-            flip_min_us = (ULONGLONG)(1000000 / fps - (generating ? 833 : 2000));
+        if (generating && !(fps >= 10 && fps <= 60)) {
+            double hz = atof(ps3_settings_str("graphics", "frame_generation_refresh", "D3D12_FG_REFRESH", "0"));
+            if (hz <= 0.0) hz = rsx_backend_refresh_hz();
+            if (hz <= 0.0) hz = 60.0;
+            int n = 2;
+            while (hz / n > 60.5) n += 2;
+            fps = hz / n;
+            fprintf(stderr, "[gowa] frame generation: a %.2f Hz display, %.2f flips a second\n", hz, fps);
+        }
+        if (fps >= 10 && fps <= 60.5) {
+            flip_min_us = (ULONGLONG)(1000000.0 / fps - (generating ? 833 : 2000));
             frame_cap = true;
-            fprintf(stderr, "[gowa] frame cap %d fps: a flip no sooner than %llu ms after the last\n",
-                    fps, (unsigned long long)flip_min_us / 1000);
+            fprintf(stderr, "[gowa] frame cap %.2f fps: a flip no sooner than %.2f ms after the last\n",
+                    fps, (double)flip_min_us / 1000.0);
         }
     }
     if (const char* e = getenv("GOWA_FLIP_MIN_MS")) flip_min_us = (ULONGLONG)atoi(e) * 1000;

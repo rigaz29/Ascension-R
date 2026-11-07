@@ -58,8 +58,12 @@ local.json's `fsr_dir`. Without the DLLs the log says so and the game goes on wi
   place of SMAA. Logos, menus and loading screens keep FSR 1. On a GTX 1650 Ti it takes 2.0 ms at 1600x900, where FSR 1 and
   SMAA take 1.1. The HUD stays at 720p sharpness.
 - **Frame generation** (`graphics.frame_generation = on`) shows two frames for each of the game's, so keep VSync on. It
-  holds the game at 30 frames a second, or at 20 with that cap, and stands aside while the game is under 25
-  (`graphics.frame_generation_floor`).
+  holds the game at half the monitor's refresh rate: 30 frames a second at 60 Hz, 60 at 120 Hz. Past 120 Hz it halves that
+  again, as 60 is the most a PS3 flips and a frame should stay on screen for a whole number of refreshes: 36 at 144 Hz, 60
+  at 240 Hz. Only 60 Hz has been tried on a real display, and the game has not been played above 39 frames a second.
+  A Frame rate cap comes first, and suits a PC that cannot hold the rate: 30 on a 120 Hz monitor.
+  `graphics.frame_generation_refresh` gives the rate by hand, for a VRR display: 120 on a 144 Hz one is 60 frames a second.
+  While the game is under 25 generation stands aside (`graphics.frame_generation_floor`).
 
 Both take what moves from the title's motion blur draws, so Disable Motion Blur is left off with them: EDGE goes from 46
 to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a cool machine, more on a hot one.
