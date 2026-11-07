@@ -98,9 +98,9 @@ static const char* const k_async[] = { "0", "2" };
 static const char* const k_cap[] = { "off", "20", "30" };
 static const char* const k_cap_n[] = { "Off", "20 fps, even pace", "30 fps, even pace" };
 static const char* const k_cap_s[] = { "Off", "20 fps", "30 fps" };
-static const char* const k_scale[] = { "bilinear", "sharp", "fsr1" };
-static const char* const k_scale_n[] = { "Bilinear", "Sharp bilinear", "AMD FSR 1" };
-static const char* const k_scale_s[] = { "Bilinear", "Sharp", "FSR 1" };
+static const char* const k_scale[] = { "bilinear", "sharp", "fsr1", "fsr3" };
+static const char* const k_scale_n[] = { "Bilinear", "Sharp bilinear", "AMD FSR 1", "AMD FSR 3.1" };
+static const char* const k_scale_s[] = { "Bilinear", "Sharp", "FSR 1", "FSR 3.1" };
 static const char* const k_aa[] = { "off", "smaa" };
 static const char* const k_aa_n[] = { "Off", "SMAA 1x" };
 static const char* const k_aa_s[] = { "Off", "SMAA" };
@@ -141,9 +141,10 @@ static Opt s_opt[] = {
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
       "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
     { T_GRAPHICS, "graphics", "scaling", "bilinear", "Scaling", 0, LIST(k_scale, k_scale_n), k_scale_s,
-      "How the 720p picture is scaled up to the window." },
-    { T_GRAPHICS, "graphics", "sharpening", "high", "FSR 1 sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
-      "The sharpening pass of FSR 1 (RCAS). Only with FSR 1 scaling." },
+      "How the 720p picture is scaled up to the window. FSR 3.1 builds the detail from past frames, "
+      "in place of SMAA, and FSR 1 takes over where there is no scene." },
+    { T_GRAPHICS, "graphics", "sharpening", "high", "FSR sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
+      "The sharpening pass of FSR (RCAS). Only with FSR scaling." },
     { T_GRAPHICS, "graphics", "antialiasing", "off", "Anti-aliasing", 0, LIST(k_aa, k_aa_n), k_aa_s,
       "Smooths jagged edges after the game has drawn the frame. Costs next to nothing." },
     { T_GRAPHICS, "graphics", "anisotropy", "game", "Anisotropic filtering", 0, LIST(k_aniso, k_aniso_n), k_aniso_s,

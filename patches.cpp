@@ -64,12 +64,13 @@ extern "C" void gowa_title_patches_apply(void)
         env[k] = 0;
         if (!ps3_settings_bool("patches", p->id, env, p->def_on))
             continue;
-        /* Frame generation takes what moves from the blur's draws. With Disable MLAA on the
-         * blur itself never reaches the picture. */
+        /* Frame generation and the upscaler take what moves from the blur's draws. With Disable
+         * MLAA on the blur itself never reaches the picture. */
         if (!strcmp(p->id, "disable_motion_blur") &&
-            ps3_settings_ieq(ps3_settings_str("graphics", "frame_generation", "D3D12_FRAME_GENERATION", "off"), "on") &&
+            (ps3_settings_ieq(ps3_settings_str("graphics", "frame_generation", "D3D12_FRAME_GENERATION", "off"), "on") ||
+             ps3_settings_ieq(ps3_settings_str("graphics", "scaling", NULL, "bilinear"), "fsr3")) &&
             ps3_settings_bool("graphics", "frame_generation_objects", "D3D12_FG_OBJECTS", 1)) {
-            fprintf(stderr, "[patches] %s: left off for frame generation\n", p->name);
+            fprintf(stderr, "[patches] %s: left off for FSR's motion\n", p->name);
             continue;
         }
         const int self = (int)(p - k_title_patches);
