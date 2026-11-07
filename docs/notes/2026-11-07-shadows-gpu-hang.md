@@ -43,8 +43,9 @@ The scripted parasite fight (`logs/parasite`), FSR 1, no frame generation, Disab
 | the bone fix below (`fx2`) | 29.37 | |
 | Disable Shadows on, for comparison (`fa2`) | 32.94 | |
 
-- **But with the bone fix, three runs of five still hung** (`fx1`, `dr2`, `db1`; `fx2` and `dr1`
-  did not). One run a side only moved the timing; none of those switches is shown to be the cause.
+- **But with the bone fix, three runs of five still hung** (`fx1`, `dr2` and a run whose folder was
+  later reused; `fx2` and `dr1` did not). One run a side only moved the timing; none of those
+  switches was the cause.
 
 ### What the hang is
 
@@ -52,12 +53,77 @@ The scripted parasite fight (`logs/parasite`), FSR 1, no frame generation, Disab
 
 - **No page fault**: `GetPageFaultAllocationOutput` returns VA 0. Nothing read or wrote outside
   an allocation; the device was removed for taking too long.
-- **The breadcrumbs** (one run, `db1`): the frame's command list had done 1 of its 3,219 operations,
-  `BEGIN_COMMAND_LIST`. The next, where it stopped, is a `ResourceBarrier`: `46 15 15 15 8 15 15`
-  (three barriers, a `CopyTextureRegion`, two barriers). No other list was in flight; the vertex
-  pass's list before it had completed.
-- Not found yet: which resource that first barrier transitions. The next step is a probe that keeps
-  each list's first barriers (the resource, its description, the states) for the DRED report.
+- **The breadcrumbs**, two captures. Each stopped at a `ResourceBarrier` (op 15):
+  - the frame's list at its second operation of 3,219, `46 15 15 15 8 15 15`;
+  - (`rb1`) at operation 987 of 6,765, right after another barrier that had completed:
+    `4 4 4 4 4 15 [15] 15 15 8 15 15`; the vertex pass's list and the next frame's queued behind.
+- A probe of each list's first barriers (`rbp`, the resource, its description, the states) showed
+  nothing wrong in them: the backbuffer, the display targets, texture uploads.
+
+### Switches that did not change the rate
+
+With the bone fix, runs stopped at the hang or after 120 s:
+
+| | hung |
+|---|---|
+| `RF_IDLE_WAIT=1` (every batch waits for the GPU) | 1 of 3 |
+| the branch base below | 1 of 2 |
+| `VP_CB_GEN=0`, `VP_CB_SHARE=0`, `PREPASS_SHARE=0` | 1 of 3 |
+| `GOWA_EDGE_GPU=0`, `GOWA_EDGE_MEMO=0` (no EDGE work on the GPU at all) | 1 of 1 |
+| `D3D12_SHADER_COMPILER=fxc` | 1 of 3 |
+
+Probes in the same runs found nothing wrong: the polygon offsets (factor 2, units 1,355-14,499 in
+500,000 draws), the loop constants of the five branching vertex programs (`c[314]` = 0, 1e-4, pi,
+1; `c[467].x` 0 or 1).
+
+## The cause
+
+A probe at the two places a target is made anew (`off_rt_get`, `off_ds_get`), a run that hung:
+
+| frame | the shadow atlas, colour 0x01550000 and its depth |
+|---|---|
+| 3384 | made at 48x66, then 638x668, then 980x1404: three times in one batch (records 4,340, the prepass at 2,335) |
+| 3393 | 980x1408 |
+| 3428 | 982x1408, then 1024x1408 |
+| 3429 | 1098x1408, in the middle of the batch; **the device was lost in this frame** |
+| 3461 | 1280x1408 |
+
+The title fills its shadow atlas a light at a time and binds it at the size it has filled so far.
+The prepass sizes a batch's targets before the draws' views are copied, but record-ahead runs it in
+parts (`rf_prepass(pre_done, upto)`), so a later part can ask for more of a target the earlier
+parts' draws already have. Made anew there:
+
+- the draws prepassed before it sample the old resource, through the views copied into their
+  windows;
+- the barriers recorded for them move the new one, the slot's resource when they are recorded;
+- so the old depth surface is read in `DEPTH_WRITE`.
+
+## The fix
+
+`grow_later` in the backend: a target the batch has already bound or sampled (`last` or
+`last_frame` is this frame) keeps its size, and the size asked for is kept in `grow_w`/`grow_h`. The
+next batch makes it at that size when it first takes it, before any of its draws has a view of it.
+Until then the batch draws into what the target has: a few frames as the level starts, when the
+atlas is being made anyway. `RT_GROW_NOW=1` makes it anew at once, as before.
+
+- Four runs of four did not hang (`gl1`-`gl4`). At ~50% before, four in a row by chance is ~6%.
+  The probe shows the atlas made at 48x66 and the larger sizes left for the next batch.
+- The build with only the fix, one full fight run (`vf1`): 30.56 flips/s (windows 28.8-32.0), the
+  device kept, the pictures right, Kratos and the chains with their shadows. Disable Shadows on was
+  32.94 (`fa2`): shadows cost ~7% in the fight now.
+
+## Also found
+
+- **A fence value used twice.** `wait_for_gpu_once` increments `fence_values[fi]` and signals it;
+  `move_to_next_frame` then signals `fence_values[fi]` again for the batch after it, the same value,
+  already complete. That batch is not waited for by the next `rf_open` (submissions 3,496 and 3,497
+  of a probe run had the same last value signalled, 3,593), so the next batch can be recorded while
+  it runs. Not the hang (`RF_IDLE_WAIT=1` still hung), not fixed here: the backend's single set of
+  draw view windows would be one thing to look at with it.
+- **The branch base.** `rsx_vp_decompile` takes branch targets as slots of the whole store less
+  `rsx_vp_set_branch_base`, which only `rsx_live_draw.c` set. The D3D12 backend now sets it to the
+  program's start (0 for `compile_vp`); `VP_BRANCH_BASE0=1` as before. This title's five branching
+  programs start at slot 0, so it changes nothing here.
 
 ### The RSX thread with shadows on
 
