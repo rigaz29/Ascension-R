@@ -121,7 +121,7 @@ extern "C" void rsx_d3d12_backend_present(void);
 extern "C" int  rsx_d3d12_backend_pump_messages(void);
 extern "C" void rsx_d3d12_backend_record_ahead(void);
 extern "C" int  rsx_d3d12_backend_generating(void);
-extern "C" void rsx_d3d12_backend_camera_register(int reg);
+extern "C" void rsx_d3d12_backend_camera_register(int reg, int prev_reg, int prev_attr);
 #  define rsx_backend_init    rsx_d3d12_backend_init
 #  define rsx_backend_present rsx_d3d12_backend_present
 #  define rsx_backend_pump    rsx_d3d12_backend_pump_messages
@@ -243,8 +243,9 @@ static DWORD WINAPI frame_clock(LPVOID)
 
 #if defined(_WIN32)
     /* The title's view-projection: c264-c267 in 85 of the 102 vertex programs of a level,
-     * the rest being full-screen and HUD programs. */
-    rsx_d3d12_backend_camera_register(264);
+     * the rest being full-screen and HUD programs. Its motion blur's draws of what moves
+     * have last frame's in c335-c338 and a vertex's last position in attribute 7. */
+    rsx_d3d12_backend_camera_register(264, 335, 7);
 #endif
     int rsx_ok = (rsx_backend_init(WINDOW_WIDTH, WINDOW_HEIGHT, title) == 0);
     fprintf(stderr, "[rsx] %s backend init %s\n", RSX_BACKEND_NAME,
