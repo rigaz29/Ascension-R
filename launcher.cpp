@@ -109,6 +109,10 @@ static const char* const k_aa_s[] = { "Off", "SMAA" };
 static const char* const k_sharp[] = { "off", "low", "medium", "high", "max" };
 static const char* const k_sharp_n[] = { "Off", "Low", "Medium", "High (AMD's)", "Max" };
 static const char* const k_sharp_s[] = { "Off", "Low", "Medium", "High", "Max" };
+static const char* const k_taken[] = { "1", "0.5", "0.25", "0" };
+static const char* const k_taken_n[] = { "Normal", "Half", "Quarter", "None" };
+static const char* const k_dealt[] = { "1", "2", "5", "kill" };
+static const char* const k_dealt_n[] = { "Normal", "2x", "5x", "One hit" };
 static const char* const k_dev[] = { "auto", "pad", "keyboard" };
 static const char* const k_dev_n[] = { "Controller, else keyboard", "Controller only", "Keyboard only" };
 static const char* const k_dev_s[] = { "Auto", "Controller", "Keyboard" };
@@ -165,14 +169,16 @@ static Opt s_opt[] = {
     { T_CONTROLS, "input", "enter_button", "cross", "Confirm button", 0, LIST(k_enter, k_enter_n), k_enter_n,
       "The button that confirms in the menus." },
     { T_CONTROLS, "input", "vibration", "on", "Vibration", 1, SW, "Controller rumble." },
-    { T_CHEATS, "cheats", "infinite_health", "off", "Infinite health", 1, SW,
-      "Hits take no health from Kratos." },
-    { T_CHEATS, "cheats", "one_hit_kill", "off", "One hit kill", 1, SW,
-      "Every hit from Kratos takes all the health an enemy has." },
+    { T_CHEATS, "cheats", "damage_taken", "1", "Damage to Kratos", 0, LIST(k_taken, k_taken_n), k_taken_n,
+      "How much of a hit he takes. None: hits take no health from him." },
+    { T_CHEATS, "cheats", "damage_dealt", "1", "Kratos's damage", 0, LIST(k_dealt, k_dealt_n), k_dealt_n,
+      "How much his hits take from an enemy. One hit: all of its health." },
     { T_CHEATS, "cheats", "max_orbs", "off", "Max red orbs", 1, SW,
       "The red orbs are held at the most the game allows, 1,000,000. A save made with this on keeps them." },
     { T_CHEATS, "cheats", "infinite_magic", "off", "Infinite magic and items", 1, SW,
       "The magic and item meters stay full." },
+    { T_CHEATS, "cheats", "infinite_rage", "off", "Infinite rage", 1, SW,
+      "The rage meter stays full." },
     { T_CHEATS, "cheats", "infinite_jumps", "off", "Infinite double jumps", 1, SW,
       "Kratos can jump again in the air, as often as he likes." },
     { T_SYSTEM, "system", "language", "auto", "Language", 0, LIST(k_lang, k_lang_n), NULL,

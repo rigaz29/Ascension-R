@@ -21,6 +21,8 @@
      "note": "func_00247F20, the red orbs' meter (tPowerUpMeter) setting its value: f31 the value, f1 its maximum, just read"},
     {"addr": "0x00249694", "fn": "gowa_cheat_magic",
      "note": "func_00249648, the magic meter (tMagicMeterPlayer) setting its value: f31 the value, f1 its maximum, just read"},
+    {"addr": "0x002481BC", "fn": "gowa_cheat_rage",
+     "note": "func_00248170, the rage meter (tRageMeter) setting its value, every frame: f31 the value, f1 its maximum, just read"},
     {"addr": "0x0024890C", "fn": "gowa_cheat_magic",
      "note": "func_002488C0, the item meter (tItemMeter) setting its value: f31 the value, f1 its maximum, just read"},
     {"addr": "0x00270F6C", "fn": "gowa_cheat_jump",
