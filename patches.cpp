@@ -54,19 +54,32 @@ static const gowa_title_data k_title_data[] = { { -1, 0, 0, { 0 }, { 0 } } };
 static const gowa_title_patch k_title_patches[] = { { NULL, NULL, NULL, 0, 0, 0 } };
 #endif
 
+static int patch_wanted(const gowa_title_patch* p)
+{
+    char env[96] = "GOWA_PATCH_";
+    size_t k = 11;
+    for (const char* c = p->id; *c && k + 1 < sizeof env; c++)
+        env[k++] = (char)toupper((unsigned char)*c);
+    env[k] = 0;
+    return ps3_settings_bool("patches", p->id, env, p->def_on);
+}
+
+/* Whether a patch is switched on, before gowa_title_patches_apply has run. */
+extern "C" int gowa_title_patch_wanted(const char* id)
+{
+    for (const gowa_title_patch* p = k_title_patches; p->id; p++)
+        if (!strcmp(p->id, id)) return patch_wanted(p);
+    return 0;
+}
+
 extern "C" void gowa_title_patches_apply(void)
 {
     for (const gowa_title_patch* p = k_title_patches; p->id; p++) {
-        char env[96] = "GOWA_PATCH_";
-        size_t k = 11;
-        for (const char* c = p->id; *c && k + 1 < sizeof env; c++)
-            env[k++] = (char)toupper((unsigned char)*c);
-        env[k] = 0;
-        if (!ps3_settings_bool("patches", p->id, env, p->def_on))
+        if (!patch_wanted(p))
             continue;
         /* Frame generation and the upscaler take what moves from the blur's draws. With Disable
-         * MLAA on the blur itself never reaches the picture. */
-        if (!strcmp(p->id, "disable_motion_blur") &&
+         * MLAA on the blur itself never reaches the picture; without it FSR 3 stays off (main.cpp). */
+        if (!strcmp(p->id, "disable_motion_blur") && gowa_title_patch_wanted("disable_mlaa") &&
             (ps3_settings_ieq(ps3_settings_str("graphics", "frame_generation", "D3D12_FRAME_GENERATION", "off"), "on") ||
              ps3_settings_ieq(ps3_settings_str("graphics", "scaling", NULL, "bilinear"), "fsr3")) &&
             ps3_settings_bool("graphics", "frame_generation_objects", "D3D12_FG_OBJECTS", 1)) {

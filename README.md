@@ -4,10 +4,10 @@ A static recompilation of **God of War: Ascension** (PS3, NPUA80918, version 1.1
 Windows, built on [ps3recomp](https://github.com/sp00nznet/ps3recomp) (fork
 [rigaz29/ps3recomp](https://github.com/rigaz29/ps3recomp), branch `gowa`).
 
-It is early: it builds, boots, plays the opening cinematic, and goes through the menus, profile
-creation and difficulty to the first level and its pause menu. Menus read correctly; the level's
-3D scene is still almost black, and it runs at about 2 frames a second on menus and well under one
-in the level. See [PROGRESS.md](PROGRESS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
+It builds, boots, plays the cinematics and goes through the menus to the levels. The two scenes
+measured so far, a fight of the first level and the gate, run above 30 frames a second on a Ryzen 5
+4600H with a GTX 1650 Ti, with the Smooth preset. It has not been played through. See
+[PROGRESS.md](PROGRESS.md) and [docs/ROADMAP.md](docs/ROADMAP.md).
 
 **No game files are in this repository, and none will be.** You need your own copy of the game,
 installed in RPCS3 with its license, and you decrypt it yourself.
@@ -47,6 +47,25 @@ on every disk; it starts by itself when the game is not where the settings say.
 `build` copies `dxcompiler.dll` and `dxil.dll` from the Windows SDK next to the exe, and guest shaders compile with
 them. Without the two files they compile with D3DCompile, about 2.4 times slower. `graphics.shader_compiler = fxc`
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
+
+## FSR 3.1
+
+Two rows in the launcher's Graphics tab, both off by default, measured on a GTX 1650 Ti. `build` copies their DLLs from
+an [FSR SDK 2.4.0](https://github.com/GPUOpen-LibrariesAndSDKs/FidelityFX-SDK) unpacked under `../fsr-sdk`, or from
+local.json's `fsr_dir`. Without the DLLs the log says so and the game goes on without FSR 3.
+
+- **Scaling: AMD FSR 3.1** (`graphics.scaling = fsr3`) rebuilds scene frames from 720p with jitter, depth and motion, in
+  place of SMAA. Logos, menus and loading screens keep FSR 1. On a GTX 1650 Ti it takes 2.0 ms at 1600x900, where FSR 1 and
+  SMAA take 1.1. The HUD stays at 720p sharpness.
+- **Frame generation** (`graphics.frame_generation = on`) shows two frames for each of the game's, so keep VSync on. It
+  holds the game at 30 frames a second, or at 20 with that cap, and stands aside while the game is under 25
+  (`graphics.frame_generation_floor`).
+
+Both take what moves from the title's motion blur draws, so Disable Motion Blur is left off with them: EDGE goes from 46
+to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a cool machine, more on a hot one.
+`graphics.frame_generation_objects = off` goes back to the camera's motion alone, and the patch applies. Both need Disable
+MLAA on: with MLAA the depth at the final composite is the next frame's, so FSR 3 stays off and the log says why. The
+[plan](docs/notes/2026-11-07-fsr31-plan.md) has the measurements.
 
 ## Layout
 

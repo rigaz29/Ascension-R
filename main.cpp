@@ -122,6 +122,8 @@ extern "C" int  rsx_d3d12_backend_pump_messages(void);
 extern "C" void rsx_d3d12_backend_record_ahead(void);
 extern "C" int  rsx_d3d12_backend_generating(void);
 extern "C" void rsx_d3d12_backend_camera_register(int reg, int prev_reg, int prev_attr);
+extern "C" void rsx_d3d12_backend_fsr3_refuse(const char* why);
+extern "C" int  gowa_title_patch_wanted(const char* id);
 #  define rsx_backend_init    rsx_d3d12_backend_init
 #  define rsx_backend_present rsx_d3d12_backend_present
 #  define rsx_backend_pump    rsx_d3d12_backend_pump_messages
@@ -246,6 +248,8 @@ static DWORD WINAPI frame_clock(LPVOID)
      * the rest being full-screen and HUD programs. Its motion blur's draws of what moves
      * have last frame's in c335-c338 and a vertex's last position in attribute 7. */
     rsx_d3d12_backend_camera_register(264, 335, 7);
+    /* MLAA pipelines the frame: at its final composite the depth is the next frame's. */
+    if (!gowa_title_patch_wanted("disable_mlaa")) rsx_d3d12_backend_fsr3_refuse("MLAA is on");
 #endif
     int rsx_ok = (rsx_backend_init(WINDOW_WIDTH, WINDOW_HEIGHT, title) == 0);
     fprintf(stderr, "[rsx] %s backend init %s\n", RSX_BACKEND_NAME,

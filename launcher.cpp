@@ -135,7 +135,7 @@ static Opt s_opt[] = {
     { T_DISPLAY, "display", "vsync", "on", "VSync", 1, SW,
       "Wait for the display's refresh: no tearing." },
     { T_DISPLAY, "display", "frame_cap", "off", "Frame rate cap", 0, LIST(k_cap, k_cap_n), k_cap_s,
-      "An even pace instead of the highest rate the PC reaches." },
+      "An even pace instead of the highest rate the PC reaches. With frame generation, off means 30." },
     { T_DISPLAY, "display", "show_fps", "title", "Frame rate display", 0, LIST(k_fps, k_fps_n), k_fps_s,
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
@@ -145,8 +145,12 @@ static Opt s_opt[] = {
       "in place of SMAA, and FSR 1 takes over where there is no scene." },
     { T_GRAPHICS, "graphics", "sharpening", "high", "FSR sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
       "The sharpening pass of FSR (RCAS). Only with FSR scaling." },
+    { T_GRAPHICS, "graphics", "frame_generation", "off", "Frame generation", 1, SW,
+      "FSR 3.1: 60 frames a second on screen from the game's 30, with VSync on. A frame is made between each two, "
+      "which holds the picture back by about a frame. The game is held at 30, and below 25 it stands aside." },
     { T_GRAPHICS, "graphics", "antialiasing", "off", "Anti-aliasing", 0, LIST(k_aa, k_aa_n), k_aa_s,
-      "Smooths jagged edges after the game has drawn the frame. Costs next to nothing." },
+      "Smooths jagged edges after the game has drawn the frame. Costs next to nothing. FSR 3.1 scaling "
+      "does this itself in play." },
     { T_GRAPHICS, "graphics", "anisotropy", "game", "Anisotropic filtering", 0, LIST(k_aniso, k_aniso_n), k_aniso_s,
       "Sharper textures seen at an angle. The game itself asks for none." },
     { T_GRAPHICS, "graphics", "async_shaders", "2", "Build shaders in the background", 1, k_async, NULL, 2, NULL,
@@ -186,10 +190,10 @@ static const char* patch_desc(const char* id)
 {
     static const char* const d[][2] = {
         { "disable_mlaa", "The PS3's SPU anti-aliasing, whose picture this port never shows: about 5% "
-                          "faster. The bloom goes with it." },
+                          "faster. The bloom goes with it. FSR 3.1 and frame generation need this on." },
         { "disable_depth_of_field", "The blur of what lies outside the camera's focus." },
         { "disable_motion_blur", "Saves the blur's work. With Disable MLAA on it never reaches the screen "
-                                 "anyway." },
+                                 "anyway. FSR 3.1 and frame generation keep its draws, for what moves." },
         { "disable_mesh_trimming", "For drawing above 720p, which this port does not do: here it only adds "
                                    "geometry (3% slower at the first level, 11% at the gate)." },
         { "disable_shadows", "No dynamic shadows: the biggest saving, about 25% faster in the Megaera "
@@ -1276,9 +1280,11 @@ static void summary(wchar_t* out, size_t n)
 {
     const Opt* a = opt_find("graphics", "antialiasing");
     const Opt* c = opt_find("display", "frame_cap");
+    const Opt* g = opt_find("graphics", "frame_generation");
     swprintf(out, n, L"%ls  \x00B7  %ls  \x00B7  %ls  \x00B7  %ls",
              W(opt_short(opt_find("display", "mode"))), W(opt_short(opt_find("graphics", "scaling"))),
              a && ps3_settings_ieq(a->cur, "smaa") ? L"SMAA" : L"no AA",
+             g && ps3_settings_ieq(g->cur, "on") ? L"frame generation" :
              c && !ps3_settings_ieq(c->cur, "off") ? W(opt_short(c)) : L"no cap");
 }
 
