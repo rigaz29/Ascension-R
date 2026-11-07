@@ -881,8 +881,18 @@ static char s_toast[64];
 static int s_toast_bad;          /* not good news: red, with a cross */
 static ULONGLONG s_toast_until;
 
+/* A tab whose card is taller than the window scrolls it, by the wheel: what it hides is not there to
+ * click either. */
+static float s_scroll[T_N];       /* how far each tab is scrolled */
+static float s_scroll_max[T_N];   /* how far it can be, from the tab's last drawing */
+static const D2D1_RECT_F NO_CLIP = { -1e9f, -1e9f, 1e9f, 1e9f };
+static D2D1_RECT_F s_clip = NO_CLIP;
+
 static void hit(D2D1_RECT_F r, int id)
 {
+    if (r.top < s_clip.top) r.top = s_clip.top;
+    if (r.bottom > s_clip.bottom) r.bottom = s_clip.bottom;
+    if (r.bottom <= r.top) return;
     if (s_nhit < (int)(sizeof s_hit / sizeof s_hit[0])) { s_hit[s_nhit].r = r; s_hit[s_nhit].id = id; s_nhit++; }
 }
 static int inside(D2D1_RECT_F r, float x, float y) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
@@ -1266,8 +1276,18 @@ static void draw_settings(int tab)
     if (tab == T_PATCHES) ch += 34.0f;
     if (tab == T_SYSTEM) ch += GAME_ROW_H;
     ch += 16.0f;
-    w_card(R(x0, cy, cw, ch), NULL);
-    float y = cy + 16;
+    const float view = WIN_H - FOOT_H - 12.0f - cy;
+    s_scroll_max[tab] = ch > view ? ch - view : 0.0f;
+    if (s_scroll[tab] > s_scroll_max[tab]) s_scroll[tab] = s_scroll_max[tab];
+    if (s_scroll[tab] < 0.0f) s_scroll[tab] = 0.0f;
+    const float off = s_scroll[tab];
+    const int scrolls = s_scroll_max[tab] > 0.0f;
+    if (scrolls) {
+        s_clip = R(SIDE_W, cy, WIN_W - SIDE_W, view);
+        s_rt->PushAxisAlignedClip(s_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+    }
+    w_card(R(x0, cy - off, cw, ch), NULL);
+    float y = cy + 16 - off;
     if (tab == T_SYSTEM) {
         draw_game_row(rx, y, rw);
         y += GAME_ROW_H;
@@ -1290,6 +1310,14 @@ static void draw_settings(int tab)
         text(L"\xE946", s_tf_icon, R(rx, y + 8, 18, 26), C_MUTED, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
         text(L"Off: drawn as on the PS3. The game reads these when it starts.", s_tf_small,
              R(rx + 26, y + 8, rw - 26, 26), C_MUTED);
+    }
+    if (scrolls) {
+        s_rt->PopAxisAlignedClip();
+        s_clip = NO_CLIP;
+        /* Where in the card the window is, beside it. */
+        const float bx = x0 + cw + 14, thumb = view * view / ch < 40.0f ? 40.0f : view * view / ch;
+        fill_rr(R(bx, cy, 6, view), 3, C_CARD);
+        fill_rr(R(bx, cy + (view - thumb) * off / s_scroll_max[tab], 6, thumb), 3, C_MUTED);
     }
 }
 
@@ -1787,6 +1815,9 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         if (s_dd >= 0) {
             s_dd_top += GET_WHEEL_DELTA_WPARAM(w) > 0 ? -2 : 2;
             redraw();
+        } else if (s_tab != T_PLAY && s_scroll_max[s_tab] > 0.0f) {
+            s_scroll[s_tab] -= (float)GET_WHEEL_DELTA_WPARAM(w) / WHEEL_DELTA * 60.0f;   /* clamped as it is drawn */
+            redraw();
         }
         return 0;
     case WM_KEYDOWN:
@@ -1838,8 +1869,9 @@ static void shots(const char* dir)
     }
     rt_resources();
     CreateDirectoryA(dir, NULL);
-    for (int t = 0; t <= T_N + 1; t++) {
-        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : T_SYSTEM;
+    for (int t = 0; t <= T_N + 2; t++) {
+        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : t == T_N + 1 ? T_SYSTEM : T_CHEATS;
+        s_scroll[s_tab] = t == T_N + 2 ? 1e9f : 0.0f;   /* the last: the cheats, scrolled to their end */
         s_dd = -1;
         s_hover = -1;
         if (t == T_N + 1) {   /* a search under way: nothing runs, the row only says so */
