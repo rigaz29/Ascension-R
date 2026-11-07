@@ -47,6 +47,7 @@ on every disk; it starts by itself when the game is not where the settings say.
 `build` copies `dxcompiler.dll` and `dxil.dll` from the Windows SDK next to the exe, and guest shaders compile with
 them. Without the two files they compile with D3DCompile, about 2.4 times slower. `graphics.shader_compiler = fxc`
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
+Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 ## FSR 3.1
 

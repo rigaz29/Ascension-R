@@ -21,6 +21,8 @@
  * for it on every disk (game_find.cpp), and a window that opens with no game
  * starts looking by itself. Either sets the two links the port reads it through.
  *
+ * Clear shaders, down the sidebar, moves the compiled shaders to the Recycle Bin.
+ *
  * This file also holds this port's defaults (gowa_port_defaults), so the
  * game and the Defaults button take them from the same tables.
  */
@@ -848,7 +850,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
  * -----------------------------------------------------------------------*/
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
-    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_GAME_BROWSE, H_GAME_AUTO, H_DDITEM = 9000,
+    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
 static Hit s_hit[400];
@@ -1022,7 +1024,12 @@ static void draw_sidebar(void)
         hit(r, id);
         y += 44.0f;
     }
-    /* Down at the bottom: the save folder. */
+    /* Down at the bottom: the compiled shaders and the save folder. */
+    const D2D1_RECT_F c = R(14, WIN_H - 104, SIDE_W - 28, 40);
+    if (hovered(H_SHADERS)) fill_rr(c, 8, C_CARD);
+    text(L"\xE74D", s_tf_icon, R(30, c.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    text(L"Clear shaders", s_tf_ui, R(64, c.top, 160, 40), C_TEXT2);
+    hit(c, H_SHADERS);
     const D2D1_RECT_F r = R(14, WIN_H - 60, SIDE_W - 28, 40);
     if (hovered(H_SAVES)) fill_rr(r, 8, C_CARD);
     text(L"\xE8B7", s_tf_icon, R(30, r.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -1503,6 +1510,51 @@ static void find_done(void)
     }
 }
 
+/* The compiled shaders on disk, both compilers' with their pipelines, to the Recycle Bin. The
+ * game builds them again as it reaches them. */
+static void clear_shaders(void)
+{
+    const char* sc = ps3_settings_str("graphics", "shader_cache", "D3D12_SHADER_CACHE", NULL);
+    if (!sc || !*sc || ps3_settings_ieq(sc, "off")) {
+        toast_bad("No shader cache in the settings");
+        return;
+    }
+    static const wchar_t* const ext[] = { L"", L".pso", L".dxil", L".dxil.pso" };
+    enum { N = sizeof ext / sizeof ext[0], F = GAME_PATH_MAX + 16 };
+    static wchar_t list[N * F + 1];     /* for the shell: one after the other, two zeros at the end */
+    wchar_t base[GAME_PATH_MAX];
+    if (!GetFullPathNameW(W(sc), GAME_PATH_MAX, base, NULL)) return;
+    size_t n = 0;
+    unsigned long long bytes = 0;
+    for (int i = 0; i < N; i++) {
+        wchar_t f[F];
+        swprintf(f, F, L"%ls%ls", base, ext[i]);
+        WIN32_FILE_ATTRIBUTE_DATA a;
+        if (!GetFileAttributesExW(f, GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+            continue;
+        bytes += (unsigned long long)a.nFileSizeHigh << 32 | a.nFileSizeLow;
+        wcscpy(list + n, f);
+        n += wcslen(f) + 1;
+    }
+    list[n] = 0;
+    if (!n) {
+        toast("No compiled shaders to clear");
+        return;
+    }
+    wchar_t m[200];
+    swprintf(m, 200, L"Move %.0f MB of compiled shaders to the Recycle Bin?\n\n"
+                     L"The game builds them again as it reaches them, so the first run after this is slower.",
+             (double)bytes / 1048576.0);
+    if (MessageBoxW(s_main, m, L"Clear shaders", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
+    SHFILEOPSTRUCTW op = {};
+    op.hwnd = s_main;
+    op.wFunc = FO_DELETE;
+    op.pFrom = list;
+    op.fFlags = FOF_ALLOWUNDO | FOF_NOCONFIRMATION | FOF_WANTNUKEWARNING | FOF_SILENT;
+    if (SHFileOperationW(&op) != 0 || op.fAnyOperationsAborted) toast_bad("Not cleared: is the game running?");
+    else toast("Shaders cleared");
+}
+
 static void game_browse(void)
 {
     if (s_find.thread) {   /* a search under way gives way */
@@ -1558,6 +1610,7 @@ static void act(int id)
         case H_QUIT: s_done = 2; break;
         case H_KEYS: if (!s_keys) open_keys(); break;
         case H_SAVES: open_saves(); break;
+        case H_SHADERS: clear_shaders(); break;
         case H_GAME_BROWSE: game_browse(); break;
         case H_GAME_AUTO:
             if (s_find.thread) s_find.stop = 1;
