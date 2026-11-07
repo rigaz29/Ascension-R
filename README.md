@@ -76,8 +76,9 @@ MLAA on: with MLAA the depth at the final composite is the next frame's, so FSR 
 
 ## Cheats
 
-The launcher's Cheats tab has Infinite health, hits take no health from Kratos, and One hit kill, every hit of his takes all
-of an enemy's health. Both are off by default and hook the title's damage code ([note](docs/notes/2026-11-07-cheats.md)).
+The launcher's Cheats tab: Infinite health, One hit kill, Max red orbs, Infinite magic and items, and Infinite double jumps.
+All are off by default and hook the title's own code, its damage, its meters and its jump
+([note](docs/notes/2026-11-07-cheats.md)).
 
 ## Layout
 

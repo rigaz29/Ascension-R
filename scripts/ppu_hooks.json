@@ -16,6 +16,18 @@
     {"addr": "0x00156950", "fn": "gowa_cheat_hit",
      "note": "func_00156680, a hit: its call of func_00087440, with r31 the attacker, r3 the victim and f1 the damage"},
     {"addr": "0x00154558", "fn": "gowa_cheat_hit",
-     "note": "func_00154460, a hit from a message: the same call, the same registers"}
+     "note": "func_00154460, a hit from a message: the same call, the same registers"},
+    {"addr": "0x00247F7C", "fn": "gowa_cheat_orbs",
+     "note": "func_00247F20, the red orbs' meter (tPowerUpMeter) setting its value: f31 the value, f1 its maximum, just read"},
+    {"addr": "0x00249694", "fn": "gowa_cheat_magic",
+     "note": "func_00249648, the magic meter (tMagicMeterPlayer) setting its value: f31 the value, f1 its maximum, just read"},
+    {"addr": "0x0024890C", "fn": "gowa_cheat_magic",
+     "note": "func_002488C0, the item meter (tItemMeter) setting its value: f31 the value, f1 its maximum, just read"},
+    {"addr": "0x00270F6C", "fn": "gowa_cheat_jump",
+     "note": "func_0026F1B8: r3 the flags word at +0x1628 of the creature in r23, its 0x4 the jump in the air that was had"},
+    {"addr": "0x002726A4", "fn": "gowa_cheat_jump",
+     "note": "func_00272140: the same test, the flags in r3, the creature in r31"},
+    {"addr": "0x000B62DC", "fn": "gowa_cheat_jump",
+     "note": "func_000B57A0: the same test, the flags in r4, the creature in r31, choosing the jump func_000AB200 makes"}
   ]
 }
