@@ -34,8 +34,8 @@ The player's route, replayed, with the 20 pieces left out of the lift at run tim
 | That list against the one in the repository | byte for byte the same |
 
 With nothing left out and the recorder on, flips/s in the windows 40-50 s and 50-60 s from the load were 26.8 and 23.6;
-four runs without it gave 25.0 to 27.4 and 20.8 to 24.1. It is one run, and would not show a difference under about one
-frame a second.
+three runs without it gave 25.0 to 27.4 and 20.8 to 24.1. It is one run, and would not show a difference under about
+one frame a second.
 
 `tools/test_missed_code.py` covers the sorting, `--apply`, the refusals and the recorder. The PPU path is tested only
 there: this title makes no call that finds no lifted function.
