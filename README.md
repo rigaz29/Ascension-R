@@ -49,6 +49,10 @@ them. Without the two files they compile with D3DCompile, about 2.4 times slower
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
+The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks
+the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
+a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
+
 ## FSR 3.1
 
 Two rows in the launcher's Graphics tab, both off by default, measured on a GTX 1650 Ti. `build` copies their DLLs from

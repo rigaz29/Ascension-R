@@ -199,3 +199,55 @@ fast switch returns `-1` for the first list.
 ABBA at the gate with shadows on: 30.76 and 28.03 against 28.47 and 27.53 (the old runs dipped to
 25.4 and 23.7 early in the scene), about +2-5%. The final build, one run: 30.41.
 
+### The PPU main thread
+
+With the RSX thread at 98% the main thread showed 97% too, but most of it waits (sampler at the
+gate, 10 s, shadows on): `sys_timer_usleep` 32.8%, `poll_mwaitx` on the SPU jobs' counters 19.3%,
+the title's own code 33%. `PS3_POLLTOP` puts a quarter of the thread's time at one wait, lr
+`0x0041D5C8`: the frame counter of the frame's EDGE job chain, whose jobs fill the rings the RSX
+thread empties. The wait for the RSX `ref` (`0x003A3698`) is 2.9%. The RSX thread stays the wall.
+
+## The render thread (2026-11-08)
+
+`perf/render-thread-2` (2026-11-05, three commits) records, submits and presents each batch on a
+thread of its own, "rsx render", while the frame clock thread walks the FIFO and captures the draws.
+It gained nothing then: the SPU workers set the frame. Picked onto the 25 commits since, with one
+conflict (`vp_vs_raw`, whose raw variant's text had been split out of it). The set of target offsets
+from `72ff0c97` is now built aside and copied a word at a time, since a debug print in the walk's
+present (`DISP_RT_DBG`) can look a target up while the render thread rebuilds it. Everything else
+added since runs on the render thread's side: `grow_later`, the alias set, `dr_cube_mask`,
+`vp_sampler`, the texture checksums, frame generation's markers.
+
+Mode 2 (the walk waits for each present), in one build:
+
+| | off | on |
+|---|---|---|
+| gate, shadows on | 30.66, 28.57 | 33.65, 32.65 |
+| fight | 32.20 | 35.20 |
+| fight, shadows on | 27.82, 30.01 | 27.23, 28.90; 29.09, 28.92, 28.48 |
+| fight, FSR 3.1, frame generation, VSync (the player's settings) | 30.01, 29.66, 29.69 | 29.64, 29.63, 29.94 |
+
+At the gate the walk ("frame clock") falls from 98% of a core to ~50%, and "rsx render" takes ~60%.
+The fights are the PPU main thread's (93-95% in every run). There the render thread changes nothing
+past the runs' spread, and frame generation holds the game at 30 on this 60 Hz display anyway. The
+first five windows of the player's-settings fight looked lower with it on after two runs each
+(27.96, 28.22 against 29.60, 28.76), and the third pair undid it (29.55 against 28.39). No lost
+device and no `wait_for_gpu STUCK` in 11 runs, 25 with the branch's. The shots match at the gate; in
+the fight the pad script drifts with the rate, and the shots show no fault.
+
+Texture uploads read guest memory on the render thread (`rf_prepass`). In mode 2 that is no later
+than the batch's end, where the walk waits, which is when they were read before record-ahead.
+
+`graphics.render_thread` (`RSX_RENDER_THREAD`; Render thread in the launcher's Graphics tab) is on by
+default: `off`, or a mode's number (fork `f5ec8726`).
+
+Mode 1 (the walk goes on from the batch's reset while the render thread submits and presents) hung
+the GPU in two of four runs on 11-05. A candidate, not tried: from the reset the walk writes the
+next batch into the upload halves (`vp_parity`) of the batch before, which the GPU may still be
+reading (`move_to_next_frame` waits for it only after the present), and the raw-fetch draws read
+through root views, unchecked.
+
+Also seen: `rf_open` drains the GPU before it opens a batch ("full serialisation costs little",
+written for the samples), so in both modes a batch is recorded only after the last one has run. The
+GPU shows 35-39% in the fight, so this is latency, not yet the limit.
+

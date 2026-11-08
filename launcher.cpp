@@ -162,6 +162,9 @@ static Opt s_opt[] = {
       "Sharper textures seen at an angle. The game itself asks for none." },
     { T_GRAPHICS, "graphics", "async_shaders", "2", "Build shaders in the background", 1, k_async, NULL, 2, NULL,
       "A new shader is built while the game goes on, instead of a stall." },
+    { T_GRAPHICS, "graphics", "render_thread", "on", "Render thread", 1, SW,
+      "The GPU's work is recorded and shown on a thread of its own, beside the one that reads the game's "
+      "commands: about 10% more frames where that one holds the game back." },
     { T_CONTROLS, "input", "device", "auto", "Device", 0, LIST(k_dev, k_dev_n), k_dev_s,
       "Auto takes a controller when one is there, else the keyboard and mouse." },
     { T_CONTROLS, "input", "deadzone", "0.24", "Stick dead zone", 0, LIST(k_dz, k_dz_n), NULL,
@@ -1853,9 +1856,9 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
     return DefWindowProcA(h, m, w, l);
 }
 
-/* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open
- * and the System tab during a search, into PNG files at the window's size times
- * 1.25 (a 125% display). */
+/* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open,
+ * the System tab during a search, and the Cheats and Graphics tabs scrolled to
+ * their end, into PNG files at the window's size times 1.25 (a 125% display). */
 static void shots(const char* dir)
 {
     const float dpi = 120.0f;
@@ -1869,9 +1872,9 @@ static void shots(const char* dir)
     }
     rt_resources();
     CreateDirectoryA(dir, NULL);
-    for (int t = 0; t <= T_N + 2; t++) {
-        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : t == T_N + 1 ? T_SYSTEM : T_CHEATS;
-        s_scroll[s_tab] = t == T_N + 2 ? 1e9f : 0.0f;   /* the last: the cheats, scrolled to their end */
+    for (int t = 0; t <= T_N + 3; t++) {
+        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : t == T_N + 1 ? T_SYSTEM : t == T_N + 2 ? T_CHEATS : T_GRAPHICS;
+        s_scroll[s_tab] = t >= T_N + 2 ? 1e9f : 0.0f;   /* the last two: the cheats and the graphics, scrolled to their end */
         s_dd = -1;
         s_hover = -1;
         if (t == T_N + 1) {   /* a search under way: nothing runs, the row only says so */
