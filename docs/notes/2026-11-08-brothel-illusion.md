@@ -48,12 +48,32 @@ unsupported instruction.
 | The room, flips/s | 6.7, 3.7, 3.2 | 26.9, 25.2 |
 | Interpreted SPU steps in the room | 10-20 M/s | 0.1-0.2 M/s |
 
-## The colours
+## The colours (open)
 
-The room stays cream and navy at 25 to 30 frames a second.
+The room stays cream and navy at 25 to 30 frames a second. The player's RPCS3 screenshots of the same room show it
+dark purple, with a violet haze, warm lamps and normal skin.
 
-- A replay with `GOWA_EDGE_GPU=0`, bilinear scaling, no frame generation and no antialiasing gives the same
-  picture, so none of those paths is the cause.
-- Everything bright comes out cream and everything dark navy, the way a two-tone grade does it.
-- The shader that samples a volume texture (`fp=0x1BB8202`) is first used on the menus, before the level.
-- Whether the PS3 shows the scene this way is not known yet: no reference was found.
+What the frame is made of (`RSX_CAP_SHOT` captures in the room):
+
+- The scene target `0x00E10000` holds the lit scene in an RGBM-like encoding: RGB divided by its largest channel,
+  the scale in alpha. In the room it is golden at the back, and the characters have normal skin. It is never
+  cleared; the room's material draws are all opaque, depth EQUAL after a depth pass.
+- One full-screen pass (`fp=0x01BB8202`) decodes it, adds the fog and tone maps into `0x00A8C000`. Its fog comes
+  from a 64x32x16 FP16 volume an SPU job writes every frame (PUTs from LS `0x0C840`/`0x0CC40`, pc `0x834C`), and
+  from a 256x1 ramp (an identity ramp in alpha, read through remap `0xAA1B`).
+- The pass's constants on the bridge and in the room differ in one value, 3.1999 against 3.2000. The fog colour
+  (`c0`) is (0.823, 0.882, 1.000) in both, the bridge's sky, and the volume holds the same values in both. The room
+  keeps the outdoor atmosphere: a light blue fog over a golden interior comes out cream.
+
+Not the cause, each a replay of the route:
+
+- the blend equations (the room uses ADD, MIN and REV_SUBTRACT, none of the signed ones), and logic ops (never on);
+- Disable Shadows, Disable MLAA and Disable Motion Blur off;
+- EDGE: every lighting native off, the output stage's native off, the job results cache off (`GOWA_EDGE_MEMO=0`),
+  the GPU lighting pass off (`GOWA_EDGE_GPU=0`); the General6 natives off (`GOWA_G6_NATIVE=0`);
+- FSR 3, frame generation and antialiasing off; depth EQUAL drawn as LESS_EQUAL; culling off with the faces
+  flipped; every occlusion query answered visible (`RSX_ZPASS=0`);
+- the dialog stream's failed open (`BLISSBODY_W2_209.XVAG`): RPCS3's log has the same probe failing.
+
+Next: where the title takes the fog pass's colour from (a write watch on its `c0`), and why the illusion's
+atmosphere is not applied when Kratos goes in.
