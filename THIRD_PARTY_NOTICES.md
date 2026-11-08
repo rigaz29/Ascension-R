@@ -55,6 +55,13 @@ in `ps3recomp/third_party/smaa/`, for the "SMAA 1x" anti-aliasing option. MIT Li
 Copyright (C) 2013 Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and Diego
 Gutierrez; the full text is in that folder's `LICENSE.txt`.
 
+## Zstandard
+
+The runtime carries the library sources of [Zstandard 1.5.7](https://github.com/facebook/zstd/releases/tag/v1.5.7),
+unchanged, in `ps3recomp/third_party/zstd/` (its README lists the files taken). The D3D12 backend keeps its shader cache
+in one zstd frame. Zstandard is dual-licensed, BSD or GPLv2; it is used under the BSD license, Copyright (c) Meta
+Platforms, Inc. and affiliates; the full text is in that folder's `LICENSE`.
+
 ## Code taken from other ports
 
 Whenever code is copied from another repository, add it here with its source,

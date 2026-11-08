@@ -1567,7 +1567,9 @@ static void clear_shaders(void)
         toast_bad("No shader cache in the settings");
         return;
     }
-    static const wchar_t* const ext[] = { L"", L".pso", L".dxil", L".dxil.pso" };
+    /* Each compiler's pack and journal, what a fold cut short leaves, and the pipelines from before the store. */
+    static const wchar_t* const ext[] = { L"", L".journal", L".tmp", L".journal.tmp", L".pso",
+                                          L".dxil", L".dxil.journal", L".dxil.tmp", L".dxil.journal.tmp", L".dxil.pso" };
     enum { N = sizeof ext / sizeof ext[0], F = GAME_PATH_MAX + 16 };
     static wchar_t list[N * F + 1];     /* for the shell: one after the other, two zeros at the end */
     wchar_t base[GAME_PATH_MAX];

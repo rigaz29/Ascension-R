@@ -1,7 +1,7 @@
 # Precompiling every shader, and a smaller cache: review (2026-11-08)
 
 The player asked whether all of the game's shaders could be precompiled (as an option), and whether the
-cache could be compressed so it does not grow too large. Review only; nothing implemented.
+cache could be compressed so it does not grow too large. A is built (the last section); B, C and D are not.
 
 ## What there is now
 
@@ -22,8 +22,8 @@ What is on disk:
 | `logs/edge-ana/fightcache/dx2.bin.dxil` (bench) | 2,370 programs, 1,920 distinct | 26.7 MB |
 | `logs/edge-ana/fightcache/dx2.bin.dxil.pso` (bench) | 6,143 pipelines | 102.2 MB |
 
-The player's folder also holds the FXC cache from before DXC (`d3d12_shader_cache.bin` 126.6 MB, `.pso`
-58.2 MB, 11-05/06), no longer read.
+The player's folder also held the FXC cache from before DXC (`d3d12_shader_cache.bin` 126.6 MB, `.pso`
+58.2 MB, 11-05/06), no longer read; it went to the Recycle Bin.
 
 ### Where the size goes
 
@@ -120,3 +120,50 @@ So the programs can be found without playing. What it would take:
 A first: it fixes the size whatever comes after, and removes the 6,143 cap that already loses pipelines.
 Then B, which costs little. C needs the spike to say whether its hit rate is worth the work; D reuses
 C's record parser.
+
+## A, built
+
+The store is in `libs/video/rsx_d3d12_backend.c` ("Compiled guest shaders on disk"), with zstd 1.5.7 in
+`ps3recomp/third_party/zstd/`.
+
+- Each program is kept once, under a hash of its bytes (FNV-1a 64). Sources (SRCK) and pipelines (PIPE) name
+  programs by that hash. Bytes under a known hash are compared before they are taken, so one program never stands
+  for another.
+- `<file>` is the pack: the whole store in one zstd frame (level 19, long-distance matching, checksum).
+  `<file>.journal` takes each new record as it is made.
+- A fold packs the store again on a thread of its own, at idle priority. It runs when:
+  - the journal has passed an eighth of the pack (4 MB at least);
+  - the pack is damaged;
+  - the files are from before the store.
+- After a fold the journal starts over, under a new id, with what was appended while the fold ran. The pack records
+  how much of which journal it holds, so a fold cut short between the two steps loses nothing and repeats nothing.
+- A record cut short ends the read, and the journal is cut back to the records before it.
+- A file that is there but cannot be read (open elsewhere, out of memory) stops the fold for that session, and a
+  journal that cannot be read is left alone: neither can then overwrite what is in them.
+- The pipeline table grows, and the store keeps every pipeline. Built pipelines cost memory, though, so the table
+  holds at most 8,192 built (`D3D12_PSO_CACHE_MAX`). The start builds the most recently used first: a session notes
+  each pipeline it uses and journals the notes (USED) every 10 s.
+- Clear shaders in the launcher takes the journal and a cut-short fold's `.tmp` files too.
+
+### What it gives
+
+| Cache | Before | After | Holds | Packed in |
+|---|---|---|---|---|
+| The player's (a copy) | 83.0 MB | 5.9 MB | 2,287 programs, 2,290 sources, 2,309 pipelines | 11.3 s |
+| The fight bench's (a copy) | 128.9 MB | 4.8 MB | 1,920 programs, 2,370 sources, 6,143 pipelines | 9.1 s |
+
+`tools/shader_cache_check.py` read both packs against their old files. Every source and pipeline was there with
+the same bytes, every program under the hash of its bytes, and no record was damaged.
+
+The fight bench (FSR 1, frame generation off, 1600x900, one run each):
+
+- Reading the store at the start: 230 ms from the old files, 58 ms from the pack. No program was compiled in a warm
+  run.
+- Building the 6,143 pipelines: 1.27 s on the pipeline cache's thread. They took 373 MB more while they were built,
+  and the run peaked at 4,340 MB, against 4,059 MB with `D3D12_PSO_CACHE_MAX=1`.
+- Frame rate: medians 35.50 (the converting run), 33.39 (warm) and 32.79 (`MAX=1`). Before the store,
+  `rtn1` gave 35.23. The runs' timing against the fight differed, so these sit within one run's spread.
+- From an empty cache, the fight compiled 502 programs into a 6.1 MB journal. The next start folded it to 1.3 MB
+  in 1.5 s, and 458 KB that came in during that run stayed in the new journal.
+- A journal cut short and a pack held open by another process: the journal was cut back to its last whole record,
+  and the pack was neither folded nor changed (same SHA-256).

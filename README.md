@@ -47,6 +47,8 @@ on every disk; it starts by itself when the game is not where the settings say.
 `build` copies `dxcompiler.dll` and `dxil.dll` from the Windows SDK next to the exe, and guest shaders compile with
 them. Without the two files they compile with D3DCompile, about 2.4 times slower. `graphics.shader_compiler = fxc`
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
+Each cache keeps every program once and is packed with zstd: 2,287 programs and 2,309 pipelines take 5.9 MB, where
+the files before took 83 MB. A cache from an older build is converted at the first start, on a thread of its own.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks
