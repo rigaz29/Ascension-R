@@ -254,7 +254,7 @@ GPU shows 35-39% in the fight, so this is latency, not yet the limit.
 ### The pointer and the taskbar
 
 With the render thread on, the player saw the pointer and the taskbar flash over the borderless
-window. A watcher from outside (`winmon.py` in the scratchpad: every ~2 ms the foreground,
+window. A watcher from outside (`logs/edge-ana/tools/winmon.py`: every ~2 ms the foreground,
 `IsHungAppWindow`, the cursor, `SHQueryUserNotificationState` and the taskbar's z-order, gate,
 FSR 3.1 with frame generation and VSync) found the window hung for 4 to 900 ms every ~5.5 s: 23
 times in 140 s, the foreground lost 43 times, the taskbar topmost again 11% of the time. With the
