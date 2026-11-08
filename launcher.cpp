@@ -22,6 +22,8 @@
  * starts looking by itself. Either sets the two links the port reads it through.
  *
  * Clear shaders, down the sidebar, moves the compiled shaders to the Recycle Bin.
+ * Precompile shaders, above it, compiles every vertex shader in the game's
+ * archives into the shader cache (precompile.cpp), in a process of its own.
  *
  * This file also holds this port's defaults (gowa_port_defaults), so the
  * game and the Defaults button take them from the same tables.
@@ -872,7 +874,8 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
  * -----------------------------------------------------------------------*/
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
-    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_DDITEM = 9000,
+    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE,
+    H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
 static Hit s_hit[400];
@@ -886,6 +889,23 @@ static int s_dd_top;             /* the first entry shown */
 static char s_toast[64];
 static int s_toast_bad;          /* not good news: red, with a cross */
 static ULONGLONG s_toast_until;
+
+/* Precompile shaders, while it runs (pc_start). */
+enum { WM_PRECOMPILE = WM_APP + 2 };
+static struct {
+    HANDLE proc, reader, out;          /* the child, the thread reading its output, the pipe's end */
+    volatile LONG running;
+    volatile LONG phase, done, total;  /* 1 reading the archives, 2 compiling, 3 packing the cache */
+    char result[128];                  /* its "done" or "error", for the toast */
+    int ok;
+} s_pc;
+
+/* How far it is, 0 to 1: reading the archives the first 55%, compiling to 92%, then packing. */
+static float pc_frac(void)
+{
+    const float t = s_pc.total > 0 ? (float)s_pc.done / (float)s_pc.total : 0.0f;
+    return s_pc.phase == 1 ? 0.55f * t : s_pc.phase == 2 ? 0.55f + 0.37f * t : s_pc.phase == 3 ? 0.95f : 0.0f;
+}
 
 /* A tab whose card is taller than the window scrolls it, by the wheel: what it hides is not there to
  * click either. */
@@ -1057,7 +1077,21 @@ static void draw_sidebar(void)
         hit(r, id);
         y += 44.0f;
     }
-    /* Down at the bottom: the compiled shaders and the save folder. */
+    /* Down at the bottom: the compiled shaders and the save folder. Precompile shaders shows how far
+     * it is while it runs, with a bar under its name. */
+    const D2D1_RECT_F pc = R(14, WIN_H - 148, SIDE_W - 28, 40);
+    if (hovered(H_PRECOMPILE) && !s_pc.running) fill_rr(pc, 8, C_CARD);
+    text(L"\xE9F5", s_tf_icon, R(30, pc.top, 24, 40), s_pc.running ? C_GOLD : C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    if (s_pc.running) {
+        wchar_t lbl[48];
+        swprintf(lbl, 48, L"Precompiling %d%%", (int)(pc_frac() * 100.0f));
+        text(lbl, s_tf_ui, R(64, pc.top - 3, 160, 40), C_TEXT);
+        fill_rr(R(64, pc.top + 29, 150, 3), 1.5f, C_LINE);
+        fill_rr(R(64, pc.top + 29, 150 * pc_frac() + 1, 3), 1.5f, C_GOLD);
+    } else {
+        text(L"Precompile shaders", s_tf_ui, R(64, pc.top, 160, 40), C_TEXT2);
+    }
+    hit(pc, H_PRECOMPILE);
     const D2D1_RECT_F c = R(14, WIN_H - 104, SIDE_W - 28, 40);
     if (hovered(H_SHADERS)) fill_rr(c, 8, C_CARD);
     text(L"\xE74D", s_tf_icon, R(30, c.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
@@ -1608,6 +1642,133 @@ static void clear_shaders(void)
     else toast("Shaders cleared");
 }
 
+/* Precompile shaders: this exe again, with --precompile-shaders (precompile.cpp), its progress read from
+ * what it prints (s_pc). It reads the game's archives and compiles every vertex shader in them into the
+ * shader cache; meanwhile Play and Clear shaders wait, and closing the window stops it. */
+static void pc_line(const char* l)
+{
+    unsigned a = 0, b = 0, c = 0;
+    double sec = 0;
+    if (strncmp(l, "precompile: ", 12)) return;
+    l += 12;
+    if (sscanf(l, "read %u %u", &a, &b) == 2) {
+        s_pc.phase = 1; s_pc.done = (LONG)a; s_pc.total = (LONG)b;
+    } else if (sscanf(l, "compile %u %u", &a, &b) == 2) {
+        s_pc.phase = a < b ? 2 : 3; s_pc.done = (LONG)a; s_pc.total = (LONG)b;
+    } else if (sscanf(l, "done %u %u %u %lf", &a, &b, &c, &sec) == 4) {
+        if (a) snprintf(s_pc.result, sizeof s_pc.result, "Precompiled %u vertex shaders in %.0f s", a, sec);
+        else snprintf(s_pc.result, sizeof s_pc.result, "Vertex shaders already precompiled");
+        s_pc.ok = 1;
+    } else if (!strncmp(l, "error ", 6)) {
+        snprintf(s_pc.result, sizeof s_pc.result, "Not precompiled: %s", l + 6);
+    } else {
+        return;
+    }
+    PostMessageA(s_main, WM_PRECOMPILE, 0, 0);
+}
+
+static DWORD WINAPI pc_reader(LPVOID)
+{
+    char buf[4096], line[512];
+    size_t n = 0;
+    DWORD got = 0;
+    while (ReadFile(s_pc.out, buf, sizeof buf, &got, NULL) && got) {
+        for (DWORD i = 0; i < got; i++) {
+            if (buf[i] == '\n' || n + 1 >= sizeof line) {
+                line[n] = 0;
+                n = 0;
+                pc_line(line);
+            } else if (buf[i] != '\r') {
+                line[n++] = buf[i];
+            }
+        }
+    }
+    WaitForSingleObject(s_pc.proc, INFINITE);
+    DWORD code = 1;
+    if (GetExitCodeProcess(s_pc.proc, &code) && code != 0) s_pc.ok = 0;
+    if (!s_pc.result[0]) snprintf(s_pc.result, sizeof s_pc.result, "Not precompiled: it stopped (%lu)", code);
+    PostMessageA(s_main, WM_PRECOMPILE, 1, 0);
+    return 0;
+}
+
+/* Its end: the handles closed, and the toast. */
+static void pc_end(void)
+{
+    if (!s_pc.running) return;
+    WaitForSingleObject(s_pc.reader, INFINITE);
+    CloseHandle(s_pc.reader);
+    CloseHandle(s_pc.proc);
+    CloseHandle(s_pc.out);
+    s_pc.reader = s_pc.proc = s_pc.out = NULL;
+    s_pc.running = 0;
+    if (s_pc.ok) toast(s_pc.result);
+    else toast_bad(s_pc.result);
+}
+
+static void pc_start(void)
+{
+    if (s_pc.running) return;
+    if (!s_rc.elf_ok) {
+        s_tab = T_SYSTEM;
+        toast_bad("Set the game's folder first");
+        return;
+    }
+    const char* sc = ps3_settings_str("graphics", "shader_cache", "D3D12_SHADER_CACHE", NULL);
+    if (!sc || !*sc || ps3_settings_ieq(sc, "off")) {
+        toast_bad("No shader cache in the settings");
+        return;
+    }
+    if (MessageBoxW(s_main,
+                    L"Compile the game's vertex shaders now?\n\n"
+                    L"Every vertex shader in the game's archives goes into the shader cache, so none is compiled "
+                    L"while you play. It reads about 7 GB of the game's files and takes a minute or two; the cache "
+                    L"grows by a few MB. Fragment shaders are still compiled as the game reaches them.",
+                    L"Precompile shaders", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+    if (!save_all()) return;   /* it reads the settings Play would run with */
+    wchar_t exe[MAX_PATH];
+    if (!GetModuleFileNameW(NULL, exe, MAX_PATH)) return;
+    static wchar_t cmd[MAX_PATH + 1300];
+    swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%ls\" --precompile-shaders --settings \"%ls\"", exe,
+             W(ps3_settings_path()));
+    SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+    HANDLE rd = NULL, wr = NULL;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) {
+        toast_bad("Could not start the precompile");
+        return;
+    }
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si = {};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    PROCESS_INFORMATION pi = {};
+    const BOOL ok = CreateProcessW(exe, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(wr);
+    if (!ok) {
+        CloseHandle(rd);
+        toast_bad("Could not start the precompile");
+        return;
+    }
+    CloseHandle(pi.hThread);
+    s_pc.proc = pi.hProcess;
+    s_pc.out = rd;
+    s_pc.phase = s_pc.done = s_pc.total = 0;
+    s_pc.result[0] = 0;
+    s_pc.ok = 0;
+    s_pc.running = 1;
+    s_pc.reader = CreateThread(NULL, 0, pc_reader, NULL, 0, NULL);
+    if (!s_pc.reader) {   /* nothing would read it: stop it */
+        TerminateProcess(s_pc.proc, 1);
+        CloseHandle(s_pc.proc);
+        CloseHandle(s_pc.out);
+        s_pc.running = 0;
+        toast_bad("Could not start the precompile");
+    }
+}
+
+
 static void game_browse(void)
 {
     if (s_find.thread) {   /* a search under way gives way */
@@ -1647,6 +1808,10 @@ static void act(int id)
         return;
     }
     if (id >= H_PLAY) {
+        if (s_pc.running && (id == H_PLAY || id == H_SHADERS || id == H_PRECOMPILE)) {
+            toast("Precompiling shaders: a moment");
+            return;
+        }
         switch (id) {
         case H_PLAY:
             if (!s_rc.elf_ok) {
@@ -1664,6 +1829,7 @@ static void act(int id)
         case H_KEYS: if (!s_keys) open_keys(); break;
         case H_SAVES: open_saves(); break;
         case H_SHADERS: clear_shaders(); break;
+        case H_PRECOMPILE: pc_start(); break;
         case H_GAME_BROWSE: game_browse(); break;
         case H_GAME_AUTO:
             if (s_find.thread) s_find.stop = 1;
@@ -1840,6 +2006,10 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
             return 0;
         }
         break;
+    case WM_PRECOMPILE:
+        if (w == 1) pc_end();   /* it exited */
+        redraw();
+        return 0;
     case WM_GAME_FOUND:
         find_done();
         redraw();
@@ -1847,6 +2017,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
     case WM_TIMER: {
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
         if (s_find.thread) redraw();   /* the folder it is in */
+        if (s_pc.running) redraw();    /* how far the precompile is */
         static int tick;
         if (++tick % 4 == 0) {   /* every 2 s: a controller plugged in or out */
             const int pad = pad_connected();
@@ -2019,6 +2190,14 @@ extern "C" int gowa_launcher(void)
         DispatchMessageA(&msg);
     }
     KillTimer(s_main, 1);
+    if (s_pc.running) {   /* the window closed under a precompile: it stops (the cache drops a cut record) */
+        TerminateProcess(s_pc.proc, 1);
+        WaitForSingleObject(s_pc.reader, 5000);
+        CloseHandle(s_pc.reader);
+        CloseHandle(s_pc.proc);
+        CloseHandle(s_pc.out);
+        s_pc.running = 0;
+    }
     s_find.stop = 1;
     find_end();
     if (s_keys) DestroyWindow(s_keys);

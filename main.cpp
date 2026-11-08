@@ -1120,6 +1120,8 @@ extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
 extern "C" void gowa_title_patches_apply(void);
 extern "C" void gowa_cheats_apply(void);
 extern "C" void ps3_pad_tune(double stick_full, int flick_hold);
+/* precompile.cpp: the game's vertex programs into the shader cache, without the game. */
+extern "C" int gowa_precompile(void);
 
 /* A variable the title needs, unless the environment already has one. */
 static void env_default(const char* name, const char* value)
@@ -1323,16 +1325,20 @@ int main(int argc, char** argv)
 {
     /* gowa [--settings <file>] [--set <section.key=value>]... [--no-launcher] [<PPU ELF>]
      * The ELF defaults to [paths] elf in the settings. --no-launcher is for
-     * scripts: the settings window (launcher.cpp) is not shown. */
+     * scripts: the settings window (launcher.cpp) is not shown.
+     * --precompile-shaders: compile the game's vertex programs into the shader
+     * cache and quit, the game not run (precompile.cpp; the launcher's
+     * Precompile shaders). */
     const char* elf = NULL;
     const char* settings = NULL;
     char settings_buf[1100];
     const char* sets[32];
-    int nsets = 0, no_launcher = 0;
+    int nsets = 0, no_launcher = 0, precompile = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--settings") && i + 1 < argc)            settings = argv[++i];
         else if (!strcmp(argv[i], "--set") && i + 1 < argc)            { if (nsets < 32) sets[nsets++] = argv[++i]; else ++i; }
         else if (!strcmp(argv[i], "--no-launcher"))                    no_launcher = 1;
+        else if (!strcmp(argv[i], "--precompile-shaders"))             precompile = 1;
         else if (!elf)                                                 elf = argv[i];
     }
     if (!settings) { default_settings_path(settings_buf, sizeof settings_buf, argv[0]); settings = settings_buf; }
@@ -1351,6 +1357,10 @@ int main(int argc, char** argv)
         if (!dot || !eq || dot > eq) { printf("[settings] --set %s: expected section.key=value\n", sets[i]); continue; }
         *dot = 0; *eq = 0;
         ps3_settings_override(sk, dot + 1, eq + 1);
+    }
+    if (precompile) {
+        title_environment();   /* the environment the game runs in: the same shader cache keys */
+        return gowa_precompile();
     }
     /* The settings window, unless a script asked for none, or the player
      * turned it off and is not holding Shift. */

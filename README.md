@@ -52,6 +52,10 @@ the files before took 83 MB. A cache from an older build is converted at the fir
 The pipelines kept in it are built on several threads at the start, and the title waits for them, a third of a second
 here: no pipeline the cache has is then built in play. `graphics.pipeline_wait = off` (Build pipelines first, in the
 Graphics tab) lets the game go on while they build.
+Precompile shaders, in the launcher's sidebar, reads the game's archives and compiles every vertex shader in them into
+the cache before you play: 3,455 programs, about a minute and a half here, 3 MB more on disk. A session of the first
+level then compiled 4 vertex shaders where it had compiled 212. Fragment shaders are still compiled as the game reaches
+them: their text depends on the textures and state of each draw, which the files do not say.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks

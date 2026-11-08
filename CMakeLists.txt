@@ -268,12 +268,26 @@ add_executable(${PROJECT_NAME}
     poll_wait.cpp
     cheats.cpp
     patches.cpp
+    precompile.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}
     ${SPU_SOURCES}
     ${LIBSRE_SOURCES}
 )
+
+# zlib 1.3.1's inflate (zlib license, third_party/zlib), for precompile.cpp to read
+# the game's PSARC archives. Its own flags only: nothing goes target-wide (see the
+# SPU sources below).
+set(ZLIB_INFLATE_SOURCES
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/adler32.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/crc32.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/inffast.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/inflate.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/inftrees.c"
+    "${CMAKE_CURRENT_SOURCE_DIR}/third_party/zlib/zutil.c")
+set_source_files_properties(${ZLIB_INFLATE_SOURCES} PROPERTIES COMPILE_OPTIONS "-O2;-w")
+target_sources(${PROJECT_NAME} PRIVATE ${ZLIB_INFLATE_SOURCES})
 
 # The lifted SPU sources use bare #include "spu_context.h". Scope that include
 # directory (and their flags) to those TUs alone: adding it to the whole target

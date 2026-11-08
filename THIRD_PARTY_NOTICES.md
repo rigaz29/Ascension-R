@@ -55,6 +55,15 @@ in `ps3recomp/third_party/smaa/`, for the "SMAA 1x" anti-aliasing option. MIT Li
 Copyright (C) 2013 Jorge Jimenez, Jose I. Echevarria, Belen Masia, Fernando Navarro and Diego
 Gutierrez; the full text is in that folder's `LICENSE.txt`.
 
+## zlib
+
+`third_party/zlib/` carries the files of [zlib 1.3.1](https://github.com/madler/zlib/releases/tag/v1.3.1) that
+inflate needs, unchanged, from `zlib-1.3.1.tar.gz` (SHA-256
+`9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23`): `adler32.c`, `crc32.c`, `crc32.h`, `gzguts.h`,
+`inffast.c`, `inffast.h`, `inffixed.h`, `inflate.c`, `inflate.h`, `inftrees.c`, `inftrees.h`, `zconf.h`, `zlib.h`,
+`zutil.c`, `zutil.h`, `LICENSE` and `README`. `precompile.cpp` reads the game's PSARC archives with it. zlib
+license, Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler; the full text is in that folder's `LICENSE`.
+
 ## Zstandard
 
 The runtime carries the library sources of [Zstandard 1.5.7](https://github.com/facebook/zstd/releases/tag/v1.5.7),

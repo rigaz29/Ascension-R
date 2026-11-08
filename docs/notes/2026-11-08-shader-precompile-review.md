@@ -1,7 +1,8 @@
 # Precompiling every shader, and a smaller cache: review (2026-11-08)
 
 The player asked whether all of the game's shaders could be precompiled (as an option), and whether the
-cache could be compressed so it does not grow too large. A and B are built (the last two sections); C and D are not.
+cache could be compressed so it does not grow too large. A and B are built, and C for vertex programs (the last three
+sections); D is not.
 
 ## What there is now
 
@@ -205,3 +206,78 @@ runs into what the boot shows.
 - The whole fight with the wait on had a median of 34.49 fps (earlier runs: 33.4 to 37.5) and peaked at 4,347 MB.
   The intro movie closed at 30.7 s, as without the wait.
 - Not measured: a cold driver cache. Emptying it would have meant deleting the system's driver cache.
+
+## C: the spike, then vertex programs built
+
+### Where the programs are
+
+Both kinds of program sit in the WAD and AS files of the PSARC archives, each behind a header of the engine's own:
+
+| | Header at H | Program |
+|---|---|---|
+| Fragment | its size (u32), its texture coordinate mask (u32: FFFF, FC00, FFFE...), its control word (registers 2-7, with 0x8400), 0, then 0x80 | at H + 0x80, as the RSX reads it |
+| Vertex | its instruction count (u16), 0 (u16), the input and output masks (u32 each), 0020FFFF, then its offset (0x20 or 0x30) | at H + offset, big-endian words, bit 0 of the last word set in the last instruction only |
+
+- Only the WAD and AS entries are needed: about 7 GB unpacked of the 37 GB of archives (the rest is cinematics, audio
+  and languages).
+- A scan of every archive found 33,525 distinct fragment programs (by their instruction words) and 3,455 distinct
+  vertex programs.
+- A probe (`FP_VARIANTS`, removed again) logged every program text a fight session made: 323 fragment texts (281
+  programs) and 102 vertex texts. Of these, 243 of the 281 fragment programs and 94 of the 100 vertex programs were in
+  the files.
+- The fragment programs not found are post-processing ones of 157 to 172 instructions.
+
+### What a text depends on
+
+- **Vertex:** the code alone. The slot the title loads a program at changed none of the 102 texts. The raw-fetch text
+  is made from the plain one.
+- **Fragment:** also the draw's textures and state. Cube units (122 of 323 texts), volume units, the AA grid, the alpha
+  test and the sRGB output all come from the material and the target, not from the program.
+- From the program alone, 27% of the fragment texts would have been made exactly. Guessing variants raises that, but
+  multiplies the compiles:
+
+| Guessed per fragment program | Texts made | Compiles for the whole game |
+|---|---|---|
+| plain | 27% | ~34,000 |
+| + the alpha test | 38% | ~67,000 |
+| + a cube at the second-highest unit sampled | 62% | ~268,000 |
+
+The player chose vertex programs only.
+
+### What was built
+
+- `GowARecomp.exe --precompile-shaders` (`precompile.cpp`):
+  - reads each archive's WAD and AS entries in the order they lie (zlib 1.3.1's inflate, `third_party/zlib`);
+  - finds the vertex programs by their header;
+  - hands them to `rsx_d3d12_precompile_vertex_programs` in the backend.
+- The backend:
+  - makes each program's text, at slot 0, and its raw-fetch text;
+  - passes over those the cache has;
+  - compiles the rest on the logical processors less one, as a draw would (`d3d_compile_cached`);
+  - packs the cache once, at the end.
+- The device comes from the same adapter choice as the game's start (`d3d_device_create`), so the same compiler is
+  picked.
+- One process at a time keeps a shader cache on disk: a named mutex per cache, held for the process's life. A second
+  process reads it and keeps what it adds in memory, and the precompile refuses: "the game has the shader cache open".
+  It checks this before it reads the archives.
+- Precompile shaders, in the launcher's sidebar:
+  - runs it after a Yes, as a process of its own;
+  - reads its progress from what it prints and shows it under its name;
+  - toasts the result;
+  - keeps Play and Clear shaders waiting meanwhile;
+  - stops it if the window is closed.
+
+### Numbers
+
+| Run | Time | Result |
+|---|---|---|
+| From the command line, an empty cache | 88 s | 3,455 programs, 6,910 texts compiled, none failed |
+| From the launcher, an empty cache | 161 s | the same (the archives read cold from the hard disk) |
+| From the launcher again | 110 s | nothing to compile, the cache not rewritten |
+| With the cache held by another process | 5 s | refused |
+
+- The 6,910 texts are 61.0 MB unpacked and pack to 3.1 MB in 8.4 s. The game then reads the cache in 47 ms.
+- The fight from that cache compiled 4 vertex shaders. From an empty cache it compiled 212. Fragment shaders were
+  compiled as before: 318, against 289 + 30.
+- The slow compiles (over 100 ms) left in play are fragment programs.
+- The run peaked at 4,109 MB, against 4,057 MB from an empty cache: the cache keeps every program in memory.
