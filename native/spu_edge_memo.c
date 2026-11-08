@@ -117,25 +117,24 @@ static int memo_mode(void)
 }
 
 static int memo_resident_mode(void);
-/* GOWA_EDGE_SKIN: 1 on, 0 off (the default), 2 the check: every skinned job's vertexes worked out on
+/* GOWA_EDGE_SKIN: 1 on (the default), 0 off, 2 the check: every skinned job's vertexes worked out on
  * the CPU and compared with what the job packs.
  *
- * Off by default (2026-11-08). The game draws its skinned meshes twice, a depth pass and a lit pass
- * that tests EQUAL against the depth pass's depth, and the two jobs of one mesh are taken or left
- * here each on its own: in the prison of the damned (the opening), ~45% of skinned jobs stay on the
- * SPU (103,765 lit jobs never reach this path, 10,241 have more than 32 lights, 45,738 position jobs
- * never reach it either) while the rest are skinned in the vertex pass. The pass rounds as the GPU
- * does and the SPU toward zero, the depths differ in the last bit, the lit pass leaves holes, and the
- * colour target, never cleared, shows the frames before through them: Kratos and the walls in
- * trails. The gate and the fight, where it was measured (+4%), have no such split. On again needs
- * the pass's position the SPU's way, bit for bit (a try through doubles in cs_5_0 broke the mesh). */
+ * The game draws its skinned meshes twice, a depth pass and a lit pass that tests EQUAL against the
+ * depth pass's depth, and the two jobs of one mesh are taken or left here each on its own: in the
+ * prison of the damned (the opening), ~45% of skinned jobs stay on the SPU (103,765 lit jobs never
+ * reach this path, 10,241 have more than 32 lights, 45,738 position jobs never reach it either)
+ * while the rest are skinned in the vertex pass. So the pass works the position out the SPU's way,
+ * bit for bit, in integer operations (spu_edge_gpulight.c): with the GPU's own rounding the depths
+ * differed in the last bit and the lit pass left holes, through which the never cleared colour
+ * target showed earlier frames as trails (docs/notes/2026-11-08-prison-trails.md). */
 static int memo_skin_mode(void)
 {
     static volatile int m = -1;
     int v = m;
     if (v >= 0) return v;
     const char* e = getenv("GOWA_EDGE_SKIN");
-    v = e ? atoi(e) : 0;
+    v = e ? atoi(e) : 1;
     if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
     if (v == 1 && memo_resident_mode() != 1) v = 0;
     m = v;

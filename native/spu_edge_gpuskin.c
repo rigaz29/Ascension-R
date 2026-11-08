@@ -17,8 +17,10 @@
  *
  * Exact against the SPU but for the length: under its MXCSR the position is the job's, bit for bit
  * (GOWA_EDGE_SKIN=2 in the fight: 565 million vertexes), the tangent at most a unit off. 0xBBC8 scales by
- * an estimate and this by 1 / sqrt, so the normal is a few units of 32767 off. In the vertex pass
- * the rounding is the GPU's.
+ * an estimate and this by 1 / sqrt, so the normal is a few units of 32767 off. The vertex pass works
+ * the rows and the position out the same way, the SPU's rounding done in integer operations
+ * (spu_edge_gpulight.c): the game's depth pass and lit pass must land on the same depth, and either
+ * may be skinned there or on the SPU. Its normal and tangent keep the GPU's rounding.
  *
  * Only what the game was seen to do. A job that goes on to 0xF538 stays on the SPU (spu_edge_memo.c):
  * no skinned job in the gate or the fight does.
