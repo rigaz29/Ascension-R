@@ -49,6 +49,9 @@ them. Without the two files they compile with D3DCompile, about 2.4 times slower
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.
 Each cache keeps every program once and is packed with zstd: 2,287 programs and 2,309 pipelines take 5.9 MB, where
 the files before took 83 MB. A cache from an older build is converted at the first start, on a thread of its own.
+The pipelines kept in it are built on several threads at the start, and the title waits for them, a third of a second
+here: no pipeline the cache has is then built in play. `graphics.pipeline_wait = off` (Build pipelines first, in the
+Graphics tab) lets the game go on while they build.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks

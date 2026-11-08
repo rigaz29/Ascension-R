@@ -165,6 +165,9 @@ static Opt s_opt[] = {
     { T_GRAPHICS, "graphics", "render_thread", "on", "Render thread", 1, SW,
       "The GPU's work is recorded and shown on a thread of its own, beside the one that reads the game's "
       "commands: about 10% more frames where that one holds the game back." },
+    { T_GRAPHICS, "graphics", "pipeline_wait", "on", "Build pipelines first", 1, SW,
+      "At the start the game waits until the pipelines kept from earlier sessions are built, so none is built "
+      "while you play: a moment, a few seconds after a GPU driver update." },
     { T_CONTROLS, "input", "device", "auto", "Device", 0, LIST(k_dev, k_dev_n), k_dev_s,
       "Auto takes a controller when one is there, else the keyboard and mouse." },
     { T_CONTROLS, "input", "deadzone", "0.24", "Stick dead zone", 0, LIST(k_dz, k_dz_n), NULL,

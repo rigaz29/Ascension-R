@@ -1,7 +1,7 @@
 # Precompiling every shader, and a smaller cache: review (2026-11-08)
 
 The player asked whether all of the game's shaders could be precompiled (as an option), and whether the
-cache could be compressed so it does not grow too large. A is built (the last section); B, C and D are not.
+cache could be compressed so it does not grow too large. A and B are built (the last two sections); C and D are not.
 
 ## What there is now
 
@@ -167,3 +167,41 @@ The fight bench (FSR 1, frame generation off, 1600x900, one run each):
   in 1.5 s, and 458 KB that came in during that run stayed in the new journal.
 - A journal cut short and a pack held open by another process: the journal was cut back to its last whole record,
   and the pack was neither folded nor changed (same SHA-256).
+
+## B, built
+
+### What there was to win
+
+The start's build begins at the first guest pipeline, which comes on the boot's first logo, not at the title.
+With the driver's own cache warm it was over 1.1 s into the boot, about 28 s before the title (the intro movie
+closes at 30.7 s in the fight bench).
+
+A whole warm session was logged with `RSX_CENSUS=600 RSX_HITCH_MS=1000`: every present that skipped a draw or
+queued a build. The session ran from the boot through the menus and 140 s of the fight. It queued one build, at
+2.48 s on the first logo (0.8 ms of shader wait), and skipped no draw. So a wait changes nothing while the driver's
+cache is warm. It matters when the driver compiles every pipeline again (after a driver update), and the build then
+runs into what the boot shows.
+
+### What it does
+
+- The start's build runs on several threads (`D3D12_PSO_CACHE_THREADS`; half the logical processors, at most 8),
+  each taking the next pipeline in the order of last use.
+- `graphics.pipeline_wait` (on by default; "Build pipelines first" in the launcher's Graphics tab): the title waits
+  for the build where its first guest pipeline is asked for, before its first picture. The wait is 30 s at most,
+  and the window's messages are seen to meanwhile; without the render thread, this thread owns the window.
+- The builders run at normal priority while the title waits for them, below normal when it does not.
+- No progress screen: nothing is presented during the wait, and it is shorter than such a screen would be worth.
+  With the wait off, the overlay's "Building pipelines" ring shows the build as before.
+
+### Numbers (the fight bench's 6,143 pipelines, warm driver cache)
+
+| Run | Build | The title waited |
+|---|---|---|
+| One thread | 1,019 ms | 1.02 s |
+| Six threads | 319 ms | 0.32 s |
+| Six threads, render thread off | 314 ms | 0.31 s |
+| Six threads, the whole fight | 330 ms | 0.33 s |
+
+- The whole fight with the wait on had a median of 34.49 fps (earlier runs: 33.4 to 37.5) and peaked at 4,347 MB.
+  The intro movie closed at 30.7 s, as without the wait.
+- Not measured: a cold driver cache. Emptying it would have meant deleting the system's driver cache.
