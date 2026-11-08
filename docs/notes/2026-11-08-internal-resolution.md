@@ -61,6 +61,24 @@ default, as at 720p it only adds geometry. One run at 2 with it on showed nothin
 without it, whose camera differs a little, and it did not slow that run (32.2, 33.1, 34.2 against 30.5, 31.1, 29.7). A
 scene with thin geometry far away could still show gaps without it.
 
+## The crash found in play (2026-11-09)
+
+A session at 1.5 with FSR 3.1 and frame generation froze 60 s into the CYN050 cutscene and closed 18 s later. The log had
+`pipeline refused (0x887A0005)` over and over, then a crash on frame generation's thread inside the NVIDIA driver, which
+only followed from the device being gone.
+
+`blit_rt_copy` scaled a copy's position and size apart. An odd position and an odd size both rounded up, and the box
+reached one pixel past the target: 1547 + 374 on one 1920 wide. The device went two frames later with
+`DXGI_ERROR_INVALID_CALL`. The copy now goes by its edges, clamped to both targets. No other copy rounds: the rest take
+sizes already held to the resource.
+
+It came back from the player's last autosave, with the save slot picked on the d-pad and their presses before the cutscene
+repeated. With the fix the same route ran 230 s from the load, through the cutscene and into CYN100, with no error.
+
+A lost device now writes one line to the session log, `[D3D12] device lost, seen ...: reason 0x...`, which this crash
+needed and did not have. `D3D12_DRED=1` adds what the GPU was doing and any faulting address. It showed nothing here, as a
+rejected call is not a GPU fault.
+
 ## What it does not cover
 
 - A program with more inline constants than the buffer holds is compiled with them, and has no `fp_alpha.w`. If it reads
