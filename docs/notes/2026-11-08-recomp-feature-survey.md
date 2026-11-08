@@ -14,8 +14,9 @@ Not candidates: instruction hooks (`ppu_lifter --insn-hooks`, `scripts/ppu_hooks
 
 ## In order of work
 
-1. **A profile of the code that was missed, read by the next lift.** The executable records what fell to the
-   interpreter or had no lifted code, and the next build compiles it. Today this is done by hand with
+1. **A profile of the code that was missed, read by the next lift.** Done, see
+   [the note](2026-11-08-missed-code-profile.md). The executable records what fell to the
+   interpreter or had no lifted code, and the next build compiles it. Until then this was done by hand with
    `SPU_INTERP_STATS`, `SPU_INTERP_BYSIG` and `SPU_DMA_RANGE`, and a PPU call to code that was not lifted only logs
    a line (`ppu_unlifted_stub`). The 20 EDGE pieces behind the brothel room's 3.5 frames a second were found that
    way ([the note](2026-11-08-brothel-illusion.md)).

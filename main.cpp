@@ -1128,8 +1128,14 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
  * Beside it, session-<date>-<time>.pad records what the game read from the
  * pad (cellPad_record_to in cellPad.c), so a scene reached in play can be
  * reached again by PAD_REPLAY.
+ *
+ * logs/missed_code.txt keeps, over the sessions, the code that ran without a
+ * lift of it (ps3_missed_code_to in runtime/diag/missed_code.c); `gowa.py
+ * lift` reads it. PS3_MISSED_CODE=<file> records to that file instead, in any
+ * run, and =0 not at all.
  * -----------------------------------------------------------------------*/
 extern "C" void cellPad_record_to(const char* path);
+extern "C" void ps3_missed_code_to(const char* path);
 
 static char s_log_path[1100];
 
@@ -1187,6 +1193,11 @@ static void session_log(const char* settings_path)
     if (pl > 4) {
         memcpy(pad + pl - 4, ".pad", 4);
         cellPad_record_to(pad);
+    }
+    if (!getenv("PS3_MISSED_CODE")) {
+        char missed[1200];
+        snprintf(missed, sizeof missed, "%s\\missed_code.txt", dir);
+        ps3_missed_code_to(missed);
     }
     HANDLE con = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (con != INVALID_HANDLE_VALUE) {
@@ -1477,6 +1488,8 @@ int main(int argc, char** argv)
         s_prev_crash = SetUnhandledExceptionFilter(crash_report);
     }
 #endif
+    { const char* m = getenv("PS3_MISSED_CODE");
+      if (!precompile && m && *m && strcmp(m, "0")) ps3_missed_code_to(m); }
 #if defined(PORT_SPU_PGO_GEN)
     CreateThread(NULL, 0, pgo_writer, NULL, 0, NULL);
 #endif

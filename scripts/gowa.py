@@ -5,6 +5,7 @@
     python scripts/gowa.py setup --game-dir DIR    link your installed game into vfs/ and gamedata/
     python scripts/gowa.py analyze                 loader, SPU images, HLE coverage -> analysis/
     python scripts/gowa.py lift                    PPU -> C++ -> recompiled/
+    python scripts/gowa.py missed                  what the sessions ran without a lift of it
     python scripts/gowa.py lle                     lift firmware/libsre.prx (SPURS queues)
     python scripts/gowa.py build                   configure + build with clang-cl -> build/
     python scripts/gowa.py run                     start the port, log to logs/
@@ -639,6 +640,48 @@ def lift_pic(elf):
     native_hooks(PIC_DIR, pic=True)
 
 
+# What the runs missed: SPU code that ran in the interpreter and PPU calls that found no lifted
+# function (ps3_missed_code_to, runtime/diag/missed_code.c). Every launcher session adds to this
+# file; `lift` takes it into the lists above before it lifts, and `missed` shows it.
+MISSED_PROFILE = os.path.join(BUILD, "logs", "missed_code.txt")
+PPU_EXTRA_FILE = os.path.join(ROOT, "scripts", "ppu_extra_functions.json")
+
+
+def missed_code(elf, profile, apply):
+    cmd = [sys.executable, os.path.join(TOOLS, "missed_code.py"), "--profile", profile, "--elf", elf,
+           "--pic-list", PIC_LIST, "--jobmods-manifest", os.path.join(JOBMODS_DIR, "jobmods_manifest.json"),
+           "--jobmods-extra", JOBMOD_EXTRA_FILE, "--functions", os.path.join(ANALYSIS, "GOWA.functions.json"),
+           "--ppu-extra", PPU_EXTRA_FILE]
+    if apply:
+        cmd.append("--apply")
+    if run(cmd):
+        die("missed_code failed")
+
+
+def cmd_missed(args):
+    """What the runs missed, and with --apply into the lists the next lift reads."""
+    if not os.path.exists(args.profile):
+        say("nothing missed so far: no %s" % os.path.relpath(args.profile, ROOT))
+        return 0
+    missed_code(need_elf(), args.profile, args.apply)
+    return 0
+
+
+def ppu_functions_with_extras(funcs):
+    """The function list for the PPU lift: the analysis's, or a copy with the PPU functions the
+    runs missed (scripts/ppu_extra_functions.json) in it."""
+    if not os.path.exists(PPU_EXTRA_FILE):
+        return funcs
+    sys.path.insert(0, TOOLS)
+    from missed_code import merge_ppu_functions
+    addrs = [int(e["addr"], 16) for e in json.load(open(PPU_EXTRA_FILE))]
+    merged = os.path.join(ANALYSIS, "GOWA.functions.extra.json")
+    with open(merged, "w", encoding="utf-8", newline="\n") as f:
+        json.dump(merge_ppu_functions(json.load(open(funcs)), addrs), f, indent=1)
+    say("PPU functions: %d the runs missed, on top of the analysis's" % len(addrs))
+    return merged
+
+
 def cmd_jobmods_entries(args):
     """Merge the [interp-entry] lines of runs made with
     SPU_INTERP_ENTRIES=4000-40000 into scripts/jobmods_extra.json: each entry
@@ -855,6 +898,8 @@ def cmd_patches(args):
 
 def cmd_lift(args):
     elf = need_elf()
+    if os.path.exists(MISSED_PROFILE) and not args.no_missed:
+        missed_code(elf, MISSED_PROFILE, True)
     if args.jobmods_only:
         update_title_patches_header(title_patches(elf))
         lift_wws_pm(elf)
@@ -866,6 +911,7 @@ def cmd_lift(args):
     imports = os.path.join(ANALYSIS, "GOWA.imports.json")
     if not (os.path.exists(funcs) and os.path.exists(imports)):
         die("run `analyze` first")
+    funcs = ppu_functions_with_extras(funcs)
     # Lifted into a staging folder, then only the files that changed replace
     # recompiled/'s (sync_dir), so the build after it is incremental.
     stage = RECOMPILED + ".new"
@@ -1432,6 +1478,11 @@ def main():
                    help="lift only the SPU code this port lifts itself: the Wws_Job policy module, "
                         "the job modules and the position-independent pieces "
                         "(spu/wwspm/, spu/jobmods/, spu/picfrags/; minutes, not the PPU)")
+    p.add_argument("--no-missed", action="store_true",
+                   help="leave out what the sessions missed (build/logs/missed_code.txt)")
+    p = sub.add_parser("missed", help="what the sessions ran without a lift of it, by what the next lift would add")
+    p.add_argument("--profile", default=MISSED_PROFILE, help="the profile (default build/logs/missed_code.txt)")
+    p.add_argument("--apply", action="store_true", help="write it into the lists now; `lift` does this by itself")
     p = sub.add_parser("jobmods-entries",
                        help="add the job-module interpreter entries of runs (SPU_INTERP_ENTRIES) as extra functions")
     p.add_argument("logs", nargs="+", help="run logs")
@@ -1498,7 +1549,7 @@ def main():
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "patches": cmd_patches, "lle": cmd_lle, "build": cmd_build,
-            "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "symbolize": cmd_symbolize,
+            "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
             "bench": bench.main, "frames": frames.main, "replay": cmd_replay}[args.cmd](args)
 
 

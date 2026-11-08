@@ -70,6 +70,11 @@ the pad. The playback waits at each file the recording saw opened until this run
 takes longer does not throw it off. A recorded run through the menus to Profile 3, played back, gave the same frames
 20 to 100 s after the load.
 
+`logs\missed_code.txt` keeps, over the sessions, the code that ran without a lift of it: SPU code in the interpreter and
+PPU calls that found no lifted function. `gowa.py missed` shows it, and the next `gowa.py lift` takes it into
+`scripts/spu_pic_pieces.json` and `scripts/jobmods_extra.json` first (`--no-missed`: not). `PS3_MISSED_CODE=<file>`
+records in any run, and `=0` not at all.
+
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
