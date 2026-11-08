@@ -105,6 +105,9 @@ static const char* const k_cap_s[] = { "Off", "20 fps", "30 fps" };
 static const char* const k_scale[] = { "bilinear", "sharp", "fsr1", "fsr3" };
 static const char* const k_scale_n[] = { "Bilinear", "Sharp bilinear", "AMD FSR 1", "AMD FSR 3.1" };
 static const char* const k_scale_s[] = { "Bilinear", "Sharp", "FSR 1", "FSR 3.1" };
+static const char* const k_rscale[] = { "1", "1.5", "2", "3", "native" };
+static const char* const k_rscale_n[] = { "720p, as the game draws it", "1080p", "1440p", "2160p", "The window's size" };
+static const char* const k_rscale_s[] = { "720p", "1080p", "1440p", "4K", "Window" };
 static const char* const k_aa[] = { "off", "smaa" };
 static const char* const k_aa_n[] = { "Off", "SMAA 1x" };
 static const char* const k_aa_s[] = { "Off", "SMAA" };
@@ -148,8 +151,11 @@ static Opt s_opt[] = {
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
       "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
+    { T_GRAPHICS, "graphics", "render_scale", "1", "Internal resolution", 0, LIST(k_rscale, k_rscale_n), k_rscale_s,
+      "What the scene is drawn at. Bloom, blur and shadow maps stay at the game's size. "
+      "FSR 3.1 and frame generation go no higher than the window." },
     { T_GRAPHICS, "graphics", "scaling", "bilinear", "Scaling", 0, LIST(k_scale, k_scale_n), k_scale_s,
-      "How the 720p picture is scaled up to the window. FSR 3.1 builds the detail from past frames, "
+      "How the picture is scaled to the window. FSR 3.1 builds the detail from past frames, "
       "in place of SMAA, and FSR 1 takes over where there is no scene." },
     { T_GRAPHICS, "graphics", "sharpening", "high", "FSR sharpening", 0, LIST(k_sharp, k_sharp_n), k_sharp_s,
       "The sharpening pass of FSR (RCAS). Only with FSR scaling." },
@@ -221,8 +227,9 @@ static const char* patch_desc(const char* id)
         { "disable_depth_of_field", "The blur of what lies outside the camera's focus." },
         { "disable_motion_blur", "Saves the blur's work. With Disable MLAA on it never reaches the screen "
                                  "anyway. FSR 3.1 and frame generation keep its draws, for what moves." },
-        { "disable_mesh_trimming", "For drawing above 720p, which this port does not do: here it only adds "
-                                   "geometry (3% slower at the first level, 11% at the gate)." },
+        { "disable_mesh_trimming", "Keeps the triangles the game drops as too thin for its 720p grid. For "
+                                   "Internal resolution above 720p: at 720p it only adds geometry (3% slower "
+                                   "at the first level, 11% at the gate)." },
         { "disable_shadows", "No dynamic shadows: the biggest saving, about 25% faster in the Megaera "
                              "fight." },
     };

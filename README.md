@@ -79,6 +79,16 @@ The GPU's work is recorded, submitted and presented on a thread of its own, `rsx
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
 
+## Internal resolution
+
+Internal resolution in the launcher's Graphics tab (`graphics.render_scale`) draws the scene above 720p: a number from 1
+to 4, or `native` for the window's size. Targets the size of the display are drawn larger. Bloom, blur and shadow maps
+stay at the game's size, and what the game reads back is brought down to it. FSR 3.1 and frame generation go no higher
+than the window, and the log says so. Otherwise a render larger than the window is scaled down to it. The first session
+at a new scale compiles part of the shaders again. Disable Mesh Trimming in Game patches is meant for this, though on the
+route it made no visible difference at 2x. The [note](docs/notes/2026-11-08-internal-resolution.md) has what was measured
+and what has not been tried.
+
 ## FSR 3.1
 
 Two rows in the launcher's Graphics tab, both off by default, measured on a GTX 1650 Ti. `build` copies their DLLs from

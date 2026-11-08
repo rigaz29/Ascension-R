@@ -26,8 +26,8 @@ Not candidates: instruction hooks (`ppu_lifter --insn-hooks`, `scripts/ppu_hooks
      offline and keyed by content.
    - [Xenon-Recomp](https://github.com/nimauria/Xenon-Recomp) (MIT): runtime observations fed to the next
      preparation. It has no playable title yet, so read it for the design only.
-2. **Internal resolution above 720p.** Everything is drawn at 720p and FSR 3.1 scales it, with the GPU at 25% in the
-   brothel room. [ps3recomp issue #546](https://github.com/sp00nznet/ps3recomp/issues/546) has a design from the
+2. **Internal resolution above 720p.** Done, see [the note](2026-11-08-internal-resolution.md). Everything was drawn
+   at 720p and FSR 3.1 scaled it, with the GPU at 25% in the brothel room. [ps3recomp issue #546](https://github.com/sp00nznet/ps3recomp/issues/546) has a design from the
    inFAMOUS 2 port: every colour and depth target scaled, viewports and scissors with them, fragment programs
    dividing WPOS back to guest pixels (one decompiler hook), guest readbacks point-sampled down to the guest's size,
    guest textures untouched. Also in [Ratchet](https://github.com/Re-TeRo17/ratchet-tod-recomp) (`RSX_SCALE`, 0.5x
