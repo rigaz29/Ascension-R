@@ -1124,28 +1124,25 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
  * kept, and the console says where. How the session ended is in it: "[rsx]
  * window closed", "[sysPrxForUser] sys_process_exit", "[quit]", or a crash's
  * code, address and stack ([crash], crash_report).
+ *
+ * Beside it, session-<date>-<time>.pad records what the game read from the
+ * pad (cellPad_record_to in cellPad.c), so a scene reached in play can be
+ * reached again by PAD_REPLAY.
  * -----------------------------------------------------------------------*/
+extern "C" void cellPad_record_to(const char* path);
+
 static char s_log_path[1100];
 
 static int log_name_cmp(const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); }
 
-static void session_log(const char* settings_path)
+/* The four newest files in dir matching pat kept, so five with this session's;
+ * their names sort by time. */
+static void session_prune(const char* dir, const char* pat_name)
 {
-    const DWORD ft = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE));
-    if (ft == FILE_TYPE_DISK || ft == FILE_TYPE_PIPE) return;
-    char dir[1100];
-    snprintf(dir, sizeof dir, "%s", settings_path);
-    char* sl = strrchr(dir, '\\');
-    char* fs = strrchr(dir, '/');
-    if (fs && (!sl || fs > sl)) sl = fs;
-    if (sl) sl[1] = 0; else dir[0] = 0;
-    strncat(dir, "logs", sizeof dir - strlen(dir) - 1);
-    CreateDirectoryA(dir, NULL);
-    /* The four newest kept, so five with this one; their names sort by time. */
     static char names[256][64];
     int n = 0;
     char pat[1200];
-    snprintf(pat, sizeof pat, "%s\\session-*.log", dir);
+    snprintf(pat, sizeof pat, "%s\\%s", dir, pat_name);
     WIN32_FIND_DATAA fd;
     HANDLE h = FindFirstFileA(pat, &fd);
     if (h != INVALID_HANDLE_VALUE) {
@@ -1160,6 +1157,22 @@ static void session_log(const char* settings_path)
         snprintf(p, sizeof p, "%s\\%s", dir, names[i]);
         DeleteFileA(p);
     }
+}
+
+static void session_log(const char* settings_path)
+{
+    const DWORD ft = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE));
+    if (ft == FILE_TYPE_DISK || ft == FILE_TYPE_PIPE) return;
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%s", settings_path);
+    char* sl = strrchr(dir, '\\');
+    char* fs = strrchr(dir, '/');
+    if (fs && (!sl || fs > sl)) sl = fs;
+    if (sl) sl[1] = 0; else dir[0] = 0;
+    strncat(dir, "logs", sizeof dir - strlen(dir) - 1);
+    CreateDirectoryA(dir, NULL);
+    session_prune(dir, "session-*.log");
+    session_prune(dir, "session-*.pad");
     SYSTEMTIME st;
     GetLocalTime(&st);
     snprintf(s_log_path, sizeof s_log_path, "%s\\session-%04u%02u%02u-%02u%02u%02u.log", dir, st.wYear, st.wMonth,
@@ -1168,6 +1181,13 @@ static void session_log(const char* settings_path)
     _dup2(_fileno(stdout), _fileno(stderr));   /* one file, one position */
     SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE)_get_osfhandle(_fileno(stdout)));
     SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(_fileno(stderr)));
+    char pad[1100];
+    snprintf(pad, sizeof pad, "%s", s_log_path);
+    const size_t pl = strlen(pad);
+    if (pl > 4) {
+        memcpy(pad + pl - 4, ".pad", 4);
+        cellPad_record_to(pad);
+    }
     HANDLE con = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
     if (con != INVALID_HANDLE_VALUE) {
         char m[1300];

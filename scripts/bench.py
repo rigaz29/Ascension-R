@@ -26,6 +26,9 @@ after the movie, windows from 175 s), ~85 s sooner: a run takes 3:20 instead
 of ~5:40. The level windows begin ~120 s after the process starts (for
 guestscope.py capture --at). --route T1,T2,... presses
 at fixed times after the movie instead, and counts from the movie.
+--replay <file> plays a pad recording (logs\\session-*.pad beside the
+settings, which each session from the launcher writes, or PAD_RECORD's)
+instead: no presses are made, and times count from the load it reaches.
 
 Why 80 s of level: between two runs of one executable the medians differ by
 ~1.3% (median of 123 pairs since 2026-10-30), and that comes from the runs,
@@ -86,6 +89,10 @@ def add_args(p):
                    help="Cross at these seconds after the movie (e.g. the old 45,80,105,130), "
                         "counting every later time from the movie; default: the menu route, "
                         "counting from the level load")
+    p.add_argument("--replay", default=None,
+                   help="a pad recording (logs\\session-*.pad beside the settings, or PAD_RECORD's) played "
+                        "in place of the menu route (PAD_REPLAY): no presses are made, and times count from "
+                        "the load the recording reaches")
     p.add_argument("--from", dest="win_from", type=int, default=None,
                    help="first window, seconds after the load (default 69), or after the movie "
                         "with --route (default the last press + 45)")
@@ -238,6 +245,8 @@ def run_once(exe, env_extra, a, out, tag):
     open(pad, "w").close()
     env = dict(os.environ)
     env.update({"GOWA_THREADS": "10", "D3D12_VSYNC": "0", "PAD_FILE": pad})
+    if a.replay:
+        env["PAD_REPLAY"] = os.path.abspath(a.replay)
     env.update(env_extra)
     log_out, log_err = os.path.join(out, tag + ".log"), os.path.join(out, tag + ".err")
     shots_dir = os.path.join(os.path.dirname(exe), "screenshots")
@@ -258,9 +267,10 @@ def run_once(exe, env_extra, a, out, tag):
             f.write("0x%04X %d" % (mask, n))
 
     # Skip the movie: Square every 5 s from 15 s until the video decoder closes.
+    # A replay presses what its recording did, so the movie is not waited for.
     mc = None
     nxt = 15.0
-    while p.poll() is None and t() < 240:
+    while not a.replay and p.poll() is None and t() < 240:
         if log_has("cellVdec] Close"):
             mc = t()
             break
@@ -270,12 +280,30 @@ def run_once(exe, env_extra, a, out, tag):
             press(SQUARE)
             nxt += 5
         time.sleep(0.5)
-    if mc is None:
+    if mc is None and not a.replay:
         rec["failed"] = "no movie" if p.poll() is None else "exited at %.0f s" % t()
         stop(p)
         return rec
-    rec["movie_closed_s"] = round(mc, 1)
-    if a.route_s is None:
+    if mc is not None:
+        rec["movie_closed_s"] = round(mc, 1)
+    if a.replay:
+        # The recording's own menu presses: the anchor is the load they reach.
+        loading = seen(log_err, LOADING)
+        anchor = None
+        while p.poll() is None and t() < 400:
+            if loading():
+                anchor = t()
+                break
+            time.sleep(0.25)
+        if anchor is None:
+            rec["failed"] = ("exited at %.0f s" % t() if p.poll() is not None
+                             else "the replay reached no load in 400 s")
+            stop(p)
+            return rec
+        rec["load_s"] = round(anchor, 1)
+        plan = []
+        level_from = anchor + 20
+    elif a.route_s is None:
         # The menu route: Cross until Continue Game starts loading the level.
         loading = seen(log_err, LOADING)
         presses, extra, last, anchor = list(MENU), 0, t(), None
@@ -513,7 +541,8 @@ def main(a):
     os.makedirs(out, exist_ok=True)
     result = {"started": datetime.datetime.now().isoformat(timespec="seconds"),
               "port": git_head(ROOT), "runtime": git_head(os.path.join(ROOT, "ps3recomp")),
-              "route": a.route or "menu", "anchor": "movie" if a.route else "load",
+              "route": ("replay " + a.replay) if a.replay else (a.route or "menu"),
+              "anchor": "movie" if a.route and not a.replay else "load",
               "from": a.win_from, "until": a.until, "runs": []}
     for name, exe, env in variants:
         result.setdefault("exes", {})[name] = {"path": os.path.relpath(exe, ROOT), "sha256": sha12(exe)}

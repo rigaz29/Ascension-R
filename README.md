@@ -63,6 +63,13 @@ the settings file; the five newest are kept, and the console window gives the pa
 end: `[rsx] window closed`, `sys_process_exit` from the game, or `[crash]` with the exception, its address and the
 crashed thread's stack (offsets in `GowARecomp.exe` read against `GowARecomp.map`).
 
+Beside each log, `session-<date>-<time>.pad` records what the game read from the pad, with the files it opened and the
+threads it started. `gowa.py bench --replay <file>` plays one back, on a copy of the saves it started from
+(`--set paths.hdd0=<copy>`), and takes the usual screenshots: a scene reached in play is reached again with no hand on
+the pad. The playback waits at each file the recording saw opened until this run has opened it too, so a load that
+takes longer does not throw it off. A recorded run through the menus to Profile 3, played back, gave the same frames
+20 to 100 s after the load.
+
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
