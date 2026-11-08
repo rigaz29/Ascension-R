@@ -251,3 +251,23 @@ Also seen: `rf_open` drains the GPU before it opens a batch ("full serialisation
 written for the samples), so in both modes a batch is recorded only after the last one has run. The
 GPU shows 35-39% in the fight, so this is latency, not yet the limit.
 
+### The pointer and the taskbar
+
+With the render thread on, the player saw the pointer and the taskbar flash over the borderless
+window. A watcher from outside (`winmon.py` in the scratchpad: every ~2 ms the foreground,
+`IsHungAppWindow`, the cursor, `SHQueryUserNotificationState` and the taskbar's z-order, gate,
+FSR 3.1 with frame generation and VSync) found the window hung for 4 to 900 ms every ~5.5 s: 23
+times in 140 s, the foreground lost 43 times, the taskbar topmost again 11% of the time. With the
+render thread off, never.
+
+A probe inside put every episode in `rt_wait`, 15-31 ms after the main loop's pump. The walk, which
+owns the window, waited for the render thread in `MsgWaitForMultipleObjects` for sent messages alone.
+Windows takes a thread blocked in such a wait, its queue unread for 5 s, for a hung one, and a
+`PeekMessage` on an empty queue does not count as reading it. Without the render thread the walk
+never waits like that.
+
+Now the walk takes every message while it waits (`rt_wait`, `rt_excl_begin`) and waits for input
+too, as a window's thread should while another presents (fork `5a96891a`). The watcher found no
+episode in 140 s. With the render thread on, closing the window only marks it, since that thread may
+be presenting into it; the main loop ends the process on the mark, as it did.
+
