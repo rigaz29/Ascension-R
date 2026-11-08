@@ -48,25 +48,18 @@ unsupported instruction.
 | The room, flips/s | 6.7, 3.7, 3.2 | 26.9, 25.2 |
 | Interpreted SPU steps in the room | 10-20 M/s | 0.1-0.2 M/s |
 
-## The colours (open)
+## The colours
 
-The room stays cream and navy at 25 to 30 frames a second. The player's RPCS3 screenshots of the same room show it
-dark purple, with a violet haze, warm lamps and normal skin.
-
-What the frame is made of (`RSX_CAP_SHOT` captures in the room):
-
-- The scene target `0x00E10000` holds the lit scene in an RGBM-like encoding: RGB divided by its largest channel,
-  the scale in alpha. In the room it is golden at the back, and the characters have normal skin. It is never
-  cleared; the room's material draws are all opaque, depth EQUAL after a depth pass.
-- One full-screen pass (`fp=0x01BB8202`) decodes it, adds the fog and tone maps into `0x00A8C000`. Its fog comes
-  from a 64x32x16 FP16 volume an SPU job writes every frame (PUTs from LS `0x0C840`/`0x0CC40`, pc `0x834C`), and
-  from a 256x1 ramp (an identity ramp in alpha, read through remap `0xAA1B`).
-- The pass's constants on the bridge and in the room differ in one value, 3.1999 against 3.2000. The fog colour
-  (`c0`) is (0.823, 0.882, 1.000) in both, the bridge's sky, and the volume holds the same values in both. The room
-  keeps the outdoor atmosphere: a light blue fog over a golden interior comes out cream.
+The room stayed cream and navy at 25 to 30 frames a second. The player's RPCS3 screenshots show it dark purple,
+with a violet haze, warm lamps and normal skin.
 
 Not the cause, each a replay of the route:
 
+- the fog pass (`fp=0x01BB8202`: it decodes the scene target `0x00E10000`, adds the fog and tone maps into
+  `0x00A8C000`). Read from both processes in the room with ReadProcessMemory (RPCS3's guest addresses for these
+  heaps are the port's minus `0x40000000`), its fog colour turns (0.522, 0.646, 1.000) about 49 s after the load in
+  both, and the SPU job's 64x32x16 fog volume holds the same values. Only the exposure differs, 4.0 here against
+  5.66, the title adapting to a brighter scene;
 - the blend equations (the room uses ADD, MIN and REV_SUBTRACT, none of the signed ones), and logic ops (never on);
 - Disable Shadows, Disable MLAA and Disable Motion Blur off;
 - EDGE: every lighting native off, the output stage's native off, the job results cache off (`GOWA_EDGE_MEMO=0`),
@@ -75,5 +68,39 @@ Not the cause, each a replay of the route:
   flipped; every occlusion query answered visible (`RSX_ZPASS=0`);
 - the dialog stream's failed open (`BLISSBODY_W2_209.XVAG`): RPCS3's log has the same probe failing.
 
-Next: where the title takes the fog pass's colour from (a write watch on its `c0`), and why the illusion's
-atmosphere is not applied when Kratos goes in.
+Where it was:
+
+- A RenderDoc capture of one room frame (`RENDERDOC_DLL`): 67% of the scene target's pixels hold one value,
+  (1.0, 0.863, 0.314, 0.659) in its RGB-over-largest-channel encoding, a colour of (5.6, 4.0, 0.45).
+- RenderDoc's pixel debugger on a wall pixel of its material draw: the lit term is 1e-6, the room is as dark as
+  RPCS3's, and the colour is 0.25 times an inline constant, (22.4, 16.0, 1.8).
+- The wall's program, found by its constants in RPCS3's memory, has the same 36 constants as the port's copy. Its
+  microcode, decoded by hand:
+
+  ```
+  ADD     R1.w, -H5.w, 0.5         first source with precision 4 (SRC1 [21:19])
+  ADD     R1.z, -H5.w, 1           the same
+  DIV_sat R3.w, R1.w, R1.z
+  ...                              smoothstep(R3.w), squared, into R0.w
+  MAD     H0.xyz, R0.w, (22.4, 16.0, 1.8), H0
+  ```
+
+- Precision 4 clamps the first source to [0, 1]. The decompiler clamped it after its negate, `saturate(-h5.w)`,
+  which is 0 for every positive H5.w, so the gold sheen weighed smoothstep(0.5) squared, 0.25, on every surface.
+  RPCS3's `GetSRC` clamps after the abs and before the negate: `-saturate(h5.w)` leaves a negative numerator, and
+  the sheen weighs 0 where H5.w is 1.
+
+## The colour fix
+
+`rsx_fp_decompiler.c` clamps the first source after its abs and before its negate, and
+`tests/test_fp_decompiler.c` checks the order (105 passed). The [-1, 1] clamp of precision 3 reads the same
+either way.
+
+| The player's route, replayed | Before | After |
+|---|---|---|
+| The room | cream and navy | dark purple, violet haze, warm lamps, normal skin |
+| Flips/s, the windows 40-50 s and 50-60 s from the load | 27.4, 24.1 | 26.2, 22.0 |
+
+One run each, the second after the shader cache had every new program. In the last window the frame waits on
+the CPU (PPU and SPU 100%, GPU 25%). Every program with a negated, clamped first source compiles again once: the
+bench's cache journal grew 6.3 MB over the first two runs, with "Compiling shaders" up on the way in.
