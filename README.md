@@ -58,6 +58,11 @@ level then compiled 4 vertex shaders where it had compiled 212. Fragment shaders
 them: their text depends on the textures and state of each draw, which the files do not say.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
+Each session started from the launcher (not from a script) writes its output to `logs\session-<date>-<time>.log` beside
+the settings file; the five newest are kept, and the console window gives the path. How the session ended is at its
+end: `[rsx] window closed`, `sys_process_exit` from the game, or `[crash]` with the exception, its address and the
+crashed thread's stack (offsets in `GowARecomp.exe` read against `GowARecomp.map`).
+
 The GPU's work is recorded, submitted and presented on a thread of its own, `rsx render`, beside the one that walks
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.

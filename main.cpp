@@ -1112,6 +1112,115 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
     snprintf(out, n, "%sgowa.ini", exe);
 }
 
+#ifdef _WIN32
+#include <io.h>
+/* ---------------------------------------------------------------------------
+ * The session's log
+ *
+ * Played from the launcher, the game's output went to its console and went
+ * with it: a session that ended by itself left nothing to read. When stdout
+ * is a console (not a file or a pipe a script reads), stdout and stderr now go
+ * to <the settings' folder>\logs\session-<date>-<time>.log, the five newest
+ * kept, and the console says where. How the session ended is in it: "[rsx]
+ * window closed", "[sysPrxForUser] sys_process_exit", "[quit]", or a crash's
+ * code, address and stack ([crash], crash_report).
+ * -----------------------------------------------------------------------*/
+static char s_log_path[1100];
+
+static int log_name_cmp(const void* a, const void* b) { return strcmp((const char*)a, (const char*)b); }
+
+static void session_log(const char* settings_path)
+{
+    const DWORD ft = GetFileType(GetStdHandle(STD_OUTPUT_HANDLE));
+    if (ft == FILE_TYPE_DISK || ft == FILE_TYPE_PIPE) return;
+    char dir[1100];
+    snprintf(dir, sizeof dir, "%s", settings_path);
+    char* sl = strrchr(dir, '\\');
+    char* fs = strrchr(dir, '/');
+    if (fs && (!sl || fs > sl)) sl = fs;
+    if (sl) sl[1] = 0; else dir[0] = 0;
+    strncat(dir, "logs", sizeof dir - strlen(dir) - 1);
+    CreateDirectoryA(dir, NULL);
+    /* The four newest kept, so five with this one; their names sort by time. */
+    static char names[256][64];
+    int n = 0;
+    char pat[1200];
+    snprintf(pat, sizeof pat, "%s\\session-*.log", dir);
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pat, &fd);
+    if (h != INVALID_HANDLE_VALUE) {
+        do {
+            if (n < 256 && strlen(fd.cFileName) < 64) snprintf(names[n++], 64, "%s", fd.cFileName);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+    }
+    qsort(names, (size_t)n, sizeof names[0], log_name_cmp);
+    for (int i = 0; i + 4 < n; i++) {
+        char p[1200];
+        snprintf(p, sizeof p, "%s\\%s", dir, names[i]);
+        DeleteFileA(p);
+    }
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    snprintf(s_log_path, sizeof s_log_path, "%s\\session-%04u%02u%02u-%02u%02u%02u.log", dir, st.wYear, st.wMonth,
+             st.wDay, st.wHour, st.wMinute, st.wSecond);
+    if (!freopen(s_log_path, "w", stdout)) { s_log_path[0] = 0; return; }
+    _dup2(_fileno(stdout), _fileno(stderr));   /* one file, one position */
+    SetStdHandle(STD_OUTPUT_HANDLE, (HANDLE)_get_osfhandle(_fileno(stdout)));
+    SetStdHandle(STD_ERROR_HANDLE, (HANDLE)_get_osfhandle(_fileno(stderr)));
+    HANDLE con = CreateFileA("CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+    if (con != INVALID_HANDLE_VALUE) {
+        char m[1300];
+        const int k = snprintf(m, sizeof m, "This session's log: %s\r\n", s_log_path);
+        DWORD w = 0;
+        WriteFile(con, m, (DWORD)k, &w, NULL);
+        CloseHandle(con);
+    }
+}
+
+/* An address as module+offset; the game's own offsets read against GowARecomp.map. */
+static void crash_where(const void* a, char* out, size_t n)
+{
+    HMODULE m = NULL;
+    char mod[MAX_PATH] = "?";
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)a, &m) && m)
+        GetModuleFileNameA(m, mod, sizeof mod);
+    const char* b = strrchr(mod, '\\');
+    snprintf(out, n, "%s+0x%llX", b ? b + 1 : mod, (unsigned long long)((uintptr_t)a - (uintptr_t)m));
+}
+
+/* An exception nothing handled: its code, address and stack into the log,
+ * then on as before (the runtime's filter flushes the log, Windows reports). */
+static LPTOP_LEVEL_EXCEPTION_FILTER s_prev_crash;
+static LONG WINAPI crash_report(EXCEPTION_POINTERS* ep)
+{
+    const EXCEPTION_RECORD* er = ep->ExceptionRecord;
+    char w[400];
+    crash_where(er->ExceptionAddress, w, sizeof w);
+    fprintf(stderr, "[crash] exception 0x%08lX at %s, thread %lu", (unsigned long)er->ExceptionCode, w,
+            (unsigned long)GetCurrentThreadId());
+    if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
+        fprintf(stderr, ", %s 0x%llX", er->ExceptionInformation[0] == 1 ? "writing" :
+                                       er->ExceptionInformation[0] == 8 ? "executing" : "reading",
+                (unsigned long long)er->ExceptionInformation[1]);
+    fprintf(stderr, "\n");
+    CONTEXT c = *ep->ContextRecord;
+    for (int i = 0; i < 32 && c.Rip; i++) {
+        crash_where((const void*)c.Rip, w, sizeof w);
+        fprintf(stderr, "[crash]   #%d %s\n", i, w);
+        DWORD64 img = 0;
+        PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &img, NULL);
+        if (!fe) break;   /* a frame without unwind data: the walk stops there */
+        PVOID hd = NULL;
+        DWORD64 est = 0;
+        RtlVirtualUnwind(UNW_FLAG_NHANDLER, img, c.Rip, fe, &c, &hd, &est, NULL);
+    }
+    fflush(stderr);
+    return s_prev_crash ? s_prev_crash(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+#endif
+
 /* launcher.cpp: this port's defaults, and the settings window. */
 extern "C" void gowa_port_defaults(void);
 extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
@@ -1342,6 +1451,12 @@ int main(int argc, char** argv)
         else if (!elf)                                                 elf = argv[i];
     }
     if (!settings) { default_settings_path(settings_buf, sizeof settings_buf, argv[0]); settings = settings_buf; }
+#ifdef _WIN32
+    if (!precompile) {
+        session_log(settings);
+        s_prev_crash = SetUnhandledExceptionFilter(crash_report);
+    }
+#endif
 #if defined(PORT_SPU_PGO_GEN)
     CreateThread(NULL, 0, pgo_writer, NULL, 0, NULL);
 #endif
