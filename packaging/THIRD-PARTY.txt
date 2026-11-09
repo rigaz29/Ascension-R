@@ -1,5 +1,5 @@
-Ascension-R @VERSION@ is under the MIT License: Ascension-R.txt in this folder.
-The other parts of this download keep their own licenses.
+The code written for this port is under the MIT License: Ascension-R.txt in this folder. That license does not cover the
+code translated from the game, which remains its owners'. The other parts of this download keep their own licenses.
 
 
 IN ASCENSION-R.EXE
