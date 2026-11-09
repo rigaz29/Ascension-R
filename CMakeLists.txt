@@ -250,18 +250,18 @@ if(JOBMOD_SOURCES)
 endif()
 
 add_executable(${PROJECT_NAME}
-    cpu_check.c
-    lfqueue.cpp
-    main.cpp
-    launcher.cpp
-    report.cpp
-    game_find.cpp
-    game_prepare.cpp
-    stubs.cpp
-    poll_wait.cpp
-    cheats.cpp
-    patches.cpp
-    precompile.cpp
+    port/cpu_check.c
+    port/lfqueue.cpp
+    port/main.cpp
+    port/launcher.cpp
+    port/report.cpp
+    port/game_find.cpp
+    port/game_prepare.cpp
+    port/stubs.cpp
+    port/poll_wait.cpp
+    port/cheats.cpp
+    port/patches.cpp
+    port/precompile.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}
@@ -287,7 +287,7 @@ if(GIT_FOUND)
         set(GOWA_FORK_COMMIT "${_git_out}")
     endif()
 endif()
-set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/report.cpp" PROPERTIES COMPILE_DEFINITIONS
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/port/report.cpp" PROPERTIES COMPILE_DEFINITIONS
     "GOWA_PORT_COMMIT=\"${GOWA_PORT_COMMIT}\";GOWA_FORK_COMMIT=\"${GOWA_FORK_COMMIT}\"")
 
 # zlib 1.3.1's inflate (zlib license, third_party/zlib), for precompile.cpp to read
@@ -384,7 +384,7 @@ if(SPU_SOURCES)
             list(APPEND spu_defs SPU_FLOAT_APPROX)
         endif()
         # main.cpp then sets SPU_FLOAT_RZ=1 whatever the environment says.
-        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" PROPERTIES
+        set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/port/main.cpp" PROPERTIES
             COMPILE_DEFINITIONS PORT_SPU_FLOAT_RZ_ONLY)
     endif()
     set_source_files_properties(${SPU_SOURCES} PROPERTIES
@@ -427,7 +427,7 @@ if(SPU_SOURCES)
         endif()
         list(GET _pgo_rt 0 _pgo_rt)
         target_link_libraries(${PROJECT_NAME} PRIVATE "${_pgo_rt}")
-        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp" APPEND PROPERTY
+        set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/port/main.cpp" APPEND PROPERTY
                      COMPILE_DEFINITIONS PORT_SPU_PGO_GEN)
     endif()
 endif()
@@ -435,10 +435,10 @@ endif()
 # app.rc carries the version block and the manifest, and needs a
 # resource compiler. Listing it as a source on a host that has none is not a
 # link error, it is a "no rule to make" for a file nothing can consume.
-if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
-    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
-    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/app.rc" PROPERTIES
-                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/version.h")
+if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
+    target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc" PROPERTIES
+                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/port/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/port/version.h")
     # The manifest comes from app.rc; the linker's own would be a second one.
     if(MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")

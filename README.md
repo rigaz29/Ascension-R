@@ -71,7 +71,7 @@ Anyone can help: by playing and reporting, or with changes to the port or to the
 ## Layout
 
 - `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, build, run, symbolize).
-- `main.cpp`, `launcher.cpp`, `stubs.cpp`, `CMakeLists.txt`: the port itself.
+- `port/`, `CMakeLists.txt`: the port itself.
 - `native/`: hand-written routines for the SPU code that costs the most.
 - `tools/hle_coverage.py`: which of the game's imports the runtime answers.
 - `docs/`: what the game is made of, what has been measured, what the launcher offers.

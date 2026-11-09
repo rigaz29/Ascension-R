@@ -1198,7 +1198,7 @@ def fsr1_license():
 def cmd_package(args):
     """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
     import check_repo  # noqa: E402  (scripts/check_repo.py)
-    with open(os.path.join(ROOT, "version.h"), encoding="utf-8") as f:
+    with open(os.path.join(ROOT, "port", "version.h"), encoding="utf-8") as f:
         version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
     out = os.path.join(DIST, "test" if args.test else version)
     if args.test:

@@ -98,7 +98,7 @@ class GameFind(unittest.TestCase):
         clang = shutil.which("clang-cl", path=env.get("PATH"))
         if not clang:
             raise unittest.SkipTest("no clang-cl")
-        cmd = [clang, "/nologo", "/O1", "/EHsc", "/std:c++17", "/I" + str(ROOT), src, str(ROOT / "game_find.cpp"),
+        cmd = [clang, "/nologo", "/O1", "/EHsc", "/std:c++17", "/I" + str(ROOT / "port"), src, str(ROOT / "port" / "game_find.cpp"),
                "/Fe" + cls.exe, "/Fo" + cls.tmp + "\\"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cls.tmp)
         if r.returncode:

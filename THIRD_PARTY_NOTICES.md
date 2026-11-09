@@ -2,7 +2,7 @@
 
 ## ps3recomp
 
-`CMakeLists.txt`, `main.cpp`, `stubs.cpp` and `config.toml` started as copies
+`CMakeLists.txt`, `port/main.cpp`, `port/stubs.cpp` and `config.toml` started as copies
 of `templates/project/` from [ps3recomp](https://github.com/sp00nznet/ps3recomp),
 and `tools/hle_coverage.py` imports ps3recomp's `tools/`. The runtime itself is
 the `ps3recomp/` submodule (fork: [rigaz29/ps3recomp](https://github.com/rigaz29/ps3recomp)).
@@ -61,7 +61,7 @@ Gutierrez; the full text is in that folder's `LICENSE.txt`.
 inflate needs, unchanged, from `zlib-1.3.1.tar.gz` (SHA-256
 `9a93b2b7dfdac77ceba5a558a580e74667dd6fede4585b91eefb60f03b72df23`): `adler32.c`, `crc32.c`, `crc32.h`, `gzguts.h`,
 `inffast.c`, `inffast.h`, `inffixed.h`, `inflate.c`, `inflate.h`, `inftrees.c`, `inftrees.h`, `zconf.h`, `zlib.h`,
-`zutil.c`, `zutil.h`, `LICENSE` and `README`. `precompile.cpp` reads the game's PSARC archives with it. zlib
+`zutil.c`, `zutil.h`, `LICENSE` and `README`. `port/precompile.cpp` reads the game's PSARC archives with it. zlib
 license, Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler; the full text is in that folder's `LICENSE`.
 
 ## Zstandard
