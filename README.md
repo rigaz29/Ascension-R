@@ -48,7 +48,8 @@ python -m venv ..\.venv
 ..\.venv\Scripts\python scripts\gowa.py run
 ```
 
-`doctor` lists anything that is missing. `run` starts the game straight away, with its log in `logs\`. To play, open
+`doctor` lists anything that is missing. The lift and the first build take about 13 minutes on a Ryzen 5 4600H. `run` starts
+the game straight away, with its log in `logs\`. To play, open
 `build\Ascension-R.exe`: it shows the launcher. [docs/FEATURES.md](docs/FEATURES.md) describes the launcher's options: shaders,
 FSR 3.1, frame generation, internal resolution, cheats, logs and recordings.
 

@@ -15,6 +15,7 @@ your paths and account name. The README says what goes in it.
 - Pictures that differ from a PS3 or RPCS3.
 - Speed. [docs/PERF.md](docs/PERF.md) has what has been measured and tried.
 - Gaps in the runtime: a fix there helps every game on ps3recomp.
+- The lifter test suites listed under `KNOWN_FAILING` in [the CI workflow](.github/workflows/ci.yml): each one is a bug to fix.
 
 ## Where a change goes
 
