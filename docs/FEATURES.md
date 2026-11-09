@@ -64,6 +64,15 @@ at a new scale compiles part of the shaders again. Disable Mesh Trimming in Game
 route it made no visible difference at 2x. The [note](notes/2026-11-08-internal-resolution.md) has what was measured
 and what has not been tried.
 
+## Ultrawide
+
+Ultrawide in the launcher's Display tab (`display.ultrawide`, off by default) draws the game to the full width of a screen
+wider than 16:9. The vertical view stays as it was and more shows at the sides. The HUD, menus and movies stay 16:9 in the
+middle, with black bars beside a movie or a menu that has no game behind it. In a window it goes by `display.window_size`
+and otherwise by the screen. It takes effect at the next start, and the first session compiles part of the shaders again.
+Frame generation works without its pass for moving objects at these widths. The
+[note](notes/2026-11-10-ultrawide.md) has what was measured and what has not been tried.
+
 ## FSR 3.1
 
 Two rows in the launcher's Graphics tab, both off by default, measured on a GTX 1650 Ti. `build` copies their DLLs from

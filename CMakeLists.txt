@@ -261,6 +261,7 @@ add_executable(${PROJECT_NAME}
     port/poll_wait.cpp
     port/cheats.cpp
     port/patches.cpp
+    port/ultrawide.cpp
     port/precompile.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}

@@ -156,6 +156,8 @@ static Opt s_opt[] = {
       "An even pace instead of the highest rate the PC reaches. With frame generation, off follows the monitor." },
     { T_DISPLAY, "display", "show_fps", "title", "Frame rate display", 0, LIST(k_fps, k_fps_n), k_fps_s,
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
+    { T_DISPLAY, "display", "ultrawide", "off", "Ultrawide", 1, SW,
+      "Draws the game to the full width of a wider screen. The HUD, menus and movies stay 16:9. Takes effect at the next start." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
       "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
     { T_GRAPHICS, "graphics", "gpu", "discrete", "Graphics card", 0, LIST(k_gpu, k_gpu_n), k_gpu_n, NULL },   /* gpu_detect */

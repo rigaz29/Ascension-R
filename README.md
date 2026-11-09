@@ -45,7 +45,7 @@ problems further in.
   itself.
 - **Picture:** internal resolution from 1x to 4x or native, AMD FSR 1 and FSR 3.1 scaling, FSR 3.1 frame generation, SMAA 1x and
   anisotropic filtering.
-- **Display:** windowed or borderless, VSync, a frame rate cap, and frame rate and load on screen.
+- **Display:** windowed or borderless, ultrawide, VSync, a frame rate cap, and frame rate and load on screen.
 - **Shaders:** a compressed cache, pipelines built before the title, and vertex shaders that can be compiled before you play.
 - **Game patches:** switch off MLAA, depth of field, motion blur, mesh trimming or dynamic shadows.
 - **Cheats:** damage to and from Kratos, max red orbs, infinite magic and items, infinite rage and double jumps.

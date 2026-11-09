@@ -1,6 +1,16 @@
 {
   "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops, the launcher's cheats (cheats.cpp) on a creature's damage",
   "hooks": [
+    {"addr": "0x003A3F90", "fn": "gowa_wide_aspect",
+     "note": "func_003A3DD8: r4 holds 16:9, about to go to +32 of the render settings (display.ultrawide)"},
+    {"addr": "0x003B05A4", "fn": "gowa_wide_fov",
+     "note": "func_003B0380: f1 the tangent of a perspective camera's field of view, about to make its half-width at +960"},
+    {"addr": "0x003AFE1C", "fn": "gowa_wide_fov",
+     "note": "func_003AFDC8: f1 an orthographic camera's half-width from func_0031446C, about to be kept in f31"},
+    {"addr": "0x003B06F4", "fn": "gowa_wide_fov",
+     "note": "func_003B0380: the same"},
+    {"addr": "0x003148F0", "fn": "gowa_wide_framing",
+     "note": "func_00314780: f2 the aspect, about to turn the camera controller's framing limits into angles"},
     {"addr": "0x0049D708", "fn": "gowa_poll_wait",
      "note": "func_0049D688: until the least of seven u16 progress counters the SPU jobs raise reaches a target"},
     {"addr": "0x0049B3A0", "fn": "gowa_poll_wait",
