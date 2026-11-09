@@ -66,7 +66,8 @@ scene with thin geometry far away could still show gaps without it.
 Not offered, as it gains nothing here. A trial at 0.5 (640x360, FSR 3.1 and frame generation, one run of each on the route)
 gave 30.3, 24.9, 26.9, 27.6, 23.4 frames a second against 30.2, 26.8, 26.7, 25.1, 23.6 at 1. The windows of the two runs
 start 5 s apart, and the difference is inside what runs at the same scale differ by. `ppu main` took 94.5% of a core at 0.5
-and 94.7% at 1, `rsx render` 33.6% and 33.7%. The limit is the CPU, and fewer pixels do not move it. The code takes a
+and 94.7% at 1, most of it [waiting for the SPU workers](2026-11-09-ppu-dead-saves.md), and `rsx render` 33.6% and 33.7%.
+The limit is the CPU, and fewer pixels do not move it. The code takes a
 scale below 1 with only the lower clamp in `rs_init` changed, should a weak GPU ever need it.
 
 ## The crash found in play (2026-11-09)

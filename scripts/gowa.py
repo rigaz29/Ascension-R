@@ -919,7 +919,7 @@ def cmd_lift(args):
     cmd = [sys.executable, os.path.join(TOOLS, "ppu_lifter.py"), elf,
            "--functions", funcs, "--hle-stubs", imports,
            "--output", stage, "--jobs", args.jobs, "--chunks", args.chunks,
-           "--lazy-flags", args.lazy_flags]
+           "--lazy-flags", args.lazy_flags, "--dead-saves", args.dead_saves]
     end = code_end(elf)
     if end:
         say("code ends at 0x%X (last executable section)" % end)
@@ -1474,6 +1474,9 @@ def main():
     p.add_argument("--lazy-flags", choices=("off", "on", "check"), default="on",
                    help="the volatile CR fields and XER[CA] in locals of each lifted function; check keeps "
                         "the exact accesses too and reports where the two differ")
+    p.add_argument("--dead-saves", choices=("off", "on", "poison"), default="off",
+                   help="no guest stores for register saves nothing reads back; poison writes a poison "
+                        "value there instead, to catch a reader the pass did not foresee")
     p.add_argument("--jobmods-only", action="store_true",
                    help="lift only the SPU code this port lifts itself: the Wws_Job policy module, "
                         "the job modules and the position-independent pieces "

@@ -32,7 +32,8 @@ Not candidates: instruction hooks (`ppu_lifter --insn-hooks`, `scripts/ppu_hooks
    dividing WPOS back to guest pixels (one decompiler hook), guest readbacks point-sampled down to the guest's size,
    guest textures untouched. Also in [Ratchet](https://github.com/Re-TeRo17/ratchet-tod-recomp) (`RSX_SCALE`, 0.5x
    to 8x) and [Demon's Souls](https://github.com/timboat/demons-souls-recomp) (`DES_RES_SCALE`, up to 4).
-3. **PPU registers as C locals.** [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) (MIT) has `ctr_as_local`,
+3. **PPU registers as C locals.** Measured first, and not built: the main thread is mostly waiting for the SPU workers,
+   with about 4.4 ms a frame in lifted code. See [the note](2026-11-09-ppu-dead-saves.md). [XenonRecomp](https://github.com/hedge-dev/XenonRecomp) (MIT) has `ctr_as_local`,
    `xer_as_local`, `reserved_as_local`, `cr_as_local`, `non_argument_as_local` and `non_volatile_as_local`, valid
    where the title keeps to the ABI, and reports 20 MB less code and several milliseconds a frame on Sonic Unleashed.
    `ppu_lifter` has `--lazy-flags` only, and `spu_lifter --loop-locals` covers single-block loops. Measure first: in
