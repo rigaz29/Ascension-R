@@ -1,15 +1,15 @@
 # Release plan: Ascension-R (2026-11-09)
 
-The goal is a public source repository and a download a player unpacks, points at their own game and plays. Nothing in the download is
+The goal is a public source repository, with the runtime as a submodule, and a download a player unpacks, points at their own game and plays. Nothing in the download is
 derived from the game.
 
 ## Decisions
 
 | | |
 |---|---|
-| Name | `Ascension-R`, one public repository: `gowa-recomp` renamed, `ps3recomp` folded in as a plain folder |
+| Name | `Ascension-R`: `gowa-recomp` renamed and made public. `ps3recomp` stays a submodule linked to `rigaz29/ps3recomp` |
 | Model | The zip holds the program and the tools. The game's part is built once on the player's PC, from the player's files |
-| Keys and firmware | None in the source or the download. The player's own RPCS3 decrypts `GOWA.SELF` and `libsre.sprx` |
+| Keys and firmware | The fork is not cleaned: it stays as upstream has it. The download holds no keys or firmware. The player's own RPCS3 decrypts `GOWA.SELF` and `libsre.sprx` |
 | Identity | Commits stay as they are, no history rewrite |
 | Version | `v0.1.0-alpha.1`, semantic versions after that |
 | Update | Replace the program's folder from Releases; the launcher only says a new version exists |
@@ -55,22 +55,22 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 
 ## Phases
 
-### 1. Clean the source: 2-3 days
+### 1. Prepare the source: 1-2 days
 
-- Take the decryption out: `SDAT_KEY` and `NP_OMAC_KEY_2` (`libs/filesystem/edat.c`), `runtime/ppu/sdata_decrypt.h`, `tools/pkg_extract.py`, the key in
-  `tools/extract_jobmods.py`, `pycryptodome`. `edat_resolve` no longer writes `.dec` files beside the game's. The game has no `.sdat` and one EDAT, which already fails for want
-  of a RIF key, so nothing should change. Test that.
-- `third_party/at3_standalone` is LGPL and linked statically. Move it to a DLL of its own. Add it to `THIRD_PARTY_NOTICES.md`, with FFmpeg and DXC.
+- A build switch, `PS3RECOMP_NO_DECRYPT`, leaves the decryption out of the release: the keys compiled from `libs/filesystem/edat.c` and `runtime/ppu/sdata_decrypt.h`, and the `.dec` files `edat_resolve`
+  writes beside the game's. It is the only change this plan makes in the fork; its files otherwise stay as upstream has them. The game has no `.sdat` and one EDAT, which already fails for
+  want of a RIF key, so nothing should change. Test that.
+- `third_party/at3_standalone` is LGPL and linked statically; its source is public through the submodule. List it in `THIRD_PARTY_NOTICES.md`, with FFmpeg and DXC, and put their licences in the zip.
 - `native/` stays: hand-written, and no constant table in it long enough to be copied data. Decide again if a lawyer says otherwise.
-- Exit: route, fight and the CYN050 cutscene as before; no key pattern in `git grep`.
+- Exit: route, fight and the CYN050 cutscene as before; the key bytes are not in the built exe.
 
-### 2. One repository: 1-2 days
+### 2. Rename: 1 day
 
-- Replace the submodule with a plain folder at fork `ad3336e8`, without `scratch/`. Upstream's `LICENSE` stays with it.
+- The submodule stays, on `rigaz29/ps3recomp`, branch `gowa`.
 - Rename what a player sees: the exe, the window title, the issue URL, the settings file (read the old name once). Internal `gowa_` names stay.
 - `gh repo rename Ascension-R`, still private.
-- CI: reject key patterns and game file types, and run the runtime's unit tests.
-- Exit: a fresh clone builds and runs on this PC.
+- CI on this repository: reject key patterns and game file types, and run the runtime's unit tests.
+- Exit: a fresh `git clone --recursive` builds and runs on this PC.
 
 ### 3. Split the program from the game: 5-8 days, the gate
 
@@ -99,7 +99,7 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 
 ### 6. Packaging: 2-3 days
 
-- `scripts/package.py` makes the zip and stops if it finds a lifted symbol, a key pattern or a game file type.
+- `scripts/package.py` makes the zip and stops if it finds a lifted symbol, a key pattern or a game file type. Only the lifters the pipeline runs go in `setup\tools`, not the fork's whole `tools` folder.
 - Host on the static CRT if the Phase 3 bench allows it, else the three Visual C++ DLLs beside it.
 - Release workflow on a tag: the host needs no game to build. SHA-256 file with the zip.
 
@@ -114,17 +114,17 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 - New README for players: what it is, requirements, install, status and known issues, disclaimer, credits. `docs/BUILDING.md` for developers.
 - `docs/notes` and `PLAN.md` out of the tree; they stay readable in history.
 - Make the repository public, tag `v0.1.0-alpha.1`, upload the zip.
-- Retire `rigaz29/ps3recomp` once its open pull requests are settled: it serves six decrypted firmware modules from upstream's history and the keys.
 
-Each of the last three is confirmed separately before it is done.
+Making it public and uploading the zip are each confirmed separately before they are done.
 
 ## Total
 
-About 21 to 33 working days, plus the testers. Phase 3 decides whether the small download is possible, so it comes before any setup work.
+About 21 to 31 working days, plus the testers. Phase 3 decides whether the small download is possible, so it comes before any setup work.
 
 ## Risks
 
 - A takedown is still possible: the notes and the native routines describe the game's code, and recompilation projects get notices. The download holds none of the game's code.
+- The linked fork is public with upstream's keys in its source and six decrypted firmware modules in its history. A takedown of the fork would also break `git clone --recursive` of this repository.
 - The player needs RPCS3 with the firmware installed and the game's licence, for the decrypt.
 - Only NPUA80918 1.12. Other regions and the disc release are not lifted.
 - 16 GB is assumed for the build. An 8 GB PC may need one or two jobs and a long wait.
