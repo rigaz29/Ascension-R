@@ -97,7 +97,9 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
   4. Check `GOWA.elf` by SHA-256. The `lle` step checks that libsre exports what the port needs, so another firmware's copy is fine if it does.
   5. The pipeline relocates and lifts libsre from there.
   - "I have decrypted files" stays as the other way in. With neither, a plain message says what is missing: RPCS3 with the firmware and the game's licence.
-  - Not tried yet on this project. The first thing to test here is `--decrypt` with the redirected folder, on a `.rap` copied into it.
+  - Tested on RPCS3 v0.0.43-20572: both files decrypted in 5 s, equal to ours by SHA-256, RPCS3's own folder unchanged. The redirected folder needs no firmware installed, only the `.rap` in
+    `dev_hdd0/home/00000001/exdata`. Without the `.rap`, RPCS3 still exits 0 and writes nothing, so setup checks for the output file, not the exit code.
+  - libsre cannot be skipped yet. With no image the game shows no frame in 90 s: `_cellSpursLFQueuePushBody` has no handler in the runtime, so Edge Zlib's queue gets nothing. With the image, the same fight runs at 36 fps.
 - Build with an estimate, progress, stop and resume. Then the shader precompile, then Play.
 - The player's game folder is only read.
 - Optional: copy the saves from RPCS3.
