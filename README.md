@@ -93,6 +93,11 @@ the game's images and sounds.
 
 If no new frame comes for 15 seconds, the log gets what each thread was doing, and again at 60 (`GOWA_FREEZE_WATCH=<seconds>`, `0` = off).
 
+## Which graphics card
+
+On a PC with two GPUs, Graphics card in the launcher's Graphics tab (`graphics.gpu`: `discrete`, the default, or `integrated`)
+says which one the game runs on, by the names Windows gives them. The row is not shown on a PC with one GPU.
+
 ## Internal resolution
 
 Internal resolution in the launcher's Graphics tab (`graphics.render_scale`) draws the scene above 720p: a number from 1

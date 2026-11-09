@@ -48,7 +48,7 @@
 #include <d2d1.h>
 #include <dwrite.h>
 #include <wincodec.h>
-#include <dxgi.h>
+#include <dxgi1_6.h>   /* IDXGIFactory6: which GPU is which */
 #include <dwmapi.h>
 #pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "d2d1.lib")
@@ -108,6 +108,8 @@ static const char* const k_cap_s[] = { "Off", "20 fps", "30 fps" };
 static const char* const k_scale[] = { "bilinear", "sharp", "fsr1", "fsr3" };
 static const char* const k_scale_n[] = { "Bilinear", "Sharp bilinear", "AMD FSR 1", "AMD FSR 3.1" };
 static const char* const k_scale_s[] = { "Bilinear", "Sharp", "FSR 1", "FSR 3.1" };
+static const char* const k_gpu[] = { "discrete", "integrated" };
+static const char* const k_gpu_n[] = { "Discrete", "Integrated" };
 static const char* const k_rscale[] = { "1", "1.5", "2", "3", "native" };
 static const char* const k_rscale_n[] = { "720p, as the game draws it", "1080p", "1440p", "2160p", "The window's size" };
 static const char* const k_rscale_s[] = { "720p", "1080p", "1440p", "4K", "Window" };
@@ -154,6 +156,7 @@ static Opt s_opt[] = {
       "On screen shows FPS, frame time and the CPU, GPU, PPU, SPU and RSX load." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
       "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
+    { T_GRAPHICS, "graphics", "gpu", "discrete", "Graphics card", 0, LIST(k_gpu, k_gpu_n), k_gpu_n, NULL },   /* gpu_detect */
     { T_GRAPHICS, "graphics", "render_scale", "1", "Internal resolution", 0, LIST(k_rscale, k_rscale_n), k_rscale_s,
       "What the scene is drawn at. Bloom, blur and shadow maps stay at the game's size. "
       "FSR 3.1 and frame generation go no higher than the window." },
@@ -498,7 +501,6 @@ static struct {
     int elf_ok;
     int profiles;
     char saves[1100];
-    char gpu[128];
     char vfs[1100];
     int pad;        /* an XInput controller is plugged in */
 } s_rc;
@@ -611,6 +613,55 @@ static int pad_connected(void)
     return 0;
 }
 
+/* The first hardware adapter of a preference. */
+static int gpu_first(IDXGIFactory6* f, DXGI_GPU_PREFERENCE pref, DXGI_ADAPTER_DESC1* d)
+{
+    int found = 0;
+    IDXGIAdapter1* a = NULL;
+    for (UINT i = 0; !found && SUCCEEDED(f->EnumAdapterByGpuPreference(i, pref, IID_PPV_ARGS(&a))); i++) {
+        found = SUCCEEDED(a->GetDesc1(d)) && !(d->Flags & DXGI_ADAPTER_FLAG_SOFTWARE);
+        a->Release();
+    }
+    return found;
+}
+
+/* The GPU Windows calls fast and the one it calls low-power: what the renderer asks for
+ * graphics.gpu, so the name shown is the one the game runs on. The same adapter twice is a PC with
+ * one GPU, and the row is not shown. */
+static struct { char name[2][128]; char desc[360]; int n; } s_gpus;
+
+static void gpu_detect(void)
+{
+    s_gpus.n = 0;
+    s_gpus.name[0][0] = 0;
+    IDXGIFactory6* f = NULL;
+    if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&f))) && f) {
+        DXGI_ADAPTER_DESC1 fast, low;
+        if (gpu_first(f, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, &fast)) {
+            WideCharToMultiByte(CP_UTF8, 0, fast.Description, -1, s_gpus.name[0], sizeof s_gpus.name[0], NULL, NULL);
+            s_gpus.n = 1;
+            if (gpu_first(f, DXGI_GPU_PREFERENCE_MINIMUM_POWER, &low) && memcmp(&fast.AdapterLuid, &low.AdapterLuid, sizeof(LUID))) {
+                WideCharToMultiByte(CP_UTF8, 0, low.Description, -1, s_gpus.name[1], sizeof s_gpus.name[1], NULL, NULL);
+                s_gpus.n = 2;
+            }
+        }
+        f->Release();
+    }
+    Opt* o = opt_find("graphics", "gpu");
+    if (s_gpus.n == 2) {
+        snprintf(s_gpus.desc, sizeof s_gpus.desc, "Discrete: %s. Integrated: %s, slower, but it uses less power and makes less heat.",
+                 s_gpus.name[0], s_gpus.name[1]);
+        o->desc = s_gpus.desc;
+    } else {
+        o->tab = -1;
+    }
+}
+
+static const char* gpu_chosen(void)
+{
+    return s_gpus.n == 2 && ps3_settings_ieq(opt_find("graphics", "gpu")->cur, "integrated") ? s_gpus.name[1] : s_gpus.name[0];
+}
+
 static void ready_check(void)
 {
     game_refresh();
@@ -625,22 +676,7 @@ static void ready_check(void)
             FindClose(f);
         }
     }
-    /* The adapter with the most memory of its own: the one a laptop's game runs on. */
-    snprintf(s_rc.gpu, sizeof s_rc.gpu, "%s", "");
-    IDXGIFactory1* fac = NULL;
-    if (SUCCEEDED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&fac)) && fac) {
-        SIZE_T best = 0;
-        IDXGIAdapter1* a = NULL;
-        for (UINT i = 0; fac->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
-            DXGI_ADAPTER_DESC1 d;
-            if (SUCCEEDED(a->GetDesc1(&d)) && !(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) && d.DedicatedVideoMemory > best) {
-                best = d.DedicatedVideoMemory;
-                WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, s_rc.gpu, sizeof s_rc.gpu, NULL, NULL);
-            }
-            a->Release();
-        }
-        fac->Release();
-    }
+    gpu_detect();
     s_rc.pad = pad_connected();
 }
 
@@ -1218,8 +1254,8 @@ static void draw_play(void)
     y += 34;
     {
         wchar_t b[300];
-        swprintf(b, 300, L"Graphics: %ls", s_rc.gpu[0] ? W(s_rc.gpu) : L"no Direct3D adapter found");
-        check_line(x0 + 22, y, cw - 44, s_rc.gpu[0] ? 1 : -1, b);
+        swprintf(b, 300, L"Graphics: %ls", gpu_chosen()[0] ? W(gpu_chosen()) : L"no Direct3D adapter found");
+        check_line(x0 + 22, y, cw - 44, gpu_chosen()[0] ? 1 : -1, b);
     }
     y += 34;
     {
