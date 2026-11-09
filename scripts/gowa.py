@@ -8,7 +8,7 @@
     python scripts/gowa.py missed                  what the sessions ran without a lift of it
     python scripts/gowa.py build                   configure + build with clang-cl -> build/
     python scripts/gowa.py ffmpeg                  build the small FFmpeg a release carries
-    python scripts/gowa.py package                 build and zip a release -> dist/<version>/
+    python scripts/gowa.py package prebuilt|kit    build and zip a release -> dist/<version>/<release>/
     python scripts/gowa.py run                     start the port, log to logs/
     python scripts/gowa.py run --trace             the same, with an ftrace of the session (stutter)
 
@@ -181,6 +181,20 @@ FFMPEG_CONFIGURE = ("--arch=x86_64", "--target-os=mingw32", "--prefix=/ffmpeg", 
 FFMPEG_HOME = os.path.join(os.path.dirname(ROOT), "ffmpeg-release")
 
 DIST = os.path.join(ROOT, "dist")
+# The two ways to make a release, both from this tree (`package prebuilt`, `package kit`):
+#   Prebuilt  the exe as `build` makes it, with the game's code translated into it. The player unpacks it and plays.
+#   Kit       the program without that code, and the tools that build it once on the player's PC from their own copy.
+RELEASES = {
+    "prebuilt": {"name": "Prebuilt", "license":
+                 "The code written for this port is under the MIT License: Ascension-R.txt in this folder. Ascension-R.exe also holds\n"
+                 "code translated from the game: that license does not cover it, and it remains its owners'. The other parts of this\n"
+                 "download keep their own licenses."},
+    "kit": {"name": "Kit", "license":
+            "The code written for this port is under the MIT License: Ascension-R.txt in this folder. No code in this download was\n"
+            "translated from the game by a tool. The setup builds that part on your PC from your copy of the game: that license\n"
+            "does not cover what it builds, which remains its owners' and stays on your PC. The other parts of this download keep\n"
+            "their own licenses."},
+}
 # What a release is built with: `build` keeps a bench's -D in its cache.
 RELEASE_CMAKE = {"CMAKE_BUILD_TYPE": "Release", "PS3RECOMP_NO_DECRYPT": "ON", "PS3RECOMP_FFMPEG_RUNTIME": "ON",
                  "PORT_SPU_JOBCAP": "OFF", "PORT_SPU_LINES": "OFF", "PORT_SPU_LS_DIAG": "OFF", "PORT_SPU_FLOAT_APPROX": "OFF",
@@ -1195,16 +1209,30 @@ def fsr1_license():
     return "\n".join(l.lstrip("/ ").rstrip() for l in lines[a:b + 1]) + "\n"
 
 
+def release_text(src, release, version):
+    """A file of packaging/ with what depends on the release and the version filled in."""
+    with open(os.path.join(ROOT, "packaging", src), encoding="utf-8") as f:
+        text = f.read()
+    for key, value in (("@VERSION@", version), ("@FFMPEG_VERSION@", FFMPEG_VERSION), ("@RELEASE@", RELEASES[release]["name"]),
+                       ("@LICENSE@", RELEASES[release]["license"])):
+        text = text.replace(key, value)
+    return text
+
+
 def cmd_package(args):
     """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
     import check_repo  # noqa: E402  (scripts/check_repo.py)
+    if args.release == "kit":
+        die("the Kit cannot be made yet: the game's part is still linked into the exe")
     with open(os.path.join(ROOT, "port", "version.h"), encoding="utf-8") as f:
         version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
-    out = os.path.join(DIST, "test" if args.test else version)
+    version_dir = os.path.join(DIST, version)
+    out = os.path.join(DIST, "test", args.release) if args.test else os.path.join(version_dir, args.release)
     if args.test:
         shutil.rmtree(out, ignore_errors=True)
     else:
-        if os.path.exists(out):
+        # Before the releases had names, a version's zip sat right in its folder.
+        if os.path.exists(out) or (os.path.isdir(version_dir) and any(f.endswith("-win64.zip") for f in os.listdir(version_dir))):
             die("%s exists: a version is packaged once, so change version.h" % out)
         problems = release_tree_problems()
         if problems:
@@ -1220,7 +1248,7 @@ def cmd_package(args):
         die("the build failed")
     check_release_build()
 
-    name = "Ascension-R-" + version
+    name = "Ascension-R-%s-%s" % (version, args.release)
     stage = os.path.join(out, name)
     lic = os.path.join(stage, "licenses")
     os.makedirs(lic)
@@ -1242,10 +1270,8 @@ def cmd_package(args):
     with open(os.path.join(lic, "AMD-FSR1.txt"), "w", encoding="utf-8") as f:
         f.write(fsr1_license())
     for src, to in (("README.txt", stage), ("THIRD-PARTY.txt", lic)):
-        with open(os.path.join(ROOT, "packaging", src), encoding="utf-8") as f:
-            text = f.read().replace("@VERSION@", version).replace("@FFMPEG_VERSION@", FFMPEG_VERSION)
         with open(os.path.join(to, src), "w", encoding="utf-8") as f:
-            f.write(text)
+            f.write(release_text(src, args.release, version))
 
     env = toolchain_env()
     problems = release_problems(stage, env)
@@ -1265,7 +1291,7 @@ def cmd_package(args):
     shutil.copy2(os.path.join(BUILD, "Ascension-R.map"), out)
     shutil.copy2(os.path.join(FFMPEG_HOME, FFMPEG_TARBALL), out)
     clang = subprocess.run([shutil.which("clang-cl", path=env.get("PATH")), "--version"], stdout=subprocess.PIPE, text=True).stdout
-    info = ["Ascension-R " + version + ("  TEST PACKAGE, not for release" if args.test else ""),
+    info = ["Ascension-R %s %s" % (version, RELEASES[args.release]["name"]) + ("  TEST PACKAGE, not for release" if args.test else ""),
             "port      " + git_text(ROOT, "rev-parse", "HEAD"),
             "ps3recomp " + git_text(PS3RECOMP, "rev-parse", "HEAD"),
             "exe SHA-256 " + sha256(os.path.join(stage, "Ascension-R.exe")),
@@ -1705,9 +1731,11 @@ def main():
     frames.add_args(p)
     p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
     p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
-    p = sub.add_parser("package", help="build and zip a release into dist/<version>/; nothing is uploaded")
+    p = sub.add_parser("package", help="build and zip a release into dist/<version>/<release>/; nothing is uploaded")
+    p.add_argument("release", choices=sorted(RELEASES),
+                   help="prebuilt: the game's code is in the exe, unpack and play; kit: the player's PC builds that part")
     p.add_argument("--jobs", default="3", help="parallel compile jobs (default 3 for 16 GB RAM)")
-    p.add_argument("--test", action="store_true", help="from the tree as it is, into dist/test/, which is replaced each time")
+    p.add_argument("--test", action="store_true", help="from the tree as it is, into dist/test/<release>/, which is replaced each time")
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,

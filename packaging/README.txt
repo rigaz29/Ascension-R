@@ -1,4 +1,4 @@
-Ascension-R @VERSION@
+Ascension-R @VERSION@ @RELEASE@
 
 A native Windows port of God of War: Ascension (PS3, NPUA80918, version 1.12), made by static recompilation.
 https://github.com/rigaz29/Ascension-R
