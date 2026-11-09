@@ -1,5 +1,5 @@
-# Everything made from the game stays on your machine. See PLAN.md,
-# "Repository rules". Never force-add any of these.
+# Everything made from the game stays on your machine. See CONTRIBUTING.md.
+# Never force-add any of these.
 vfs/
 gamedata/
 analysis/

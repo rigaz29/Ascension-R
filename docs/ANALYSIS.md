@@ -100,7 +100,7 @@ weight for a single-player boot:
 
 None of them has section headers, and their read-only data (strings) sits in the executable
 segment; the toolkit's SPU pipeline lifts them with reachable function detection (see
-[notes/2026-10-26-first-boot.md](notes/2026-10-26-first-boot.md)). What the first boots showed:
+[notes/2026-10-26-first-boot.md](https://github.com/rigaz29/Ascension-R/blob/notes-2026-11-09/docs/notes/2026-10-26-first-boot.md)). What the first boots showed:
 
 | Program | Size | Role |
 |---|---|---|

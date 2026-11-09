@@ -93,5 +93,5 @@ linker leaves the decoder out.
 ## Code taken from other ports
 
 Whenever code is copied from another repository, add it here with its source,
-commit and license before committing it. See [docs/REFERENCES.md](docs/REFERENCES.md)
+commit and license before committing it. See [CONTRIBUTING.md](CONTRIBUTING.md)
 for which sources may be copied and which may only be read.
