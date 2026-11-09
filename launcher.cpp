@@ -540,7 +540,7 @@ static struct {
 /* GOWA.SELF to GOWA.elf, on a thread of its own. */
 static struct {
     HANDLE thread;
-    volatile long step;                /* 1 downloading RPCS3, 2 decrypting */
+    GameProgress progress;
     int ok;
     int download;                      /* the player asked for RPCS3 to be downloaded */
     wchar_t rpcs3[GAME_PATH_MAX], rap[GAME_PATH_MAX], game[GAME_PATH_MAX], data[GAME_PATH_MAX];
@@ -558,6 +558,49 @@ static void data_file(wchar_t* out, size_t n, const wchar_t* name)
     if (wchar_t* s = wcsrchr(d, L'\\')) *s = 0;
     if (name[0]) swprintf(out, n, L"%ls\\%ls", d, name);
     else swprintf(out, n, L"%ls", d);
+}
+
+/* What the decrypting is doing; *frac is how far, negative when that is not known. */
+static int prep_line(wchar_t* b, size_t n, float* frac)
+{
+    const GameProgress& p = s_prep.progress;
+    const ULONGLONG now = GetTickCount64();
+    const int secs = (int)((now - p.phase_at) / 1000);
+    const wchar_t* tail = p.stop ? L" Stopping\x2026" : L"";
+    float f = -1.0f;
+    int level = 2;
+    switch (p.phase) {
+    case GP_DOWNLOAD: {
+        const double mb = p.done / 1048576.0, total = p.total / 1048576.0;
+        const int quiet = p.data_at ? (int)((now - p.data_at) / 1000) : secs;
+        if (p.total > 0) f = (float)((double)p.done / (double)p.total);
+        if (quiet >= 4 && p.total > 0) {
+            swprintf(b, n, L"Downloading RPCS3: %.1f of %.1f MB, no data for %d s%ls", mb, total, quiet, tail);
+            level = 0;
+        } else if (quiet >= 4) {
+            swprintf(b, n, L"Downloading RPCS3: no answer from the server for %d s%ls", quiet, tail);
+            level = 0;
+        } else if (p.speed > 0 && p.total > 0) {
+            wchar_t again[32] = L"";
+            if (p.retries) swprintf(again, 32, L", %ld reconnected", (long)p.retries);
+            swprintf(b, n, L"Downloading RPCS3: %.1f of %.1f MB, %.1f MB/s, about %d s left%ls%ls", mb, total, p.speed / 1048576.0,
+                     (int)((p.total - p.done) / p.speed), again, tail);
+        } else if (p.done > 0) {
+            swprintf(b, n, L"Downloading RPCS3: %.1f of %.1f MB%ls", mb, total, tail);
+        } else {
+            swprintf(b, n, L"Downloading RPCS3: connecting\x2026%ls", tail);
+        }
+        break;
+    }
+    case GP_VERIFY:  swprintf(b, n, L"Checking the download\x2026%ls", tail); break;
+    case GP_UNPACK:  swprintf(b, n, L"Unpacking RPCS3\x2026 %d s%ls", secs, tail); break;
+    case GP_COPY:    swprintf(b, n, L"Copying the game's files\x2026%ls", tail); break;
+    case GP_DECRYPT: swprintf(b, n, L"Decrypting the game\x2026 %d s%ls", secs, tail); break;
+    case GP_CHECK:   swprintf(b, n, L"Checking the result\x2026%ls", tail); break;
+    default:         swprintf(b, n, L"Starting\x2026%ls", tail); break;
+    }
+    if (frac) *frac = f;
+    return level;
 }
 
 static void game_links(void)
@@ -629,10 +672,7 @@ static int game_status(wchar_t* b, size_t n)
                  game_version());
         return 0;
     case GAME_NO_ELF:
-        if (s_prep.thread) {
-            swprintf(b, n, s_prep.step == 1 ? L"Downloading RPCS3 (37 MB)\x2026" : L"Decrypting the game\x2026");
-            return 2;
-        }
+        if (s_prep.thread) return prep_line(b, n, NULL);
         if (s_prep.err[0]) swprintf(b, n, L"%ls", s_prep.err);
         else swprintf(b, n, !s_prep.rap[0] && !s_prep.rpcs3[0] ? L"To decrypt the game this needs RPCS3 and its license file (.rap)"
                             : !s_prep.rap[0] ? L"To decrypt the game this needs its license file (.rap)"
@@ -975,7 +1015,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
     H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE, H_REPORT,
-    H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY,
+    H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP,
     H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
@@ -1252,6 +1292,21 @@ static void draw_chip(const wchar_t* s, float x, float y, float w)
     text(s, s_tf_small, r, C_TEXT, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
 }
 
+/* frac: how far, or negative when that is not known. */
+static void draw_progress(float x, float y, float w, float frac, int warn)
+{
+    const float h = 6.0f;
+    fill_rr(R(x, y, w, h), 3.0f, 0x3A3A44);
+    if (frac >= 0.0f) {
+        const float fw = w * (frac > 1.0f ? 1.0f : frac);
+        if (fw >= h) fill_rr(R(x, y, fw, h), 3.0f, warn ? C_WARN : C_GOLD);
+    } else {
+        const float t = (float)(GetTickCount64() % 1600) / 1600.0f;
+        const float at = t < 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+        fill_rr(R(x + (w - w * 0.25f) * at, y, w * 0.25f, h), 3.0f, warn ? C_WARN : C_GOLD);
+    }
+}
+
 static void check_line(float x, float y, float w, int state, const wchar_t* s)
 {
     /* state: 1 fine, 2 for information, 0 a warning, -1 missing */
@@ -1289,9 +1344,11 @@ static void draw_play(void)
     if (s_find.thread) {
         check_line(x0 + 22, y, cw - 44, 2, L"Looking for the game\x2026");
     } else if (s_prep.thread) {
-        wchar_t b[100];
-        game_status(b, 100);
-        check_line(x0 + 22, y, cw - 44, 2, b);
+        wchar_t b[160];
+        float f;
+        const int level = prep_line(b, 160, &f);
+        check_line(x0 + 22, y, cw - 44, level, b);
+        draw_progress(x0 + 54, y + 27, cw - 76, f, level == 0);
     } else if (!s_rc.elf_ok) {
         check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
                                                                            : L"Game not found");
@@ -1386,7 +1443,7 @@ static const float GAME_ROW_H = 106.0f, GAME_ROW_ASK_H = 46.0f;
 
 /* Whether the row asks for what the decrypting needs. */
 static int prep_asks(void) { return s_game.g.state == GAME_NO_ELF && !s_prep.thread && !s_find.thread; }
-static float game_row_h(void) { return GAME_ROW_H + (prep_asks() ? GAME_ROW_ASK_H : 0.0f); }
+static float game_row_h(void) { return GAME_ROW_H + (prep_asks() ? GAME_ROW_ASK_H : s_prep.thread ? 36.0f : 0.0f); }
 
 static void draw_game_row(float x, float y, float w)
 {
@@ -1407,6 +1464,13 @@ static void draw_game_row(float x, float y, float w)
         wchar_t b[GAME_PATH_MAX + 128];
         const int level = game_status(b, sizeof b / sizeof b[0]);
         check_line(x, y + 74, w, level, b);
+    }
+    if (s_prep.thread) {
+        wchar_t b[32];
+        float f;
+        const int level = prep_line(b, 32, &f);
+        draw_progress(x + 32, y + 112, w - 32 - 110, f, level == 0);
+        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_PREP_STOP, 0);
     }
     if (prep_asks()) {
         const float by = y + 106;
@@ -1702,14 +1766,8 @@ static DWORD WINAPI prepare_thread(LPVOID)
     wchar_t exe[GAME_PATH_MAX], err[320] = L"";
     int fetched = 0, ok = 1;
     swprintf(exe, GAME_PATH_MAX, L"%ls", s_prep.rpcs3);
-    if (!exe[0]) {
-        s_prep.step = 1;
-        ok = fetched = game_fetch_rpcs3(s_prep.data, exe, GAME_PATH_MAX, err, 320);
-    }
-    if (ok) {
-        s_prep.step = 2;
-        ok = game_prepare(s_prep.game, exe, s_prep.rap, s_prep.data, err, 320);
-    }
+    if (!exe[0]) ok = fetched = game_fetch_rpcs3(s_prep.data, exe, GAME_PATH_MAX, err, 320, &s_prep.progress);
+    if (ok) ok = game_prepare(s_prep.game, exe, s_prep.rap, s_prep.data, err, 320, &s_prep.progress);
     if (fetched) game_drop_rpcs3(s_prep.data);
     swprintf(s_prep.err, 320, L"%ls", err);
     s_prep.ok = ok;
@@ -1722,13 +1780,14 @@ static void prepare_begin(void)
 {
     if (s_prep.thread || s_game.g.state != GAME_NO_ELF) return;
     if (!s_prep.rpcs3[0]) game_find_rpcs3(s_game.g.dir, s_prep.rpcs3, GAME_PATH_MAX);
-    if (!s_prep.rap[0] && s_prep.rpcs3[0]) game_find_rap(s_prep.rpcs3, s_prep.rap, GAME_PATH_MAX);
+    if (!s_prep.rap[0]) game_find_rap(s_prep.rpcs3[0] ? s_prep.rpcs3 : game_rpcs3_slot(s_game.g.dir), s_prep.rap, GAME_PATH_MAX);
     s_prep.err[0] = 0;
     if (!s_prep.rap[0] || (!s_prep.rpcs3[0] && !s_prep.download)) return;
     data_file(s_prep.data, GAME_PATH_MAX, L"");
     swprintf(s_prep.game, GAME_PATH_MAX, L"%ls", s_game.g.dir);
-    s_prep.step = s_prep.rpcs3[0] ? 2 : 1;
+    memset((void*)&s_prep.progress, 0, sizeof s_prep.progress);
     s_prep.thread = CreateThread(NULL, 0, prepare_thread, NULL, 0, NULL);
+    SetTimer(s_main, 2, 100, NULL);   /* the bar */
 }
 
 static void prepare_end(void)
@@ -1742,9 +1801,10 @@ static void prepare_end(void)
 static void prepare_done(void)
 {
     prepare_end();
+    KillTimer(s_main, 2);
     s_prep.download = 0;
     if (!s_prep.ok) {
-        toast_bad("The game could not be decrypted");
+        toast_bad(s_prep.progress.stop ? "Stopped" : "The game could not be prepared");
         return;
     }
     game_paths_fill();
@@ -2150,6 +2210,7 @@ static void act(int id)
             if (pick_file(L"The game's license file", L"License file (*.rap)", L"*.rap", s_prep.rap, GAME_PATH_MAX)) prepare_begin();
             break;
         case H_PREP_RETRY: prepare_begin(); break;
+        case H_PREP_STOP: if (s_prep.thread) game_progress_stop(&s_prep.progress); break;
         case H_GAME_AUTO:
             if (s_find.thread) s_find.stop = 1;
             else find_start(NULL);
@@ -2338,6 +2399,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         redraw();
         return 0;
     case WM_TIMER: {
+        if (w == 2) { redraw(); return 0; }
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
         if (s_find.thread) redraw();   /* the folder it is in */
         if (s_pc.running) redraw();    /* how far the precompile is */
@@ -2514,6 +2576,8 @@ extern "C" int gowa_launcher(void)
         DispatchMessageA(&msg);
     }
     KillTimer(s_main, 1);
+    KillTimer(s_main, 2);
+    if (s_prep.thread) game_progress_stop(&s_prep.progress);
     prepare_end();
     if (s_pc.running) {   /* the window closed under a precompile: it stops (the cache drops a cut record) */
         TerminateProcess(s_pc.proc, 1);
