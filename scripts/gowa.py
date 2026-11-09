@@ -1128,7 +1128,7 @@ def git_text(cwd, *a):
 def release_tree_problems():
     """A release is built from what is committed and pushed. scratch/ in the submodule is not built."""
     out = git_text(ROOT, "status", "--porcelain", "--ignore-submodules=dirty").splitlines()
-    out += [l for l in git_text(PS3RECOMP, "status", "--porcelain").splitlines() if not l[3:].startswith("scratch/")]
+    out += [l for l in git_text(PS3RECOMP, "status", "--porcelain").splitlines() if not l.split(None, 1)[-1].startswith("scratch/")]
     for repo in (ROOT, PS3RECOMP):
         if not git_text(repo, "branch", "-r", "--contains", "HEAD"):
             out.append("%s: HEAD is not pushed" % os.path.basename(repo))
