@@ -1,6 +1,8 @@
 # Features and settings
 
-Settings live in `ascension-r.ini` beside the exe, and the launcher edits them.
+Settings live in `ascension-r.ini`, and the launcher edits them. Its folder, which also takes the logs, the saves and the shader
+caches, is `%LOCALAPPDATA%\Ascension-R`. A copy with a file called `portable.txt` beside the exe keeps them all there instead, as a
+build from source does.
 
 ## Game folder, shaders, logs and recordings
 

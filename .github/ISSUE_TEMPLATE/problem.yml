@@ -5,7 +5,8 @@ body:
     attributes:
       value: |
         In the launcher, press **Report a problem** (down the sidebar) and attach the zip it makes.
-        If the launcher does not open, run `Ascension-R --report` from the folder of the exe. The zip goes in `logs`.
+        If the launcher does not open, run `Ascension-R --report` from the folder of the exe. The zip goes in the `logs` folder
+        beside the settings: `%LOCALAPPDATA%\Ascension-R\logs`, or next to the exe in a portable copy or a build from source.
 
         Do not attach game files, keys or firmware.
   - type: textarea

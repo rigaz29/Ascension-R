@@ -160,6 +160,7 @@ def link_dir(link, target):
 
 
 DXC_DLLS = ("dxcompiler.dll", "dxil.dll")
+VC_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 FSR_DLLS = ("amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll",
             "amd_fidelityfx_upscaler_dx12.dll")
 
@@ -1100,6 +1101,7 @@ def cmd_build(args):
         write_settings(ffmpeg)
         copy_dxc()
         copy_fsr()
+        copy_vc_runtime(env)
     return rc
 
 
@@ -1123,6 +1125,20 @@ def copy_fsr():
         say("note: no FSR SDK in ../fsr-sdk; no FSR 3")
         return
     for f in FSR_DLLS:
+        to = os.path.join(BUILD, f)
+        if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
+            shutil.copy2(os.path.join(src, f), to)
+
+
+def copy_vc_runtime(env):
+    """The C++ runtime beside the exe, for a PC without the Visual C++ Redistributable. The FSR DLLs need it too."""
+    redist = os.path.join(env.get("VCToolsRedistDir", ""), "x64")
+    crt = [d for d in (os.listdir(redist) if os.path.isdir(redist) else []) if re.match(r"Microsoft\.VC\d+\.CRT$", d)]
+    if not crt:
+        say("note: no Visual C++ redistributable files; the exe needs the runtime installed")
+        return
+    src = os.path.join(redist, crt[0])
+    for f in VC_DLLS:
         to = os.path.join(BUILD, f)
         if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
             shutil.copy2(os.path.join(src, f), to)

@@ -271,6 +271,7 @@ else()
 endif()
 
 add_executable(${PROJECT_NAME}
+    cpu_check.c
     main.cpp
     launcher.cpp
     report.cpp
@@ -456,6 +457,8 @@ endif()
 # link error, it is a "no rule to make" for a file nothing can consume.
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
+    set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/app.rc" PROPERTIES
+                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gowa.manifest")
     # The manifest comes from app.rc; the linker's own would be a second one.
     if(MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")
@@ -483,6 +486,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # What a player sees. The target keeps its name, so the objects' paths do not change.
 set(PORT_EXE_NAME "Ascension-R")
 set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX OUTPUT_NAME "${PORT_EXE_NAME}")
+if(MSVC)
+    target_link_options(${PROJECT_NAME} PRIVATE /ENTRY:gowa_entry)   # cpu_check.c
+endif()
 
 # Windows system import libraries. dbghelp symbolizes crash-handler addresses
 # against the PDB, user32 and gdi32 are what the backend's window and its GDI

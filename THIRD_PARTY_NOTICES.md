@@ -84,6 +84,11 @@ compile the game's shaders. They are not in this repository. `dxcompiler.dll` is
 [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler), University of Illinois/NCSA Open Source
 License; see that project's `LICENSE.TXT` and `ThirdPartyNotices.txt`. `dxil.dll` comes under the Windows SDK's terms.
 
+## Microsoft Visual C++ runtime
+
+`gowa.py build` copies `msvcp140.dll`, `vcruntime140.dll` and `vcruntime140_1.dll` beside the exe from the Visual Studio
+redistributable folder. They are not in this repository, and they come under Visual Studio's license terms.
+
 ## ATRAC decoder
 
 `ps3recomp/third_party/at3_standalone/` holds FFmpeg's ATRAC decoder, under the GNU Lesser General Public License 2.1 or

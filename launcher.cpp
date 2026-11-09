@@ -286,6 +286,18 @@ extern "C" void gowa_port_defaults(void)
      * right stick) on the arrows, the D-pad on 1-4. */
     for (int i = 0; i < N_KB; i++)
         ps3_settings_default("keyboard", k_kb[i][0], k_kb[i][2]);
+    /* Beside the settings, for a copy that no `gowa.py build` gave paths to. */
+    char dir[1100], file[1200];
+    snprintf(dir, sizeof dir, "%s", ps3_settings_path());
+    char* slash = strrchr(dir, '\\');
+    if (!slash) slash = strrchr(dir, '/');
+    if (slash) {
+        slash[1] = 0;
+        snprintf(file, sizeof file, "%sd3d12_shader_cache.bin", dir);
+        ps3_settings_default("graphics", "shader_cache", file);
+        snprintf(file, sizeof file, "%slibsre_image.bin", dir);
+        ps3_settings_default("paths", "libsre", file);
+    }
 }
 
 /* ---------------------------------------------------------------------------
@@ -531,9 +543,11 @@ static void game_links(void)
 {
     const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);
     const char* hdd0 = ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL);
-    wchar_t here[GAME_PATH_MAX];
-    if (!GetModuleFileNameW(NULL, here, GAME_PATH_MAX)) here[0] = 0;
+    wchar_t here[GAME_PATH_MAX];                 /* the settings' folder: the links go beside them */
+    swprintf(here, GAME_PATH_MAX, L"%ls", W(ps3_settings_path()));
+    path_slashes(here);
     if (wchar_t* s = wcsrchr(here, L'\\')) *s = 0;
+    else if (GetModuleFileNameW(NULL, here, GAME_PATH_MAX)) { if (wchar_t* e = wcsrchr(here, L'\\')) *e = 0; }
     if (vfs && *vfs) swprintf(s_game.vfs, GAME_PATH_MAX, L"%ls", W(vfs));
     else swprintf(s_game.vfs, GAME_PATH_MAX, L"%ls\\vfs", here);
     if (hdd0 && *hdd0) swprintf(s_game.hdd0, GAME_PATH_MAX, L"%ls", W(hdd0));

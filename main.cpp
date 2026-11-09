@@ -1095,7 +1095,9 @@ static DWORD WINAPI thread_table(LPVOID arg)
 /* ---------------------------------------------------------------------------
  * Settings and the title's environment
  * -----------------------------------------------------------------------*/
-/* ascension-r.ini next to the executable. */
+/* ascension-r.ini beside the executable for a build (a settings file is already there) or a copy
+ * the player marked with portable.txt, else in %LOCALAPPDATA%\Ascension-R. The logs, the saves and
+ * the caches go where it is. */
 static void default_settings_path(char* out, size_t n, const char* argv0)
 {
 #ifdef _WIN32
@@ -1112,10 +1114,22 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
     if (slash) slash[1] = 0; else exe[0] = 0;
     snprintf(out, n, "%sascension-r.ini", exe);
 #ifdef _WIN32
-    /* The name before the rename: copied once, and the old file is left as it is. */
-    char old_name[1100];
+    char old_name[1100], marker[1100];
     snprintf(old_name, sizeof old_name, "%sgowa.ini", exe);
-    CopyFileA(old_name, out, TRUE);
+    snprintf(marker, sizeof marker, "%sportable.txt", exe);
+    if (GetFileAttributesA(out) != INVALID_FILE_ATTRIBUTES || GetFileAttributesA(old_name) != INVALID_FILE_ATTRIBUTES ||
+        GetFileAttributesA(marker) != INVALID_FILE_ATTRIBUTES) {
+        /* The name before the rename: copied once, and the old file is left as it is. */
+        CopyFileA(old_name, out, TRUE);
+        return;
+    }
+    const char* local = getenv("LOCALAPPDATA");
+    if (local && *local) {
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s\\Ascension-R", local);
+        CreateDirectoryA(dir, NULL);
+        snprintf(out, n, "%s\\ascension-r.ini", dir);
+    }
 #endif
 }
 
