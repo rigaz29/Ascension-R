@@ -1,0 +1,61 @@
+# Runs on every push and pull request. No job needs the game.
+name: CI
+
+on:
+  push:
+    branches: [ main, edge ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    name: No game files, keys or binaries
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Check what is tracked
+        run: python3 scripts/check_repo.py
+
+  tests:
+    name: Port and lifter tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.12'
+
+      # The lifters' suites compile and run their cases with cl and clang-cl.
+      - name: Set up MSVC environment
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1.13.0
+        with:
+          arch: x64
+
+      - name: Install the Python requirements
+        run: python -m pip install -r ps3recomp/requirements.txt
+
+      - name: Port tests
+        shell: bash
+        run: |
+          set -e
+          python tests/test_game_find.py
+          python tests/test_dxc_guards.py
+
+      # CI=1: a suite fails rather than skips if no compiler is reachable.
+      - name: Lifter tests
+        working-directory: ps3recomp
+        shell: bash
+        env:
+          CI: "1"
+        run: |
+          set -e
+          for t in tools/test_*.py; do
+            echo "--- $t"
+            python "$t"
+          done
