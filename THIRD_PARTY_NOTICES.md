@@ -71,6 +71,25 @@ unchanged, in `ps3recomp/third_party/zstd/` (its README lists the files taken). 
 in one zstd frame. Zstandard is dual-licensed, BSD or GPLv2; it is used under the BSD license, Copyright (c) Meta
 Platforms, Inc. and affiliates; the full text is in that folder's `LICENSE`.
 
+## FFmpeg
+
+The game's movies are decoded with [FFmpeg](https://ffmpeg.org): the runtime loads `avcodec` and `avutil` when it starts.
+Their DLLs are not in this repository; `gowa.py build` looks for an LGPL build in `../ffmpeg` or `local.json`'s `ffmpeg_dir`.
+The build used here is under the GNU Lesser General Public License, version 3, and comes with its `LICENSE.txt`.
+
+## DirectX Shader Compiler
+
+`gowa.py build` copies `dxcompiler.dll` and `dxil.dll` beside the exe, from the Windows SDK or `local.json`'s `dxc_dir`, to
+compile the game's shaders. They are not in this repository. `dxcompiler.dll` is
+[DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler), University of Illinois/NCSA Open Source
+License; see that project's `LICENSE.TXT` and `ThirdPartyNotices.txt`. `dxil.dll` comes under the Windows SDK's terms.
+
+## ATRAC decoder
+
+`ps3recomp/third_party/at3_standalone/` holds FFmpeg's ATRAC decoder, under the GNU Lesser General Public License 2.1 or
+later. It is not part of this port's exe: the game does not import `cellAtrac`, so the NID table skips that module and the
+linker leaves the decoder out.
+
 ## Code taken from other ports
 
 Whenever code is copied from another repository, add it here with its source,

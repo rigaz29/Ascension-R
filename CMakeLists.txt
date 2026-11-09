@@ -85,6 +85,10 @@ get_directory_property(port_compile_defs COMPILE_DEFINITIONS)
 if(PORT_SPU_JOBCAP)
     add_compile_definitions(PS3_SPU_JOBCAP)
 endif()
+# The game has no SDATA and its one EDAT needs a key we do not have, so the build
+# leaves the decryption out: no keys in the exe and nothing written beside the
+# game's files.
+option(PS3RECOMP_NO_DECRYPT "Build without EDAT/SDATA decryption or its keys" ON)
 add_subdirectory("${PS3RECOMP_DIR}" "${CMAKE_BINARY_DIR}/ps3recomp_sdk"
                  EXCLUDE_FROM_ALL)
 # The lifted SPU code takes it with its other definitions (spu_defs below); the
@@ -113,11 +117,13 @@ else()
     # Track the list itself so deletions also remove stale handler references.
     set(HLE_NID_SOURCE_LIST "${CMAKE_CURRENT_BINARY_DIR}/hle_nid_sources.txt")
     file(GENERATE OUTPUT "${HLE_NID_SOURCE_LIST}" CONTENT "${HLE_NID_SOURCES}\n")
+    # cellAtrac stays out: the game does not import it, and a handler in the table
+    # would link its LGPL decoder into the exe.
     add_custom_command(
         OUTPUT "${HLE_NID_TABLE}"
         COMMAND "${Python3_EXECUTABLE}"
                 "${PS3RECOMP_DIR}/tools/gen_hle_nids.py"
-                --out "${HLE_NID_TABLE}" --all
+                --out "${HLE_NID_TABLE}" --all --skip cellAtrac
         DEPENDS "${PS3RECOMP_DIR}/tools/gen_hle_nids.py"
                 "${PS3RECOMP_DIR}/tools/nid_database.py"
                 ${HLE_NID_SOURCES} "${HLE_NID_SOURCE_LIST}"
@@ -137,6 +143,10 @@ set(PS3RECOMP_SCAFFOLD
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_fs.cpp"
     "${PS3RECOMP_DIR}/runtime/ppu/ppu_sysprx.cpp"
 )
+if(PS3RECOMP_NO_DECRYPT)
+    set_source_files_properties("${PS3RECOMP_DIR}/runtime/ppu/ppu_fs.cpp" PROPERTIES
+                                COMPILE_DEFINITIONS PS3RECOMP_NO_DECRYPT)
+endif()
 
 # ---------------------------------------------------------------------------
 # Lifted SPU images (optional)

@@ -55,14 +55,16 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 
 ## Phases
 
-### 1. Prepare the source: 1-2 days
+### 1. Prepare the source: done 2026-11-09
 
-- A build switch, `PS3RECOMP_NO_DECRYPT`, leaves the decryption out of the release: the keys compiled from `libs/filesystem/edat.c` and `runtime/ppu/sdata_decrypt.h`, and the `.dec` files `edat_resolve`
-  writes beside the game's. It is the only change this plan makes in the fork; its files otherwise stay as upstream has them. The game has no `.sdat` and one EDAT, which already fails for
-  want of a RIF key, so nothing should change. Test that.
-- `third_party/at3_standalone` is LGPL and linked statically; its source is public through the submodule. List it in `THIRD_PARTY_NOTICES.md`, with FFmpeg and DXC, and put their licences in the zip.
+- `PS3RECOMP_NO_DECRYPT`, on in this port, leaves the decryption and its keys out of the exe, and nothing is written beside the game's files. The fork keeps it off by default. Apart from that switch
+  and `gen_hle_nids.py --skip`, the fork's files stay as upstream has them.
+- `cellAtrac` and its LGPL decoder are out of the exe. The game does not import the module, and a statically linked LGPL library would have to ship with a way to relink it.
+- `THIRD_PARTY_NOTICES.md` lists FFmpeg, DXC and the decoder.
+- The NID database is function names and the hash of each name, so the fork's "derived from RPCS3's function tables" brings no RPCS3 code with it.
 - `native/` stays: hand-written, and no constant table in it long enough to be copied data. Decide again if a lawyer says otherwise.
-- Exit: route, fight and the CYN050 cutscene as before; the key bytes are not in the built exe.
+- Result, 1 run each against the exe before: fight 39.4 fps (36.0), route 27.3 (27.6), CYN050 30.2 (30.1). Same pictures and the same unresolved NIDs; only the `[edat]` lines are gone. None of the
+  eight keys is in the exe and the link map has no ATRAC code. The game folder is unchanged.
 
 ### 2. Rename: 1 day
 
@@ -108,6 +110,8 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 ### 6. Packaging: 2-3 days
 
 - `scripts/package.py` makes the zip and stops if it finds a lifted symbol, a key pattern or a game file type. Only the lifters the pipeline runs go in `setup\tools`, not the fork's whole `tools` folder.
+- FFmpeg: the development build bundles dozens of outside libraries. Release a build cut down to the MPEG-2 and H.264 decoders, with its licence, its configure line and its source beside the release. First check that every movie is one of those two.
+- DXC from the SDK's `Redist\D3D\x64`, with its notices.
 - Host on the static CRT if the Phase 3 bench allows it, else the three Visual C++ DLLs beside it.
 - Release workflow on a tag: the host needs no game to build. SHA-256 file with the zip.
 
