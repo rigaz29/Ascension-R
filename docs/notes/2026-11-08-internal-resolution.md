@@ -61,6 +61,14 @@ default, as at 720p it only adds geometry. One run at 2 with it on showed nothin
 without it, whose camera differs a little, and it did not slow that run (32.2, 33.1, 34.2 against 30.5, 31.1, 29.7). A
 scene with thin geometry far away could still show gaps without it.
 
+## Below 720p (2026-11-09)
+
+Not offered, as it gains nothing here. A trial at 0.5 (640x360, FSR 3.1 and frame generation, one run of each on the route)
+gave 30.3, 24.9, 26.9, 27.6, 23.4 frames a second against 30.2, 26.8, 26.7, 25.1, 23.6 at 1. The windows of the two runs
+start 5 s apart, and the difference is inside what runs at the same scale differ by. `ppu main` took 94.5% of a core at 0.5
+and 94.7% at 1, `rsx render` 33.6% and 33.7%. The limit is the CPU, and fewer pixels do not move it. The code takes a
+scale below 1 with only the lower clamp in `rs_init` changed, should a weak GPU ever need it.
+
 ## The crash found in play (2026-11-09)
 
 A session at 1.5 with FSR 3.1 and frame generation froze 60 s into the CYN050 cutscene and closed 18 s later. The log had
