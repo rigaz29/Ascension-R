@@ -48,7 +48,7 @@ ratio as well.
 
 In a 1680x720 window (no ultrawide monitor here), with FSR 1 at 1.5x and 1x and FSR 3.1 with and without frame generation:
 
-- Intro movie and title screen: 16:9 between black bars, the text as wide as at 16:9 (718 pixels).
+- Intro movies: 16:9 between black bars, the text as wide as at 16:9 (718 pixels).
 - HUD in a fight, in the 16:9 in the middle. Death screen: text 836 pixels against 838, backdrop out to the edges.
 - A cutscene and gameplay: nothing stretched, and more at the sides.
 - Ultrawide off: 16:9 pictures as before, and no crash in any run.
@@ -61,4 +61,5 @@ In a 1680x720 window (no ultrawide monitor here), with FSR 1 at 1.5x and 1x and 
   noise at 21:9 and not at 16:9. The cause was not found. Frame generation goes by the camera alone there.
 - The first session at a wider aspect compiles the vertex programs again, because their text differs; until that is done,
   a cutscene can show dark or missing objects.
-- A real ultrawide monitor and 32:9. The sides of some cutscenes may show places the camera was never meant to see.
+- The main menu, a real ultrawide monitor and 32:9. The sides of some cutscenes may show places the camera was never meant
+  to see.
