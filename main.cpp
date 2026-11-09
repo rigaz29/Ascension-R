@@ -1431,12 +1431,15 @@ static void title_environment(void)
     /* An HDD (PSN) title. The executable is GOWA.SELF, which the title's own
      * EBOOT.BIN launcher starts from /dev_hdd0/game/<id>/USRDIR; argv[0] is that
      * path, not the disc path the runtime defaults to. */
+    /* The runtime halts an SPU that repeats one transfer for 30 s, as wedged. The job policy
+     * modules poll for work that way, and building pipelines on a first start can hold the game
+     * up for longer, so the halt stopped idle workers and the next load hung. */
+    env_default("SPU_DMA_REPEAT_SECS", "604800");
     env_default("PS3_TITLE", "NPUA80918");
     env_default("PS3_BOOT_PATH", "/dev_hdd0/game/NPUA80918/USRDIR/GOWA.SELF");
     /* This machine's paths, written into [paths] by `gowa.py build`. */
     env_default("PS3_VFS_ROOT", ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL));
     env_default("PS3_HDD0_ROOT", ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL));
-    env_default("GOWA_LIBSRE_IMAGE", ps3_settings_str("paths", "libsre", "GOWA_LIBSRE_IMAGE", NULL));
     /* FFmpeg's DLLs are loaded when the first movie plays, from PATH. */
     const char* ff = ps3_settings_str("paths", "ffmpeg", NULL, NULL);
     if (ff && *ff) {

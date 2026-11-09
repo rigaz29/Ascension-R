@@ -249,29 +249,9 @@ if(JOBMOD_SOURCES)
     list(APPEND SPU_SOURCES ${NATIVE_SPU_SOURCES})
 endif()
 
-# ---------------------------------------------------------------------------
-# Lifted libsre (optional)
-# ---------------------------------------------------------------------------
-# `scripts/gowa.py lle` relocates the firmware's libsre and lifts it into
-# firmware/libsre/lifted/. stubs.cpp then loads it so the SPURS lock-free queue
-# functions run as the firmware code; the rest of cellSpurs stays HLE. Without
-# that directory the port builds as before.
-set(LIBSRE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/firmware/libsre/lifted" CACHE PATH
-    "Directory holding the lifted libsre (libsre_recomp_*.cpp, gowa_libsre_exports.c)")
-file(GLOB LIBSRE_SOURCES CONFIGURE_DEPENDS "${LIBSRE_DIR}/*.cpp" "${LIBSRE_DIR}/*.c")
-if(LIBSRE_SOURCES)
-    message(STATUS "Lifted libsre:   ${LIBSRE_DIR}")
-    set_source_files_properties(stubs.cpp ${LIBSRE_SOURCES}
-        "${PS3RECOMP_DIR}/runtime/prx/prx_loader.c" PROPERTIES
-        INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/prx"
-        COMPILE_DEFINITIONS GOWA_LIBSRE_LLE)
-    list(APPEND LIBSRE_SOURCES "${PS3RECOMP_DIR}/runtime/prx/prx_loader.c")
-else()
-    message(STATUS "Lifted libsre:   none (SPURS queues stay HLE)")
-endif()
-
 add_executable(${PROJECT_NAME}
     cpu_check.c
+    lfqueue.cpp
     main.cpp
     launcher.cpp
     report.cpp
@@ -285,7 +265,6 @@ add_executable(${PROJECT_NAME}
     ${HLE_NID_TABLE}
     ${RECOMP_SOURCES}
     ${SPU_SOURCES}
-    ${LIBSRE_SOURCES}
 )
 
 # The commits this build came from, for the log and the problem report. Only on report.cpp: on the
@@ -583,7 +562,7 @@ option(PORT_PPU_RESTRICT "Lifted PPU functions take their context as __restrict"
 if(PORT_PPU_RESTRICT)
     list(APPEND recomp_opts /clang:-mllvm /clang:-capture-tracking-max-uses-to-explore=1000000)
 endif()
-set_source_files_properties(${RECOMP_SOURCES} ${LIBSRE_SOURCES} PROPERTIES
+set_source_files_properties(${RECOMP_SOURCES} PROPERTIES
     COMPILE_OPTIONS "${recomp_opts}")
 
 # PPC float arithmetic without the NaN checks (PORT_PPU_FAST_FP): the lifted game
@@ -601,10 +580,10 @@ endif()
 # ppu_mm_fix before the guest runs.
 option(PORT_PPU_MM_LEAN "Lifted game code: the lean memory helpers" ON)
 if(PORT_PPU_MM_LEAN)
-    set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_MM_LEAN)
+    set_property(SOURCE ${RECOMP_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_MM_LEAN)
 endif()
 if(PORT_PPU_RESTRICT)
-    set_property(SOURCE ${RECOMP_SOURCES} ${LIBSRE_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_CTX_RESTRICT)
+    set_property(SOURCE ${RECOMP_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_CTX_RESTRICT)
 endif()
 
 # ---------------------------------------------------------------------------

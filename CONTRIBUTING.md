@@ -32,8 +32,7 @@ your paths and account name. The README says what goes in it.
 1. **No file from the game ever goes into git**: no SELF or ELF, encrypted or decrypted, no lifted code (`recompiled/`,
    `spu/`), no SPU images, archives, videos, saves or license files. No built executables or DLLs either. `.gitignore` covers
    them. Never `git add -f`.
-2. **No keys, firmware or decryption tools in this repository.** Firmware files the port needs are decrypted and lifted
-   locally into `firmware/`, which git ignores.
+2. **No keys, firmware or decryption tools in this repository.**
 3. **GPL code is read, never copied**, RPCS3's included, so this repository stays MIT. MIT or BSD code may be copied, with its
    source, commit and license in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 4. Metadata is fine to commit: function addresses, NIDs, SHA-256 hashes, sizes.

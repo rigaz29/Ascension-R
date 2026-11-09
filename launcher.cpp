@@ -295,8 +295,6 @@ extern "C" void gowa_port_defaults(void)
         slash[1] = 0;
         snprintf(file, sizeof file, "%sd3d12_shader_cache.bin", dir);
         ps3_settings_default("graphics", "shader_cache", file);
-        snprintf(file, sizeof file, "%slibsre_image.bin", dir);
-        ps3_settings_default("paths", "libsre", file);
     }
 }
 

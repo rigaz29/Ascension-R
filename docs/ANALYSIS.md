@@ -72,9 +72,8 @@ weight for a single-player boot:
    `cellSpursTryJoinTask2`, `cellSpursDestroyTaskset2`, `_cellSpursTaskAttribute2Initialize`,
    `_cellSpursTasksetAttribute2Initialize`, `cellSpursAttributeEnableSystemWorkload`, the workload
    flag pair (`cellSpursGetWorkloadFlag`, `_cellSpursWorkloadFlagReceiver`),
-   `cellSpursLFQueueDetachLv2EventQueue` and `_cellSpursLFQueuePushBody`. The God of War HD port
-   runs the lock-free queue's push as the firmware's own code (libsre, lifted); the same may be
-   needed here.
+   `cellSpursLFQueueDetachLv2EventQueue` and `_cellSpursLFQueuePushBody`.
+   `lfqueue.cpp` answers the lock-free queue's push.
 2. **PRX loading**: `sys_prx_load_module`, `..._by_fd`, `..._on_memcontainer`,
    `..._on_memcontainer_by_fd`, `sys_prx_register_library`. `GOWA.elf` names no `.sprx` file, so
    these may only matter for system modules; to be seen at boot.

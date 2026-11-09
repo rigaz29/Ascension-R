@@ -6,7 +6,6 @@
     python scripts/gowa.py analyze                 loader, SPU images, HLE coverage -> analysis/
     python scripts/gowa.py lift                    PPU -> C++ -> recompiled/
     python scripts/gowa.py missed                  what the sessions ran without a lift of it
-    python scripts/gowa.py lle                     lift firmware/libsre.prx (SPURS queues)
     python scripts/gowa.py build                   configure + build with clang-cl -> build/
     python scripts/gowa.py run                     start the port, log to logs/
     python scripts/gowa.py run --trace             the same, with an ftrace of the session (stutter)
@@ -957,109 +956,6 @@ def cmd_lift(args):
     return 0
 
 
-# libsre (the firmware's SPURS/sync library) is relocated here. 0x28000000 is
-# outside main memory, where the title's own heap lives, and clear of the GCM
-# window at 0x20000000 and the raw-SPU windows at 0x30000000.
-LIBSRE_BASE = 0x28000000
-LIBSRE = os.path.join(ROOT, "firmware", "libsre")
-
-# The libsre exports that run as the real firmware code. The ANY2ANY lock-free
-# queue protocol (GetPushPointer2/CompletePushPointer2 behind PushBody) isn't
-# documented anywhere and the SPU side of it is Sony's own code, so the PPU side
-# has to be Sony's too, and so does the initializer that lays the queue out.
-# Everything else in cellSpurs stays HLE.
-LIBSRE_LLE_EXPORTS = {
-    0x011EE38B: "_cellSpursLFQueueInitialize",
-    0x8A85674D: "_cellSpursLFQueuePushBody",
-}
-# _cellSpursSendSignal is what CompletePushPointer2 calls (through a function
-# pointer) to wake a task parked on the queue. It is bridged to the HLE handler,
-# because the HLE task model is what parks and wakes the SPU task threads.
-LIBSRE_SEND_SIGNAL_NID = 0xE0A6DBE4
-
-
-def cmd_lle(args):
-    prx = os.path.join(ROOT, "firmware", "libsre.prx")
-    if not os.path.exists(prx):
-        die("firmware/libsre.prx not found. Copy dev_flash/sys/external/libsre.sprx "
-            "from RPCS3 to firmware/ and decrypt it there (Utilities > Decrypt PS3 Binaries)")
-    py = sys.executable
-    os.makedirs(LIBSRE, exist_ok=True)
-    if run([py, os.path.join(TOOLS, "lift_prx.py"), prx, "--base", "0x%X" % LIBSRE_BASE,
-            "--output", LIBSRE]):
-        die("lift_prx failed")
-    exports = json.load(open(os.path.join(LIBSRE, "libsre_exports.json")))
-    toc = exports["toc"]
-
-    # lift_prx writes {library: {nid: stub}}; the lifter wants [{library, nid, stub}].
-    stubs = [{"library": lib, "nid": nid, "stub": stub}
-             for lib, table in json.load(open(os.path.join(LIBSRE, "libsre_imports.json"))).items()
-             for nid, stub in table.items()]
-    stubs_path = os.path.join(LIBSRE, "libsre_hle_stubs.json")
-    json.dump(stubs, open(stubs_path, "w"), indent=1)
-
-    lifted = os.path.join(LIBSRE, "lifted")
-    shutil.rmtree(lifted, ignore_errors=True)
-    if run([py, os.path.join(TOOLS, "ppu_lifter.py"), os.path.join(LIBSRE, "libsre_image.bin"),
-            "--raw", "--base", "0x%X" % LIBSRE_BASE, "--toc", toc,
-            "--functions", os.path.join(LIBSRE, "libsre_functions.json"),
-            "--hle-stubs", stubs_path, "--symbol-prefix", "libsre_",
-            "--header-name", "libsre_recomp.h", "--source-name", "libsre_recomp",
-            "--output", lifted]):
-        die("ppu_lifter failed on libsre")
-
-    nid_opd = {}
-    for table in exports["exports"].values():
-        for nid, opd in table.items():
-            nid_opd[int(nid, 16)] = int(opd, 16)
-    missing = [n for n in list(LIBSRE_LLE_EXPORTS) + [LIBSRE_SEND_SIGNAL_NID] if n not in nid_opd]
-    if missing:
-        die("libsre doesn't export " + ", ".join("0x%08X" % n for n in missing))
-    send_signal_code = int(exports["opd_to_code"]["0x%08X" % nid_opd[LIBSRE_SEND_SIGNAL_NID]], 16)
-
-    # PushBody passes CompletePushPointer[2] a function pointer it loads from
-    # its TOC; that's the hook that wakes the queue's waiter. Read the load out
-    # of PushBody itself ("lwz rN,-off(r2)" right before the call) rather than
-    # trusting a fixed offset, and check the target lands in libsre's code.
-    image = open(os.path.join(LIBSRE, "libsre_image.bin"), "rb").read()
-    rd32 = lambda a: struct.unpack(">I", image[a - LIBSRE_BASE:a - LIBSRE_BASE + 4])[0]
-    toc_v = int(toc, 16)
-    push_code = int(exports["opd_to_code"]["0x%08X" % nid_opd[0x8A85674D]], 16)
-    toc_loads = []
-    for a in range(push_code, push_code + 0x200, 4):
-        insn = rd32(a)
-        if insn >> 26 == 32 and (insn >> 16) & 0x1F == 2:        # lwz rD, d(r2)
-            toc_loads.append(toc_v + struct.unpack(">h", struct.pack(">H", insn & 0xFFFF))[0])
-    hooks = set()
-    for slot in toc_loads:
-        opd = rd32(slot)
-        if LIBSRE_BASE <= opd < LIBSRE_BASE + len(image) - 8:
-            code = rd32(opd)
-            if LIBSRE_BASE <= code < LIBSRE_BASE + len(image) and code != push_code:
-                hooks.add(code)
-    if len(hooks) != 1:
-        die("can't identify the LFQueue signal hook in PushBody (candidates: %s)"
-            % ", ".join("0x%08X" % h for h in sorted(hooks)))
-    lfqueue_signal_code = hooks.pop()
-
-    rows = "\n".join('    { 0x%08Xu, 0x%08Xu, "%s" },' % (nid, nid_opd[nid], name)
-                     for nid, name in LIBSRE_LLE_EXPORTS.items())
-    with open(os.path.join(lifted, "gowa_libsre_exports.c"), "w", newline="\n") as f:
-        f.write("/* Generated by scripts/gowa.py lle. Do not edit. */\n"
-                "#include \"gowa_lle.h\"\n\n"
-                "const gowa_lle_export gowa_libsre_lle[] = {\n%s\n};\n"
-                "const uint32_t gowa_libsre_lle_count = %d;\n"
-                "const uint32_t gowa_libsre_base = 0x%08Xu;\n"
-                "const uint32_t gowa_libsre_send_signal_code = 0x%08Xu;\n"
-                "const uint32_t gowa_libsre_lfqueue_signal_code = 0x%08Xu;\n"
-                % (rows, len(LIBSRE_LLE_EXPORTS), LIBSRE_BASE, send_signal_code,
-                   lfqueue_signal_code))
-    say("libsre lifted to %s (TOC %s); LLE exports: %s" % (
-        os.path.relpath(lifted, ROOT), toc, ", ".join(LIBSRE_LLE_EXPORTS.values())))
-    say("re-run `build` to link it in")
-    return 0
-
-
 def cmd_build(args):
     if not os.path.exists(os.path.join(RECOMPILED, "ppu_recomp.h")):
         die("no lifted code; run `lift` first")
@@ -1191,7 +1087,6 @@ def write_settings(ffmpeg):
     ini_set(lines, "paths", "elf", game_elf())
     ini_set(lines, "paths", "vfs", os.path.join(ROOT, "vfs"))
     ini_set(lines, "paths", "hdd0", HDD0)
-    ini_set(lines, "paths", "libsre", os.path.join(LIBSRE, "libsre_image.bin"))
     if ffmpeg:
         ini_set(lines, "paths", "ffmpeg", os.path.join(ffmpeg, "bin"))
     ini_set(lines, "graphics", "shader_cache", os.path.join(BUILD, "d3d12_shader_cache.bin"), keep=True)
@@ -1208,7 +1103,6 @@ def cmd_run(args):
     env = dict(os.environ)
     env.setdefault("PS3_VFS_ROOT", os.path.join(ROOT, "vfs"))
     env.setdefault("PS3_HDD0_ROOT", HDD0)
-    env.setdefault("GOWA_LIBSRE_IMAGE", os.path.join(LIBSRE, "libsre_image.bin"))
     ffmpeg = find_ffmpeg()
     if ffmpeg:
         env["PATH"] = os.path.join(ffmpeg, "bin") + os.pathsep + env.get("PATH", "")
@@ -1508,7 +1402,6 @@ def main():
     p = sub.add_parser("jobmods-entries",
                        help="add the job-module interpreter entries of runs (SPU_INTERP_ENTRIES) as extra functions")
     p.add_argument("logs", nargs="+", help="run logs")
-    sub.add_parser("lle", help="relocate and lift firmware/libsre.prx for its SPURS queue functions")
     p = sub.add_parser("build", help="configure + build with clang-cl")
     p.add_argument("--jobs", default="3", help="parallel compile jobs (default 3 for 16 GB RAM)")
     p.add_argument("--config", default="Release", choices=["Release", "RelWithDebInfo", "Debug"])
@@ -1570,7 +1463,7 @@ def main():
     frames.add_args(p)
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
-            "lift": cmd_lift, "patches": cmd_patches, "lle": cmd_lle, "build": cmd_build,
+            "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
             "bench": bench.main, "frames": frames.main, "replay": cmd_replay}[args.cmd](args)
 

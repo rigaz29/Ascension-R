@@ -18,7 +18,7 @@ There is no download yet: for now you build it yourself. Help is welcome, see [C
 
 - Windows 10 or 11, 64-bit. It has been tested on Windows 11.
 - A CPU with AVX2 and FMA, and a GPU with Direct3D 12.
-- The game, installed in RPCS3 with its license and the PS3 firmware.
+- The game, installed in RPCS3 with its license.
 - To build: Python 3.10 or later, Git, CMake, Ninja, Visual Studio with "C++ Clang Compiler for Windows", a Windows SDK, and
   about 20 GB free.
 - For the game's movies: an LGPL shared build of FFmpeg with its headers, unpacked under `..\ffmpeg`, for example
@@ -40,10 +40,6 @@ python -m venv ..\.venv
 ..\.venv\Scripts\python scripts\gowa.py doctor
 ..\.venv\Scripts\python scripts\gowa.py analyze
 ..\.venv\Scripts\python scripts\gowa.py lift
-# 3. The SPURS lock-free queues run the firmware's own libsre: copy
-#    dev_flash\sys\external\libsre.sprx from RPCS3 to a new firmware\ folder, decrypt it there to
-#    libsre.prx (Utilities > Decrypt PS3 Binaries), then:
-..\.venv\Scripts\python scripts\gowa.py lle
 ..\.venv\Scripts\python scripts\gowa.py build
 ..\.venv\Scripts\python scripts\gowa.py run
 ```
@@ -74,7 +70,7 @@ Anyone can help: by playing and reporting, or with changes to the port or to the
 
 ## Layout
 
-- `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, lle, build, run, symbolize).
+- `scripts/gowa.py`: the pipeline (doctor, setup, analyze, lift, build, run, symbolize).
 - `main.cpp`, `launcher.cpp`, `stubs.cpp`, `CMakeLists.txt`: the port itself.
 - `native/`: hand-written routines for the SPU code that costs the most.
 - `tools/hle_coverage.py`: which of the game's imports the runtime answers.
