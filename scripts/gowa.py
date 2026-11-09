@@ -718,7 +718,7 @@ def cmd_jobmods_entries(args):
 # Switchable patches of the title (scripts/title_patches.json). `lift` lifts each
 # patch's instruction edits in both forms behind the patch's guard (ppu_lifter
 # --insn-patches) and writes recompiled/gowa_title_patches.h, the guards and the
-# data edits patches.cpp applies at boot to the patches switched on in gowa.ini
+# data edits patches.cpp applies at boot to the patches switched on in ascension-r.ini
 # [patches]. Every patch is off unless switched on.
 TITLE_PATCHES_FILE = os.path.join(ROOT, "scripts", "title_patches.json")
 TITLE_PATCHES_HEADER = "gowa_title_patches.h"
@@ -891,7 +891,7 @@ def cmd_patches(args):
     for p in patches:
         say("%-24s %-24s %d PPU, %d SPU instruction edit(s), %d data edit(s): matches the ELF"
             % (p["id"], p["name"], len(p.get("ppu", [])), len(p.get("spu", [])), len(p.get("data", []))))
-    say("switch one on with [patches] <id> = on in gowa.ini, --set patches.<id>=on or "
+    say("switch one on with [patches] <id> = on in ascension-r.ini, --set patches.<id>=on or "
         "GOWA_PATCH_<ID>=1; `lift` and `build` after a change to the file")
     return 0
 
@@ -1159,15 +1159,18 @@ def ini_set(lines, section, key, value, keep=False):
 
 
 def write_settings(ffmpeg):
-    """build/gowa.ini: this machine's paths, so GowARecomp.exe starts
+    """build/ascension-r.ini: this machine's paths, so Ascension-R.exe starts
     without this script. A player's settings in the file are kept."""
-    path = os.path.join(BUILD, "gowa.ini")
+    path = os.path.join(BUILD, "ascension-r.ini")
+    old_name = os.path.join(BUILD, "gowa.ini")
+    if not os.path.exists(path) and os.path.exists(old_name):
+        shutil.copyfile(old_name, path)  # the name before the rename; the old file stays as it is
     lines = []
     if os.path.exists(path):
         with open(path, encoding="utf-8") as f:
             lines = f.read().splitlines()
     else:
-        lines = ["; GowARecomp settings. [paths] is written by `gowa.py build`;",
+        lines = ["; Ascension-R settings. [paths] is written by `gowa.py build`;",
                  "; the other sections are the player's.", ""]
     ini_set(lines, "paths", "elf", game_elf())
     ini_set(lines, "paths", "vfs", os.path.join(ROOT, "vfs"))
@@ -1183,7 +1186,7 @@ def write_settings(ffmpeg):
 
 def cmd_run(args):
     elf = need_elf()
-    exe = os.path.join(BUILD, "GowARecomp" + (".exe" if os.name == "nt" else ""))
+    exe = os.path.join(BUILD, "Ascension-R" + (".exe" if os.name == "nt" else ""))
     if not os.path.exists(exe):
         die("no build; run `build` first")
     env = dict(os.environ)
@@ -1242,7 +1245,7 @@ def cmd_run(args):
 def cmd_replay(args):
     """SPU_JOB_REPLAY: run the jobs an SPU_JOB_CAPTURE run recorded, alone, and report the
     time per job and whether each one's output came out the same (runtime/spu/spu_jobcap.c)."""
-    exe = os.path.abspath(args.exe or os.path.join(BUILD, "GowARecomp" + (".exe" if os.name == "nt" else "")))
+    exe = os.path.abspath(args.exe or os.path.join(BUILD, "Ascension-R" + (".exe" if os.name == "nt" else "")))
     if not os.path.isfile(exe):
         die("no executable: " + exe)
     env = dict(os.environ)
@@ -1274,9 +1277,9 @@ def llvm_tool(name):
 def spu_line_frames(rvas):
     """RVA -> the frames llvm-symbolizer gives for it (innermost first) as
     (function, file, line), from the PDB a PORT_SPU_LINES build writes."""
-    exe = os.path.join(BUILD, "GowARecomp.exe")
-    if not os.path.exists(os.path.join(BUILD, "GowARecomp.pdb")):
-        die("no build/GowARecomp.pdb: build with --spu-lines")
+    exe = os.path.join(BUILD, "Ascension-R.exe")
+    if not os.path.exists(os.path.join(BUILD, "Ascension-R.pdb")):
+        die("no build/Ascension-R.pdb: build with --spu-lines")
     sym = llvm_tool("llvm-symbolizer")
     if not sym:
         die("llvm-symbolizer not found")
@@ -1426,7 +1429,7 @@ def cmd_symbolize(args):
     """Name the runtime-code RVAs in a PS3_SAMPLE report ("[samp] rva 0x...")
     from the linker map the build writes next to the executable. Only valid
     for the build that produced the log."""
-    mp = args.map or os.path.join(BUILD, "GowARecomp.map")
+    mp = args.map or os.path.join(BUILD, "Ascension-R.map")
     if not os.path.exists(mp):
         die("no %s; rebuild (the map is written at link time)" % os.path.relpath(mp, ROOT))
     base, syms = 0x140000000, []
@@ -1523,7 +1526,7 @@ def main():
     p.add_argument("--wid", type=int, help="with --rvas from PS3_SAMPLE_THREAD: only samples of "
                                          "SPURS workers running this workload")
     p.add_argument("--map", help="the linker map of the build that recorded the samples (default "
-                                 "build/GowARecomp.map; a later build moves the runtime's functions)")
+                                 "build/Ascension-R.map; a later build moves the runtime's functions)")
     p.add_argument("--callers", action="store_true",
                    help="with --rvas: name a sample outside the executable by the caller in it "
                         "found on the stack (PS3_SAMPLE_THREAD files)")
@@ -1537,7 +1540,7 @@ def main():
     p.add_argument("dir", help="the folder the capture wrote")
     p.add_argument("--reps", type=int, default=10, help="runs per job (default 10)")
     p.add_argument("--only", help="only files whose name contains this, e.g. _w15_")
-    p.add_argument("--exe", help="the executable (default build/GowARecomp.exe; built with --jobcap, "
+    p.add_argument("--exe", help="the executable (default build/Ascension-R.exe; built with --jobcap, "
                                   "the same runtime as the capture)")
     p.add_argument("--cmp", choices=("state", "strict"), default="state",
                    help="state (default): the requests, PUT and mailbox bytes, the local store in --state "

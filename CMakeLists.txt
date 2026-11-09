@@ -354,7 +354,7 @@ target_sources(${PROJECT_NAME} PRIVATE ${ZLIB_INFLATE_SOURCES})
 #                          was compiled in both forms -- the exact one widened to
 #                          double beside the native one -- about two and a half
 #                          times the code of a float-heavy job, for the same
-#                          results (docs/notes/2026-10-28-spu-codegen-design.md).
+#                          results.
 #   PORT_SPU_FLOAT_APPROX -- with PORT_SPU_FLOAT_RZ_ONLY: a zero result of an SPU
 #                          float operation keeps the host's sign, -0 where the SPU
 #                          has +0 (SPU_FLOAT_APPROX), which saves the two
@@ -480,7 +480,9 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 
 # The runtime is C++, and on Apple also Objective-C. Letting CMake infer the
 # link language from the generated C would leave the C++ standard library out.
-set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX)
+# What a player sees. The target keeps its name, so the objects' paths do not change.
+set(PORT_EXE_NAME "Ascension-R")
+set_target_properties(${PROJECT_NAME} PROPERTIES LINKER_LANGUAGE CXX OUTPUT_NAME "${PORT_EXE_NAME}")
 
 # Windows system import libraries. dbghelp symbolizes crash-handler addresses
 # against the PDB, user32 and gdi32 are what the backend's window and its GDI
@@ -497,7 +499,7 @@ if(WIN32)
     # A linker map, so the PS3_SAMPLE profiler's raw RVAs in runtime code can be
     # named (tools: scripts/gowa.py symbolize). Costs nothing at run time.
     if(MSVC)
-        target_link_options(${PROJECT_NAME} PRIVATE "/MAP:${CMAKE_BINARY_DIR}/${PROJECT_NAME}.map")
+        target_link_options(${PROJECT_NAME} PRIVATE "/MAP:${CMAKE_BINARY_DIR}/${PORT_EXE_NAME}.map")
     endif()
 endif()
 

@@ -2,7 +2,7 @@
 RPCS3 or the port, the same way for both -- with ReadProcessMemory only.
 
     py scripts/guestscope.py capture --proc rpcs3.exe --at 367 --seconds 90 --out rp.json
-    py scripts/guestscope.py capture --proc GowARecomp.exe --at 220 --seconds 90 --out port.json
+    py scripts/guestscope.py capture --proc Ascension-R.exe --at 220 --seconds 90 --out port.json
     py scripts/guestscope.py report rp.json:24.7 port.json:15.6     # SPUs per workload
     py scripts/guestscope.py jobs rp.json:24.7 port.json:15.6       # jobs per list
     py scripts/guestscope.py edge rp.json port.json                 # EDGE jobs per contention

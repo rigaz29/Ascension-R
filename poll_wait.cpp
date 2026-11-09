@@ -1,5 +1,5 @@
 /*
- * GowARecomp -- the main thread's polling loops wait instead of spinning.
+ * Ascension-R -- the main thread's polling loops wait instead of spinning.
  *
  * The title's main thread waits for its SPU jobs by polling: it scans its job
  * graph for entries that became ready (func_0044CD20 / func_0044D120 around

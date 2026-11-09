@@ -1,5 +1,5 @@
 /*
- * gowa-recomp -- finding the game on this PC
+ * Ascension-R -- finding the game on this PC
  *
  * The game's folder reaches the port through two directory junctions, <vfs>\PS3_GAME and
  * <hdd0>\game\NPUA80918, as `gowa.py setup` makes them. The launcher reads the first to show where

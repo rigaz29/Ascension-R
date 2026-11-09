@@ -1,5 +1,5 @@
 /*
- * GowARecomp -- the launcher's cheats. [cheats] damage_taken and damage_dealt scale what a hit takes,
+ * Ascension-R -- the launcher's cheats. [cheats] damage_taken and damage_dealt scale what a hit takes,
  * 0 taken being infinite health and "kill" dealt one hit kill. max_orbs, infinite_magic,
  * infinite_rage and infinite_jumps: the meters of red orbs (tPowerUpMeter), magic
  * (tMagicMeterPlayer), items (tItemMeter) and rage (tRageMeter), and the flag of the jump in the air.

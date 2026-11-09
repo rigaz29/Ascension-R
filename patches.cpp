@@ -1,5 +1,5 @@
 /*
- * gowa-recomp -- switchable patches of the title
+ * Ascension-R -- switchable patches of the title
  *
  * scripts/title_patches.json lists them. `gowa.py lift` lifts each patch's
  * instruction edits in both forms behind the patch's guard (ppu_lifter
@@ -8,7 +8,7 @@
  * is in guest memory and before the title runs, each patch that is switched on
  * gets its data edits written and its guard set:
  *
- *   [patches] disable_mlaa = on       in gowa.ini (what a launcher row would write)
+ *   [patches] disable_mlaa = on       in ascension-r.ini (what a launcher row would write)
  *   --set patches.disable_mlaa=on     on the command line
  *   GOWA_PATCH_DISABLE_MLAA=1         in the environment
  *

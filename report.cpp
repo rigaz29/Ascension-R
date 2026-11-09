@@ -1,5 +1,5 @@
 /*
- * gowa-recomp -- what a session leaves behind when something goes wrong
+ * Ascension-R -- what a session leaves behind when something goes wrong
  *
  * Everyone builds this port on their own PC, with their own GPU and driver, and the problems worth
  * knowing about are the ones that do not happen on the machine it was written on.
@@ -16,7 +16,7 @@
  *    only when asked for, without the game's own images and sounds. missed_code.txt stays out: its
  *    rows start with bytes of the game's code.
  *
- * `GowARecomp --report [--with-saves]` makes one without the window.
+ * `Ascension-R --report [--with-saves]` makes one without the window.
  */
 #include "report.h"
 
@@ -889,7 +889,7 @@ int gowa_report_create(int with_saves, char* out, size_t n)
     z.at = 0;
     z.bad = 0;
 
-    std::string note = strf("GowARecomp problem report, made %04u-%02u-%02u %02u:%02u:%02u\n\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    std::string note = strf("Ascension-R problem report, made %04u-%02u-%02u %02u:%02u:%02u\n\n", st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
     note += system_text();
     GameInfo g;
     const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);

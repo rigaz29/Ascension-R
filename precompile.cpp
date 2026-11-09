@@ -1,6 +1,6 @@
 /*
  * Precompile: the game's vertex programs, from its archives, into the shader cache before it runs.
- * GowARecomp.exe --precompile-shaders [--settings <file>]; the launcher's Precompile shaders runs it.
+ * Ascension-R.exe --precompile-shaders [--settings <file>]; the launcher's Precompile shaders runs it.
  *
  * The programs sit in the WAD and AS files inside the PSARC archives beside the executable, each behind a header
  * of the engine's own: the instruction count (u16), 0 (u16), the input and output masks (u32 each), 0020FFFF, and

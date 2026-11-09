@@ -1,6 +1,6 @@
 """Level benchmark: drive the port to the first level and measure flips/s.
 
-    gowa.py bench                                   # build/GowARecomp.exe, one run
+    gowa.py bench                                   # build/Ascension-R.exe, one run
     gowa.py bench --runs 2 --variant "a|build/ab_a.exe|" --variant "b|build/ab_b.exe|RSX_ZPASS=0"
     gowa.py bench --baseline logs/bench-<stamp>/result.json --shots 75,140 --gpu 100
     gowa.py bench --variant "fsr|||--set graphics.scaling=fsr1 --set display.window_size=1600x900"
@@ -76,8 +76,8 @@ WM_CLOSE, WM_KEYDOWN, VK_F12 = 0x0010, 0x0100, 0x7B
 def add_args(p):
     p.add_argument("--variant", action="append", default=[],
                    help='"name|exe|ENV=1;ENV2=0|ARGS" (exe relative to the repo; default '
-                        '"base|build/GowARecomp.exe|"; ARGS: the executable\'s own, e.g. '
-                        '"--set graphics.antialiasing=smaa"; gowa.ini is not changed); repeat for an A/B')
+                        '"base|build/Ascension-R.exe|"; ARGS: the executable\'s own, e.g. '
+                        '"--set graphics.antialiasing=smaa"; ascension-r.ini is not changed); repeat for an A/B')
     p.add_argument("--runs", type=int, default=1, help="runs per variant, alternated (default 1)")
     p.add_argument("--env", action="append", default=[], help="K=V for every variant")
     p.add_argument("--menu-fps", type=float, default=30.0,
@@ -484,7 +484,7 @@ def take_shot(pid, shots_dir, dest):
 
 def parse_variant(s):
     f = s.split("|")
-    name, exe = f[0], f[1] if len(f) > 1 and f[1] else os.path.join("build", "GowARecomp.exe")
+    name, exe = f[0], f[1] if len(f) > 1 and f[1] else os.path.join("build", "Ascension-R.exe")
     env = {}
     for kv in (f[2].split(";") if len(f) > 2 else []):
         if "=" in kv:

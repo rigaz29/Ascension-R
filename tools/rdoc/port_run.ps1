@@ -2,8 +2,8 @@
 # given route, and at each of the -At seconds after it starts (a comma list) one capture of -Frames
 # frames through trigger.py (the target is named after the exe). The captures land in build\rdoc
 # (RENDERDOC_DIR); <Out> gets the bench's output and trigger.log names the captures.
-#   port_run.ps1 -Out logs\rdoc-menu -Exe build\GowARecomp.exe -At 45 -BenchArgs "--route","200","--until","60"
-param([Parameter(Mandatory = $true)][string]$Out, [string]$Exe = "build\GowARecomp.exe", [string]$At = "45",
+#   port_run.ps1 -Out logs\rdoc-menu -Exe build\Ascension-R.exe -At 45 -BenchArgs "--route","200","--until","60"
+param([Parameter(Mandatory = $true)][string]$Out, [string]$Exe = "build\Ascension-R.exe", [string]$At = "45",
       [int]$Frames = 1, [string[]]$BenchArgs = @("--route", "200", "--until", "60"), [string]$ExtraEnv = "")
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $repo = Split-Path -Parent (Split-Path -Parent $here)

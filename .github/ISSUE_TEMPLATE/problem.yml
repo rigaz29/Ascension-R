@@ -5,7 +5,7 @@ body:
     attributes:
       value: |
         In the launcher, press **Report a problem** (down the sidebar) and attach the zip it makes.
-        If the launcher does not open, run `GowARecomp --report` from the folder of the exe. The zip goes in `logs`.
+        If the launcher does not open, run `Ascension-R --report` from the folder of the exe. The zip goes in `logs`.
 
         Do not attach game files, keys or firmware.
   - type: textarea

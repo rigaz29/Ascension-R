@@ -1,8 +1,8 @@
 /*
- * gowa-recomp -- the launcher
+ * Ascension-R -- the launcher
  *
  * The settings window shown before the game starts. It reads and writes
- * gowa.ini through ps3_settings, so what it shows is what the game will use:
+ * ascension-r.ini through ps3_settings, so what it shows is what the game will use:
  * Play saves and starts, Save saves, Defaults puts this port's defaults back
  * in the window (saved on Save or Play), Quit leaves without starting.
  * launcher.show = off skips it; holding Shift while the game starts brings it
@@ -438,7 +438,7 @@ static void open_keys(void)
                              r.right - r.left, r.bottom - r.top, s_main, NULL, GetModuleHandleA(NULL), NULL);
     if (!s_keys) return;
     add(s_keys, "STATIC", "Click an action, then press a key or a mouse button. Backspace clears it, "
-        "Esc gives up. Edit gowa.ini to give an action more than one key.", 0, 12, 10, 556, 34, -1);
+        "Esc gives up. Edit ascension-r.ini to give an action more than one key.", 0, 12, 10, 556, 34, -1);
     for (int i = 0; i < N_KB; i++) {
         const int col = i % 2, row = i / 2, x = 12 + col * 286, y = 52 + row * 30;
         add(s_keys, "STATIC", k_kb[i][1], SS_CENTERIMAGE, x, y, 110, 24, -1);
@@ -837,7 +837,7 @@ static int ui_init(void)
             one_line[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             if (dots) one_line[i]->SetTrimming(&trim, dots);
         }
-        /* A path keeps its end: "C:\...\build\gowa.ini". */
+        /* A path keeps its end: "C:\...\build\ascension-r.ini". */
         DWRITE_TRIMMING at_folder = { DWRITE_TRIMMING_GRANULARITY_CHARACTER, L'\\', 2 };
         s_tf_path->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
         if (dots) s_tf_path->SetTrimming(&at_folder, dots);
@@ -1821,7 +1821,7 @@ static void pc_start(void)
 
 
 /* --- reporting a problem ------------------------------------------------------- */
-static const wchar_t k_issue_url[] = L"https://github.com/rigaz29/gowa-recomp/issues/new?template=problem.yml";
+static const wchar_t k_issue_url[] = L"https://github.com/rigaz29/Ascension-R/issues/new?template=problem.yml";
 
 /* Not imported: only version 6 of comctl32 has it. */
 typedef HRESULT (WINAPI *task_dialog_fn)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
@@ -2297,7 +2297,7 @@ extern "C" int gowa_launcher(void)
     wc.lpszClassName = "gowa_launcher";
     RegisterClassExA(&wc);
 
-    s_main = CreateWindowExA(0, "gowa_launcher", "God of War: Ascension (GowARecomp)",
+    s_main = CreateWindowExA(0, "gowa_launcher", "Ascension-R",
                              WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, CW_USEDEFAULT, CW_USEDEFAULT,
                              S((int)WIN_W), S((int)WIN_H), NULL, NULL, GetModuleHandleA(NULL), NULL);
     if (!s_main) {

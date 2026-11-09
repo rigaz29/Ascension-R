@@ -1,5 +1,5 @@
 /*
- * gowa-recomp -- finding the game on this PC (game_find.cpp)
+ * Ascension-R -- finding the game on this PC (game_find.cpp)
  */
 #ifndef GOWA_GAME_FIND_H
 #define GOWA_GAME_FIND_H

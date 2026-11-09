@@ -9,7 +9,7 @@
 # memory guard closes RPCS3 when free RAM stays under -MinFreeMB.
 param([Parameter(Mandatory = $true)][string]$Out, [int]$End = 110, [int]$ShotFrom = 5, [int]$ShotEvery = 5,
       [string]$CapAt = "", [int]$CapFrames = 1, [switch]$RenderDoc, [int]$WaitStart = 300,
-      [int]$MinFreeMB = 700, [string]$Rpcs3 = "D:\Games\PS3\RPCS3", [string]$Title = "NPUA80918",
+      [int]$MinFreeMB = 700, [Parameter(Mandatory = $true)][string]$Rpcs3, [string]$Title = "NPUA80918",
       [string]$CapDir = "")
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $rdHome = if ($env:RENDERDOC_HOME) { $env:RENDERDOC_HOME } else { "$env:USERPROFILE\tools\RenderDoc_1.47_64" }

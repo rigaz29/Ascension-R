@@ -1,4 +1,4 @@
-/* Resources of GowARecomp.exe: the manifest (gowa.manifest). */
+/* Resources of Ascension-R.exe: the manifest (gowa.manifest). */
 #include <windows.h>
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "gowa.manifest"

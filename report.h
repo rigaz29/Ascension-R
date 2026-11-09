@@ -1,5 +1,5 @@
 /*
- * gowa-recomp -- what a session leaves behind when something goes wrong (report.cpp)
+ * Ascension-R -- what a session leaves behind when something goes wrong (report.cpp)
  */
 #ifndef GOWA_REPORT_H
 #define GOWA_REPORT_H

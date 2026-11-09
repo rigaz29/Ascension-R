@@ -3,7 +3,7 @@
      per-monitor DPI awareness from the start of the process (sharp text in the
      launcher, and a game window sized in real pixels), and no elevation. -->
 <assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0" xmlns:asmv3="urn:schemas-microsoft-com:asm.v3">
-  <assemblyIdentity type="win32" name="GowARecomp" version="1.0.0.0" processorArchitecture="amd64"/>
+  <assemblyIdentity type="win32" name="Ascension-R" version="1.0.0.0" processorArchitecture="amd64"/>
   <dependency>
     <dependentAssembly>
       <assemblyIdentity type="win32" name="Microsoft.Windows.Common-Controls" version="6.0.0.0"

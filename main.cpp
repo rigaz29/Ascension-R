@@ -40,7 +40,7 @@
 #include "ps3emu/thread_name.h"   /* ps3_thread_name: per-thread CPU tables and debuggers */
 #include "ps3emu/ps3_ftrace.h"    /* ps3_ft_dump: write a PS3_FTRACE trace on quitting */
 #include "report.h"               /* what a session leaves behind */
-#include "ps3emu/ps3_settings.h"  /* gowa.ini: the player's settings and this machine's paths */
+#include "ps3emu/ps3_settings.h"  /* ascension-r.ini: the player's settings and this machine's paths */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -245,7 +245,7 @@ static DWORD WINAPI frame_clock(LPVOID)
     if (const char* e = getenv("GOWA_FRAME_CLOCK_PRIO"))
         SetThreadPriority(GetCurrentThread(), atoi(e));
     const char* title = getenv("PS3_TITLE");
-    if (!title || !*title) title = "ps3recomp";
+    if (!title || !*title) title = "Ascension-R";
 
 #if defined(_WIN32)
     /* The title's view-projection: c264-c267 in 85 of the 102 vertex programs of a level,
@@ -1095,7 +1095,7 @@ static DWORD WINAPI thread_table(LPVOID arg)
 /* ---------------------------------------------------------------------------
  * Settings and the title's environment
  * -----------------------------------------------------------------------*/
-/* gowa.ini next to the executable. */
+/* ascension-r.ini next to the executable. */
 static void default_settings_path(char* out, size_t n, const char* argv0)
 {
 #ifdef _WIN32
@@ -1110,7 +1110,13 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
     char* bslash = strrchr(exe, '\\');
     if (bslash && (!slash || bslash > slash)) slash = bslash;
     if (slash) slash[1] = 0; else exe[0] = 0;
-    snprintf(out, n, "%sgowa.ini", exe);
+    snprintf(out, n, "%sascension-r.ini", exe);
+#ifdef _WIN32
+    /* The name before the rename: copied once, and the old file is left as it is. */
+    char old_name[1100];
+    snprintf(old_name, sizeof old_name, "%sgowa.ini", exe);
+    CopyFileA(old_name, out, TRUE);
+#endif
 }
 
 #ifdef _WIN32
