@@ -15,10 +15,13 @@
  */
 #include "ppu_recomp.h"
 #include "ps3emu/ps3_settings.h"
+#include "rsx_d3d12_backend.h"
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
 
 static const uint32_t GO_PLAYER = 0x006925D0, GO_PASSIVE_AI = 0x0069EA78, GO_NEO_IO = 0x0069E920;
 static const uint32_t CREATURE_HEALTH = 0x214, CREATURE_MAX_HEALTH = 0x218, CREATURE_CONTROLLER = 0x1304;
@@ -49,8 +52,36 @@ static double read_float(uint64_t addr)
     return f;
 }
 
+
+/* Where Kratos is, for the foot of the stats panel. In a level two of the title's globals point at his creature, whose
+ * world matrix ends in his position at +0x40. Between levels they may point at nothing: only memory that is there is read. */
+static const uint32_t PLAYER_GLOBALS[] = { 0x009BC3D0, 0x009C1830 };
+static const uint32_t CREATURE_POSITION = 0x40;
+
+static int is_there(uint32_t addr, uint32_t bytes)
+{
+    MEMORY_BASIC_INFORMATION mi;
+    if (!VirtualQuery(vm_base + addr, &mi, sizeof mi) || mi.State != MEM_COMMIT) return 0;
+    return (uint8_t*)mi.BaseAddress + mi.RegionSize >= vm_base + (uint64_t)addr + bytes;
+}
+
+static int position_line(char* out, int max)
+{
+    for (uint32_t g : PLAYER_GLOBALS) {
+        if (!is_there(g, 4)) continue;
+        const uint32_t p = vm_read32(g);
+        if (!on_heap(p) || !is_there(p, CREATURE_CONTROLLER + 4)) continue;
+        const uint32_t controller = vm_read32(p + CREATURE_CONTROLLER);
+        if (!on_heap(controller) || !is_there(controller, 4) || vm_read32(controller) != GO_PLAYER) continue;
+        return snprintf(out, (size_t)max, "X %.1f   Y %.1f   Z %.1f", read_float(p + CREATURE_POSITION),
+                        read_float(p + CREATURE_POSITION + 4), read_float(p + CREATURE_POSITION + 8));
+    }
+    return snprintf(out, (size_t)max, "X -   Y -   Z -");
+}
+
 extern "C" void gowa_cheats_apply(void)
 {
+    rsx_d3d12_backend_overlay_line(position_line);
     const double taken = atof(ps3_settings_str("cheats", "damage_taken", "GOWA_CHEAT_DAMAGE_TAKEN", "1"));
     s_taken = taken < 0.0 ? 0.0 : taken > 1.0 ? 1.0 : taken;
     const char* dealt = ps3_settings_str("cheats", "damage_dealt", "GOWA_CHEAT_DAMAGE_DEALT", "1");
