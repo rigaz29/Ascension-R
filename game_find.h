@@ -24,6 +24,12 @@ struct GameInfo {
     GameState state;
 };
 
+/* Whether a file is the GOWA.elf this port was made from. */
+int game_elf_ok(const wchar_t* path);
+
+/* A file's SHA-256 in lower-case hex. 1 = read. */
+int game_file_sha256(const wchar_t* path, char hex[65]);
+
 /* What a folder given as it is holds. */
 GameState game_probe(const wchar_t* dir, GameInfo* g);
 
@@ -40,6 +46,7 @@ struct GameSearch {
     void (*now)(const wchar_t* dir);         /* the folder being read; may be NULL */
     int seconds;                             /* how long it may take */
     int copies;                              /* out: how many copies of this title it saw */
+    int good_enough;                         /* the state that ends the search; 0, GAME_OK */
 };
 
 /* Walks the folders, the ones that sound like games first, and stops at the first copy that is

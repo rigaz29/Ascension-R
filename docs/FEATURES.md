@@ -6,6 +6,11 @@ build from source does.
 
 ## Game folder, shaders, logs and recordings
 
+The launcher finds the game's folder and decrypts `GOWA.SELF` by itself, with RPCS3 and the game's license file (`.rap`). It looks for
+both beside the game when the game is installed in RPCS3, and otherwise asks. It can download the official RPCS3 build for this, once, if
+you say so, and it removes it again. It works on copies in the folder of the settings and writes nothing to the game's folder or to an
+RPCS3 of yours. `Ascension-R --prepare-game <folder> [--rpcs3 <rpcs3.exe>] [--rap <file>]` does the same without the window.
+
 The launcher shows the game's folder in its System tab. Browse picks another one, and Auto detect looks for the game
 on every disk; it starts by itself when the game is not where the settings say.
 

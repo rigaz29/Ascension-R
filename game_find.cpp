@@ -75,15 +75,14 @@ static int sfo_read(const wchar_t* path, GameInfo* g)
     return found;
 }
 
-/* Whether a file's SHA-256 is k_elf_sha256. */
-static int elf_is_ours(const wchar_t* path)
+int game_file_sha256(const wchar_t* path, char hex[65])
 {
     HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_DELETE, NULL, OPEN_EXISTING,
                            FILE_FLAG_SEQUENTIAL_SCAN, NULL);
     if (f == INVALID_HANDLE_VALUE) return 0;
     BCRYPT_ALG_HANDLE alg = NULL;
     BCRYPT_HASH_HANDLE hash = NULL;
-    int same = 0;
+    int done = 0;
     if (BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0) == 0 &&
         BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0) == 0) {
         static const DWORD CHUNK = 1u << 20;
@@ -94,15 +93,20 @@ static int elf_is_ours(const wchar_t* path)
         free(b);
         unsigned char sum[32];
         if (ok && BCryptFinishHash(hash, sum, sizeof sum, 0) == 0) {
-            char hex[65];
             for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", sum[i]);
-            same = !strcmp(hex, k_elf_sha256);
+            done = 1;
         }
     }
     if (hash) BCryptDestroyHash(hash);
     if (alg) BCryptCloseAlgorithmProvider(alg, 0);
     CloseHandle(f);
-    return same;
+    return done;
+}
+
+int game_elf_ok(const wchar_t* path)
+{
+    char hex[65];
+    return game_file_sha256(path, hex) && !strcmp(hex, k_elf_sha256);
 }
 
 static int is_file(const wchar_t* path)
@@ -129,7 +133,7 @@ GameState game_probe(const wchar_t* dir, GameInfo* g)
     if (strcmp(g->title_id, k_title_id)) return g->state = GAME_OTHER_TITLE;
     swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.elf", g->dir);
     if (!is_file(p)) return g->state = GAME_NO_ELF;
-    return g->state = strcmp(g->app_ver, k_app_ver) || !elf_is_ours(p) ? GAME_OTHER_BUILD : GAME_OK;
+    return g->state = strcmp(g->app_ver, k_app_ver) || !game_elf_ok(p) ? GAME_OTHER_BUILD : GAME_OK;
 }
 
 int game_read_info(const wchar_t* dir, GameInfo* g)
@@ -238,7 +242,8 @@ GameState game_search(GameSearch* s, GameInfo* best)
         }
     }
     const int max_depth = s->under ? 12 : 9;
-    while (best->state != GAME_OK && (!hot.empty() || !cold.empty())) {
+    const GameState enough = s->good_enough ? (GameState)s->good_enough : GAME_OK;
+    while (best->state < enough && (!hot.empty() || !cold.empty())) {
         if ((s->stop && *s->stop) || GetTickCount64() >= until) break;
         Dir d;
         if (!hot.empty()) { d = std::move(hot.back()); hot.pop_back(); }

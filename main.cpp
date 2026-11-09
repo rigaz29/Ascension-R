@@ -1264,6 +1264,7 @@ static LONG WINAPI crash_report(EXCEPTION_POINTERS* ep)
 /* launcher.cpp: this port's defaults, and the settings window. */
 extern "C" void gowa_port_defaults(void);
 extern "C" int  gowa_launcher(void);   /* 1 = play, 0 = quit */
+extern "C" int  gowa_prepare_cli(const char* game, const char* rpcs3, const char* rap, const char* settings);   /* game_prepare.cpp */
 /* patches.cpp: the title patches switched on in [patches], applied once the
  * ELF is in guest memory and before the title runs. */
 extern "C" void gowa_title_patches_apply(void);
@@ -1488,6 +1489,7 @@ int main(int argc, char** argv)
     char settings_buf[1100];
     const char* sets[32];
     int nsets = 0, no_launcher = 0, precompile = 0, report = 0, report_saves = 0;
+    const char* prepare = NULL, *prep_rpcs3 = NULL, *prep_rap = NULL;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--settings") && i + 1 < argc)            settings = argv[++i];
         else if (!strcmp(argv[i], "--set") && i + 1 < argc)            { if (nsets < 32) sets[nsets++] = argv[++i]; else ++i; }
@@ -1495,9 +1497,13 @@ int main(int argc, char** argv)
         else if (!strcmp(argv[i], "--precompile-shaders"))             precompile = 1;
         else if (!strcmp(argv[i], "--report"))                         report = 1;
         else if (!strcmp(argv[i], "--with-saves"))                     report_saves = 1;
+        else if (!strcmp(argv[i], "--prepare-game") && i + 1 < argc)   prepare = argv[++i];
+        else if (!strcmp(argv[i], "--rpcs3") && i + 1 < argc)          prep_rpcs3 = argv[++i];
+        else if (!strcmp(argv[i], "--rap") && i + 1 < argc)            prep_rap = argv[++i];
         else if (!elf)                                                 elf = argv[i];
     }
     if (!settings) { default_settings_path(settings_buf, sizeof settings_buf, argv[0]); settings = settings_buf; }
+    if (prepare) return gowa_prepare_cli(prepare, prep_rpcs3, prep_rap, settings);
 #ifdef _WIN32
     if (!precompile && !report) {
         session_log(settings);

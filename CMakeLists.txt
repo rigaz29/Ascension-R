@@ -256,6 +256,7 @@ add_executable(${PROJECT_NAME}
     launcher.cpp
     report.cpp
     game_find.cpp
+    game_prepare.cpp
     stubs.cpp
     poll_wait.cpp
     cheats.cpp

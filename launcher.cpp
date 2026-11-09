@@ -33,6 +33,7 @@
 #include "win32_compat.h"
 #include "ps3emu/ps3_settings.h"
 #include "game_find.h"
+#include "game_prepare.h"
 #include "report.h"
 
 #include <stdio.h>
@@ -516,6 +517,7 @@ static struct {
 } s_rc;
 
 static const wchar_t* W(const char* s);
+static const char* U8(const wchar_t* s);
 
 /* The game's folder, as the links give it. */
 static struct {
@@ -535,7 +537,28 @@ static struct {
     wchar_t now[GAME_PATH_MAX];        /* the folder being read */
 } s_find;
 
+/* GOWA.SELF to GOWA.elf, on a thread of its own. */
+static struct {
+    HANDLE thread;
+    volatile long step;                /* 1 downloading RPCS3, 2 decrypting */
+    int ok;
+    int download;                      /* the player asked for RPCS3 to be downloaded */
+    wchar_t rpcs3[GAME_PATH_MAX], rap[GAME_PATH_MAX], game[GAME_PATH_MAX], data[GAME_PATH_MAX];
+    wchar_t err[320];
+} s_prep;
+
 static void path_slashes(wchar_t* p) { for (; *p; p++) if (*p == L'/') *p = L'\\'; }
+
+/* A file beside the settings; "" gives the folder. */
+static void data_file(wchar_t* out, size_t n, const wchar_t* name)
+{
+    wchar_t d[GAME_PATH_MAX];
+    swprintf(d, GAME_PATH_MAX, L"%ls", W(ps3_settings_path()));
+    path_slashes(d);
+    if (wchar_t* s = wcsrchr(d, L'\\')) *s = 0;
+    if (name[0]) swprintf(out, n, L"%ls\\%ls", d, name);
+    else swprintf(out, n, L"%ls", d);
+}
 
 static void game_links(void)
 {
@@ -564,6 +587,18 @@ static void game_refresh(void)
     if (!game_link_target(s_game.link_vfs, dir, GAME_PATH_MAX))
         swprintf(dir, GAME_PATH_MAX, L"%ls", s_game.link_vfs);   /* a real folder, or none */
     game_probe(dir, &s_game.g);
+    if (s_game.g.state == GAME_NO_ELF) {   /* decrypted here: the game's folder is only read */
+        wchar_t p[GAME_PATH_MAX + 16];
+        data_file(p, sizeof p / sizeof p[0], L"GOWA.elf");
+        if (game_elf_ok(p)) {
+            s_game.g.state = GAME_OK;
+            const char* was = ps3_settings_str("paths", "elf", NULL, NULL);
+            if (!was || strcmp(was, U8(p))) {
+                ps3_settings_set("paths", "elf", U8(p));
+                ps3_settings_save(NULL);
+            }
+        }
+    }
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
     s_rc.elf_ok = elf && *elf && GetFileAttributesA(elf) != INVALID_FILE_ATTRIBUTES;
 }
@@ -594,7 +629,14 @@ static int game_status(wchar_t* b, size_t n)
                  game_version());
         return 0;
     case GAME_NO_ELF:
-        swprintf(b, n, L"Decrypt USRDIR\\GOWA.SELF to GOWA.elf with RPCS3 (Utilities > Decrypt PS3 Binaries)");
+        if (s_prep.thread) {
+            swprintf(b, n, s_prep.step == 1 ? L"Downloading RPCS3 (37 MB)\x2026" : L"Decrypting the game\x2026");
+            return 2;
+        }
+        if (s_prep.err[0]) swprintf(b, n, L"%ls", s_prep.err);
+        else swprintf(b, n, !s_prep.rap[0] && !s_prep.rpcs3[0] ? L"To decrypt the game this needs RPCS3 and its license file (.rap)"
+                            : !s_prep.rap[0] ? L"To decrypt the game this needs its license file (.rap)"
+                                             : L"To decrypt the game this needs RPCS3");
         return -1;
     case GAME_OTHER_TITLE:
         swprintf(b, n, L"That is %ls %ls. This port runs NPUA80918 1.12", W(g.title_id), game_version());
@@ -933,6 +975,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
     H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE, H_REPORT,
+    H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY,
     H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
@@ -1245,8 +1288,12 @@ static void draw_play(void)
     float y = cy + 54;
     if (s_find.thread) {
         check_line(x0 + 22, y, cw - 44, 2, L"Looking for the game\x2026");
+    } else if (s_prep.thread) {
+        wchar_t b[100];
+        game_status(b, 100);
+        check_line(x0 + 22, y, cw - 44, 2, b);
     } else if (!s_rc.elf_ok) {
-        check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"GOWA.elf missing (System tab)"
+        check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
                                                                            : L"Game not found");
         w_button(L"Find game", R(x0 + cw - 118, y - 2, 96, 30), H_GAME_AUTO, 0);
     } else if (s_game.g.state == GAME_OTHER_BUILD) {
@@ -1335,7 +1382,11 @@ static void draw_play(void)
 }
 
 /* The game's folder: the first row of the System tab. */
-static const float GAME_ROW_H = 106.0f;
+static const float GAME_ROW_H = 106.0f, GAME_ROW_ASK_H = 46.0f;
+
+/* Whether the row asks for what the decrypting needs. */
+static int prep_asks(void) { return s_game.g.state == GAME_NO_ELF && !s_prep.thread && !s_find.thread; }
+static float game_row_h(void) { return GAME_ROW_H + (prep_asks() ? GAME_ROW_ASK_H : 0.0f); }
 
 static void draw_game_row(float x, float y, float w)
 {
@@ -1357,6 +1408,19 @@ static void draw_game_row(float x, float y, float w)
         const int level = game_status(b, sizeof b / sizeof b[0]);
         check_line(x, y + 74, w, level, b);
     }
+    if (prep_asks()) {
+        const float by = y + 106;
+        float bx = x;
+        w_button(L"Choose rpcs3.exe\x2026", R(bx, by, 164, SEG_H), H_PICK_RPCS3, 0);
+        bx += 174;
+        if (!s_prep.rpcs3[0]) {
+            w_button(L"Download RPCS3", R(bx, by, 150, SEG_H), H_GET_RPCS3, 0);
+            bx += 160;
+        }
+        w_button(L"Choose .rap\x2026", R(bx, by, 132, SEG_H), H_PICK_RAP, 0);
+        bx += 142;
+        if (s_prep.err[0] && s_prep.rpcs3[0] && s_prep.rap[0]) w_button(L"Try again", R(bx, by, 110, SEG_H), H_PREP_RETRY, 0);
+    }
 }
 
 static void draw_settings(int tab)
@@ -1377,7 +1441,7 @@ static void draw_settings(int tab)
     for (int r = 0; r < nr; r++) ch += opt_row_h(*rows[r], rw);
     if (tab == T_CONTROLS) { klh = label_h(keys_desc, rw - 212, &kdh); ch += row_h(klh); }
     if (tab == T_PATCHES) ch += 34.0f;
-    if (tab == T_SYSTEM) ch += GAME_ROW_H;
+    if (tab == T_SYSTEM) ch += game_row_h();
     ch += 16.0f;
     const float view = WIN_H - FOOT_H - 12.0f - cy;
     s_scroll_max[tab] = ch > view ? ch - view : 0.0f;
@@ -1393,7 +1457,7 @@ static void draw_settings(int tab)
     float y = cy + 16 - off;
     if (tab == T_SYSTEM) {
         draw_game_row(rx, y, rw);
-        y += GAME_ROW_H;
+        y += game_row_h();
         w_rule(rx, y, rw);
     }
     for (int r = 0; r < nr; r++) {
@@ -1546,7 +1610,7 @@ static void toast_bad(const char* s)
 }
 
 /* --- the game's folder -------------------------------------------------------- */
-enum { WM_GAME_FOUND = WM_APP + 1 };
+enum { WM_GAME_FOUND = WM_APP + 1, WM_GAME_PREPARED = WM_APP + 20 };
 
 static const char* U8(const wchar_t* s)
 {
@@ -1601,7 +1665,7 @@ static void find_now(const wchar_t* dir)
 
 static DWORD WINAPI find_thread(LPVOID)
 {
-    GameSearch s = { s_find.under[0] ? s_find.under : NULL, &s_find.stop, find_now, 60, 0 };
+    GameSearch s = { s_find.under[0] ? s_find.under : NULL, &s_find.stop, find_now, 60, 0, GAME_NO_ELF };
     GameInfo close, best;
     memset(&close, 0, sizeof close);
     if (s.under) game_locate(s.under, &close);   /* the folder itself, or the usual places in it */
@@ -1633,6 +1697,62 @@ static void find_end(void)
     s_find.thread = NULL;
 }
 
+static DWORD WINAPI prepare_thread(LPVOID)
+{
+    wchar_t exe[GAME_PATH_MAX], err[320] = L"";
+    int fetched = 0, ok = 1;
+    swprintf(exe, GAME_PATH_MAX, L"%ls", s_prep.rpcs3);
+    if (!exe[0]) {
+        s_prep.step = 1;
+        ok = fetched = game_fetch_rpcs3(s_prep.data, exe, GAME_PATH_MAX, err, 320);
+    }
+    if (ok) {
+        s_prep.step = 2;
+        ok = game_prepare(s_prep.game, exe, s_prep.rap, s_prep.data, err, 320);
+    }
+    if (fetched) game_drop_rpcs3(s_prep.data);
+    swprintf(s_prep.err, 320, L"%ls", err);
+    s_prep.ok = ok;
+    PostMessageA(s_main, WM_GAME_PREPARED, 0, 0);
+    return 0;
+}
+
+/* Decrypts the game if what that takes is known; otherwise the game's row asks for it. */
+static void prepare_begin(void)
+{
+    if (s_prep.thread || s_game.g.state != GAME_NO_ELF) return;
+    if (!s_prep.rpcs3[0]) game_find_rpcs3(s_game.g.dir, s_prep.rpcs3, GAME_PATH_MAX);
+    if (!s_prep.rap[0] && s_prep.rpcs3[0]) game_find_rap(s_prep.rpcs3, s_prep.rap, GAME_PATH_MAX);
+    s_prep.err[0] = 0;
+    if (!s_prep.rap[0] || (!s_prep.rpcs3[0] && !s_prep.download)) return;
+    data_file(s_prep.data, GAME_PATH_MAX, L"");
+    swprintf(s_prep.game, GAME_PATH_MAX, L"%ls", s_game.g.dir);
+    s_prep.step = s_prep.rpcs3[0] ? 2 : 1;
+    s_prep.thread = CreateThread(NULL, 0, prepare_thread, NULL, 0, NULL);
+}
+
+static void prepare_end(void)
+{
+    if (!s_prep.thread) return;
+    WaitForSingleObject(s_prep.thread, INFINITE);
+    CloseHandle(s_prep.thread);
+    s_prep.thread = NULL;
+}
+
+static void prepare_done(void)
+{
+    prepare_end();
+    s_prep.download = 0;
+    if (!s_prep.ok) {
+        toast_bad("The game could not be decrypted");
+        return;
+    }
+    game_paths_fill();
+    game_refresh();
+    art_reload();
+    toast("Game ready");
+}
+
 /* What the search came to. */
 static void find_done(void)
 {
@@ -1642,7 +1762,10 @@ static void find_done(void)
     const int picked = s_find.under[0] != 0;
     const size_t n = sizeof s_game.note / sizeof s_game.note[0];
     if (b.state >= GAME_NO_ELF && (picked || b.state >= s_game.g.state)) {
-        if (game_use(b.dir)) toast(b.state == GAME_OK ? "Game found" : "Game folder set");
+        if (game_use(b.dir)) {
+            toast(b.state == GAME_OK ? "Game found" : "Game folder set");
+            prepare_begin();
+        }
         else toast_bad("The game's folder could not be set");
     } else if (b.state == GAME_OTHER_TITLE) {
         swprintf(s_game.note, n, L"Found %ls in %ls. This port runs NPUA80918 1.12", W(b.title_id), b.dir);
@@ -1958,6 +2081,31 @@ static void game_browse(void)
     d->Release();
 }
 
+/* A file the player points to. 1 = picked. */
+static int pick_file(const wchar_t* title, const wchar_t* kind, const wchar_t* spec, wchar_t* out, size_t n)
+{
+    IFileOpenDialog* d = NULL;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d)))) return 0;
+    COMDLG_FILTERSPEC f = { kind, spec };
+    d->SetFileTypes(1, &f);
+    d->SetTitle(title);
+    int ok = 0;
+    if (SUCCEEDED(d->Show(s_main))) {
+        IShellItem* it = NULL;
+        if (SUCCEEDED(d->GetResult(&it))) {
+            PWSTR p = NULL;
+            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
+                swprintf(out, n, L"%ls", p);
+                ok = 1;
+                CoTaskMemFree(p);
+            }
+            it->Release();
+        }
+    }
+    d->Release();
+    return ok;
+}
+
 static void act(int id)
 {
     if (id >= H_DDITEM) {
@@ -1990,6 +2138,18 @@ static void act(int id)
         case H_SHADERS: clear_shaders(); break;
         case H_PRECOMPILE: pc_start(); break;
         case H_GAME_BROWSE: game_browse(); break;
+        case H_PICK_RPCS3:
+            if (pick_file(L"Choose rpcs3.exe", L"rpcs3.exe", L"rpcs3.exe", s_prep.rpcs3, GAME_PATH_MAX)) prepare_begin();
+            break;
+        case H_GET_RPCS3:
+            s_prep.download = 1;
+            prepare_begin();
+            if (!s_prep.thread) toast("Now choose the game's license file (.rap)");
+            break;
+        case H_PICK_RAP:
+            if (pick_file(L"The game's license file", L"License file (*.rap)", L"*.rap", s_prep.rap, GAME_PATH_MAX)) prepare_begin();
+            break;
+        case H_PREP_RETRY: prepare_begin(); break;
         case H_GAME_AUTO:
             if (s_find.thread) s_find.stop = 1;
             else find_start(NULL);
@@ -2173,6 +2333,10 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         find_done();
         redraw();
         return 0;
+    case WM_GAME_PREPARED:
+        prepare_done();
+        redraw();
+        return 0;
     case WM_TIMER: {
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
         if (s_find.thread) redraw();   /* the folder it is in */
@@ -2350,6 +2514,7 @@ extern "C" int gowa_launcher(void)
         DispatchMessageA(&msg);
     }
     KillTimer(s_main, 1);
+    prepare_end();
     if (s_pc.running) {   /* the window closed under a precompile: it stops (the cache drops a cut record) */
         TerminateProcess(s_pc.proc, 1);
         WaitForSingleObject(s_pc.reader, 5000);
