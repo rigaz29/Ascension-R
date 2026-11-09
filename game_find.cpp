@@ -132,6 +132,15 @@ GameState game_probe(const wchar_t* dir, GameInfo* g)
     return g->state = strcmp(g->app_ver, k_app_ver) || !elf_is_ours(p) ? GAME_OTHER_BUILD : GAME_OK;
 }
 
+int game_read_info(const wchar_t* dir, GameInfo* g)
+{
+    memset(g, 0, sizeof *g);
+    folder_copy(g->dir, GAME_PATH_MAX, dir);
+    wchar_t p[GAME_PATH_MAX + 32];
+    swprintf(p, sizeof p / sizeof p[0], L"%ls\\PARAM.SFO", g->dir);
+    return sfo_read(p, g);
+}
+
 GameState game_locate(const wchar_t* path, GameInfo* g)
 {
     wchar_t base[GAME_PATH_MAX];

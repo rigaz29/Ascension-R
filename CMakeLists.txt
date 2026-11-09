@@ -263,6 +263,7 @@ endif()
 add_executable(${PROJECT_NAME}
     main.cpp
     launcher.cpp
+    report.cpp
     game_find.cpp
     stubs.cpp
     poll_wait.cpp
@@ -275,6 +276,28 @@ add_executable(${PROJECT_NAME}
     ${SPU_SOURCES}
     ${LIBSRE_SOURCES}
 )
+
+# The commits this build came from, for the log and the problem report. Only on report.cpp: on the
+# whole target each commit would rebuild everything. `gowa.py build` configures every time.
+find_package(Git QUIET)
+set(GOWA_PORT_COMMIT "unknown")
+set(GOWA_FORK_COMMIT "unknown")
+if(GIT_FOUND)
+    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --abbrev=8
+                    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" RESULT_VARIABLE _git_rc
+                    OUTPUT_VARIABLE _git_out OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(_git_rc EQUAL 0 AND _git_out)
+        set(GOWA_PORT_COMMIT "${_git_out}")
+    endif()
+    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --always --dirty --abbrev=8
+                    WORKING_DIRECTORY "${PS3RECOMP_DIR}" RESULT_VARIABLE _git_rc
+                    OUTPUT_VARIABLE _git_out OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+    if(_git_rc EQUAL 0 AND _git_out)
+        set(GOWA_FORK_COMMIT "${_git_out}")
+    endif()
+endif()
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/report.cpp" PROPERTIES COMPILE_DEFINITIONS
+    "GOWA_PORT_COMMIT=\"${GOWA_PORT_COMMIT}\";GOWA_FORK_COMMIT=\"${GOWA_FORK_COMMIT}\"")
 
 # zlib 1.3.1's inflate (zlib license, third_party/zlib), for precompile.cpp to read
 # the game's PSARC archives. Its own flags only: nothing goes target-wide (see the

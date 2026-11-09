@@ -79,6 +79,20 @@ The GPU's work is recorded, submitted and presented on a thread of its own, `rsx
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
 
+## Reporting a problem
+
+**Report a problem**, down the launcher's sidebar, makes a zip in `logs\` beside the settings file, for you to attach to an
+[issue](https://github.com/rigaz29/gowa-recomp/issues/new?template=problem.yml). The launcher offers it by itself after a session
+that crashed, lost the graphics device, froze or stopped with no reason in its log. `GowARecomp --report [--with-saves]` makes
+one without the window.
+
+The zip holds the logs and pad recordings of the last three sessions the game ran in, your settings, the build, your hardware and
+driver versions, and Windows' records of crashes and hangs of this exe in the last two weeks. Folder paths and your Windows account
+and PC names are hidden. The game sends nothing by itself and no game file goes in. Saves go in only if you tick the box, without
+the game's images and sounds.
+
+If no new frame comes for 15 seconds, the log gets what each thread was doing, and again at 60 (`GOWA_FREEZE_WATCH=<seconds>`, `0` = off).
+
 ## Internal resolution
 
 Internal resolution in the launcher's Graphics tab (`graphics.render_scale`) draws the scene above 720p: a number from 1

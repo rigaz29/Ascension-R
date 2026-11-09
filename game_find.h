@@ -27,6 +27,9 @@ struct GameInfo {
 /* What a folder given as it is holds. */
 GameState game_probe(const wchar_t* dir, GameInfo* g);
 
+/* Only the title's id and version, from the folder's PARAM.SFO; no hash of the game's code. 1 = read. */
+int game_read_info(const wchar_t* dir, GameInfo* g);
+
 /* The same for what a player would pick: the game's folder, the one holding PS3_GAME, an RPCS3
  * folder, its dev_hdd0, its game folder, or USRDIR. The best of them; dir says which. */
 GameState game_locate(const wchar_t* path, GameInfo* g);

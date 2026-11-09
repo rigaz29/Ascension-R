@@ -21,7 +21,9 @@
  * for it on every disk (game_find.cpp), and a window that opens with no game
  * starts looking by itself. Either sets the two links the port reads it through.
  *
- * Clear shaders, down the sidebar, moves the compiled shaders to the Recycle Bin.
+ * Report a problem, down the sidebar, makes the zip of the last sessions (report.cpp); a window that
+ * opens after a session that did not end normally offers it.
+ * Clear shaders, below it, moves the compiled shaders to the Recycle Bin.
  * Precompile shaders, above it, compiles every vertex shader in the game's
  * archives into the shader cache (precompile.cpp), in a process of its own.
  *
@@ -31,6 +33,7 @@
 #include "win32_compat.h"
 #include "ps3emu/ps3_settings.h"
 #include "game_find.h"
+#include "report.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -881,7 +884,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
  * -----------------------------------------------------------------------*/
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
-    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE,
+    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE, H_REPORT,
     H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
@@ -1084,6 +1087,11 @@ static void draw_sidebar(void)
         hit(r, id);
         y += 44.0f;
     }
+    const D2D1_RECT_F rp = R(14, WIN_H - 192, SIDE_W - 28, 40);
+    if (hovered(H_REPORT)) fill_rr(rp, 8, C_CARD);
+    text(L"\xEBE8", s_tf_icon, R(30, rp.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    text(L"Report a problem", s_tf_ui, R(64, rp.top, 160, 40), C_TEXT2);
+    hit(rp, H_REPORT);
     /* Down at the bottom: the compiled shaders and the save folder. Precompile shaders shows how far
      * it is while it runs, with a bar under its name. */
     const D2D1_RECT_F pc = R(14, WIN_H - 148, SIDE_W - 28, 40);
@@ -1776,6 +1784,101 @@ static void pc_start(void)
 }
 
 
+/* --- reporting a problem ------------------------------------------------------- */
+static const wchar_t k_issue_url[] = L"https://github.com/rigaz29/gowa-recomp/issues/new?template=problem.yml";
+
+/* Not imported: only version 6 of comctl32 has it. */
+typedef HRESULT (WINAPI *task_dialog_fn)(const TASKDIALOGCONFIG*, int*, int*, BOOL*);
+static task_dialog_fn task_dialog(void)
+{
+    HMODULE m = GetModuleHandleA("comctl32.dll");
+    return m ? (task_dialog_fn)(void*)GetProcAddress(m, "TaskDialogIndirect") : NULL;
+}
+
+/* heading: why it is offered, or NULL when the player asked. */
+static void report_make(const wchar_t* heading)
+{
+    static const wchar_t what[] =
+        L"The report is a zip file for you to attach to an issue on GitHub. The game sends nothing by itself.\n\n"
+        L"It holds the logs of your last sessions, your button presses and the files the game opened in them, your "
+        L"settings, this PC's hardware and driver versions, and Windows' records of crashes of this game.\n\n"
+        L"Folder paths and your Windows name are hidden. No game files are in it.";
+    const task_dialog_fn td = task_dialog();
+    BOOL saves = FALSE;
+    if (td) {
+        TASKDIALOG_BUTTON make = { 100, L"Make the report" };
+        TASKDIALOGCONFIG c = {};
+        c.cbSize = sizeof c;
+        c.hwndParent = s_main;
+        c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        c.dwCommonButtons = TDCBF_CANCEL_BUTTON;
+        c.pszWindowTitle = L"Report a problem";
+        c.pszMainIcon = heading ? TD_WARNING_ICON : TD_INFORMATION_ICON;
+        c.pszMainInstruction = heading ? heading : L"Make a problem report?";
+        c.pszContent = what;
+        c.pszVerificationText = L"Include my saves, so the problem can be loaded where it happened";
+        c.cButtons = 1;
+        c.pButtons = &make;
+        c.nDefaultButton = 100;
+        int pressed = 0;
+        if (FAILED(td(&c, &pressed, NULL, &saves)) || pressed != 100) return;
+    } else if (MessageBoxW(s_main, what, L"Report a problem", MB_OKCANCEL | MB_ICONINFORMATION) != IDOK) {
+        return;
+    }
+    HCURSOR was = SetCursor(LoadCursorA(NULL, (LPCSTR)IDC_WAIT));
+    static char made[1200];
+    const int failed = gowa_report_create(saves, made, sizeof made);
+    SetCursor(was);
+    if (failed) {
+        toast_bad("Could not make the report");
+        return;
+    }
+    wchar_t path[1300];
+    MultiByteToWideChar(CP_ACP, 0, made, -1, path, 1300);
+    wchar_t done[1500];
+    swprintf(done, 1500, L"%ls\n\nAttach it to a new issue and say what happened and where you were in the game.", path);
+    int pressed = 0;
+    if (td) {
+        TASKDIALOG_BUTTON b[2] = { { 101, L"Open GitHub" }, { 102, L"Show the file" } };
+        TASKDIALOGCONFIG c = {};
+        c.cbSize = sizeof c;
+        c.hwndParent = s_main;
+        c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        c.dwCommonButtons = TDCBF_CLOSE_BUTTON;
+        c.pszWindowTitle = L"Report a problem";
+        c.pszMainIcon = TD_INFORMATION_ICON;
+        c.pszMainInstruction = L"The report is ready";
+        c.pszContent = done;
+        c.cButtons = 2;
+        c.pButtons = b;
+        c.nDefaultButton = 102;
+        td(&c, &pressed, NULL, NULL);
+    } else {
+        MessageBoxW(s_main, done, L"Report a problem", MB_OK | MB_ICONINFORMATION);
+        pressed = 102;
+    }
+    if (pressed == 101) ShellExecuteW(s_main, L"open", k_issue_url, NULL, NULL, SW_SHOWNORMAL);
+    if (pressed == 102) {
+        wchar_t args[1400];
+        swprintf(args, 1400, L"/select,\"%ls\"", path);
+        ShellExecuteW(s_main, L"open", L"explorer.exe", args, NULL, SW_SHOWNORMAL);
+    }
+}
+
+/* Once per session: the next session's own log takes its place as the last one. */
+static void report_offer(void)
+{
+    const wchar_t* h = NULL;
+    switch (gowa_last_session()) {
+    case SESSION_CRASH:    h = L"The last session crashed. Make a report of it?"; break;
+    case SESSION_GPU_LOST: h = L"The last session lost the graphics device. Make a report of it?"; break;
+    case SESSION_FROZE:    h = L"The game froze in the last session. Make a report of it?"; break;
+    case SESSION_SUDDEN:   h = L"The last session stopped without saying why. Make a report of it?"; break;
+    default:               return;
+    }
+    report_make(h);
+}
+
 static void game_browse(void)
 {
     if (s_find.thread) {   /* a search under way gives way */
@@ -1835,6 +1938,7 @@ static void act(int id)
         case H_QUIT: s_done = 2; break;
         case H_KEYS: if (!s_keys) open_keys(); break;
         case H_SAVES: open_saves(); break;
+        case H_REPORT: report_make(NULL); break;
         case H_SHADERS: clear_shaders(); break;
         case H_PRECOMPILE: pc_start(); break;
         case H_GAME_BROWSE: game_browse(); break;
@@ -2180,6 +2284,7 @@ extern "C" int gowa_launcher(void)
     SetForegroundWindow(s_main);
     SetTimer(s_main, 1, 500, NULL);
     if (!s_rc.elf_ok) find_start(NULL);   /* no game yet: look for it */
+    report_offer();
 
     MSG msg;
     while (!s_done && GetMessageA(&msg, NULL, 0U, 0U) > 0) {

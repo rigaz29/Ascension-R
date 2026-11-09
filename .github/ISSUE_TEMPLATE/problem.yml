@@ -1,0 +1,41 @@
+name: Report a problem
+description: The game crashed, froze, closed by itself, or something in it is wrong.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        In the launcher, press **Report a problem** (down the sidebar) and attach the zip it makes.
+        If the launcher does not open, run `GowARecomp --report` from the folder of the exe. The zip goes in `logs`.
+
+        Do not attach game files, keys or firmware.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where in the game were you, and what were you doing?
+      description: The level or cutscene, and what you did just before.
+    validations:
+      required: true
+  - type: dropdown
+    id: again
+    attributes:
+      label: Does it happen again?
+      options:
+        - Every time
+        - Sometimes
+        - Only once so far
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: The report
+      description: Drag the zip here. If the port does not build, paste the last lines of the build's output instead.
+    validations:
+      required: true

@@ -39,6 +39,7 @@
 #include "win32_compat.h"
 #include "ps3emu/thread_name.h"   /* ps3_thread_name: per-thread CPU tables and debuggers */
 #include "ps3emu/ps3_ftrace.h"    /* ps3_ft_dump: write a PS3_FTRACE trace on quitting */
+#include "report.h"               /* what a session leaves behind */
 #include "ps3emu/ps3_settings.h"  /* gowa.ini: the player's settings and this machine's paths */
 
 #include <stdint.h>
@@ -1209,18 +1210,6 @@ static void session_log(const char* settings_path)
     }
 }
 
-/* An address as module+offset; the game's own offsets read against GowARecomp.map. */
-static void crash_where(const void* a, char* out, size_t n)
-{
-    HMODULE m = NULL;
-    char mod[MAX_PATH] = "?";
-    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                           (LPCSTR)a, &m) && m)
-        GetModuleFileNameA(m, mod, sizeof mod);
-    const char* b = strrchr(mod, '\\');
-    snprintf(out, n, "%s+0x%llX", b ? b + 1 : mod, (unsigned long long)((uintptr_t)a - (uintptr_t)m));
-}
-
 /* An exception nothing handled: its code, address and stack into the log,
  * then on as before (the runtime's filter flushes the log, Windows reports). */
 static LPTOP_LEVEL_EXCEPTION_FILTER s_prev_crash;
@@ -1228,7 +1217,7 @@ static LONG WINAPI crash_report(EXCEPTION_POINTERS* ep)
 {
     const EXCEPTION_RECORD* er = ep->ExceptionRecord;
     char w[400];
-    crash_where(er->ExceptionAddress, w, sizeof w);
+    gowa_where(er->ExceptionAddress, w, sizeof w);
     fprintf(stderr, "[crash] exception 0x%08lX at %s, thread %lu", (unsigned long)er->ExceptionCode, w,
             (unsigned long)GetCurrentThreadId());
     if (er->ExceptionCode == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
@@ -1238,7 +1227,7 @@ static LONG WINAPI crash_report(EXCEPTION_POINTERS* ep)
     fprintf(stderr, "\n");
     CONTEXT c = *ep->ContextRecord;
     for (int i = 0; i < 32 && c.Rip; i++) {
-        crash_where((const void*)c.Rip, w, sizeof w);
+        gowa_where((const void*)c.Rip, w, sizeof w);
         fprintf(stderr, "[crash]   #%d %s\n", i, w);
         DWORD64 img = 0;
         PRUNTIME_FUNCTION fe = RtlLookupFunctionEntry(c.Rip, &img, NULL);
@@ -1468,22 +1457,26 @@ int main(int argc, char** argv)
      * scripts: the settings window (launcher.cpp) is not shown.
      * --precompile-shaders: compile the game's vertex programs into the shader
      * cache and quit, the game not run (precompile.cpp; the launcher's
-     * Precompile shaders). */
+     * Precompile shaders).
+     * --report [--with-saves]: make a problem report of the last sessions and quit (report.cpp;
+     * the launcher's Report a problem). */
     const char* elf = NULL;
     const char* settings = NULL;
     char settings_buf[1100];
     const char* sets[32];
-    int nsets = 0, no_launcher = 0, precompile = 0;
+    int nsets = 0, no_launcher = 0, precompile = 0, report = 0, report_saves = 0;
     for (int i = 1; i < argc; i++) {
         if (!strcmp(argv[i], "--settings") && i + 1 < argc)            settings = argv[++i];
         else if (!strcmp(argv[i], "--set") && i + 1 < argc)            { if (nsets < 32) sets[nsets++] = argv[++i]; else ++i; }
         else if (!strcmp(argv[i], "--no-launcher"))                    no_launcher = 1;
         else if (!strcmp(argv[i], "--precompile-shaders"))             precompile = 1;
+        else if (!strcmp(argv[i], "--report"))                         report = 1;
+        else if (!strcmp(argv[i], "--with-saves"))                     report_saves = 1;
         else if (!elf)                                                 elf = argv[i];
     }
     if (!settings) { default_settings_path(settings_buf, sizeof settings_buf, argv[0]); settings = settings_buf; }
 #ifdef _WIN32
-    if (!precompile) {
+    if (!precompile && !report) {
         session_log(settings);
         s_prev_crash = SetUnhandledExceptionFilter(crash_report);
     }
@@ -1506,6 +1499,18 @@ int main(int argc, char** argv)
         *dot = 0; *eq = 0;
         ps3_settings_override(sk, dot + 1, eq + 1);
     }
+    if (report) {
+        char made[1200];
+        if (gowa_report_create(report_saves, made, sizeof made)) {
+            printf("[report] could not be made\n");
+            return 1;
+        }
+        printf("[report] %s\n", made);
+        return 0;
+    }
+#ifdef _WIN32
+    if (!precompile && s_log_path[0]) gowa_report_session_start(s_log_path);
+#endif
     if (precompile) {
         title_environment();   /* the environment the game runs in: the same shader cache keys */
         return gowa_precompile();
@@ -1607,6 +1612,7 @@ int main(int argc, char** argv)
     if (getenv("GOWA_WWS_TRACE") && !getenv("GOWA_WWS_WATCH"))
         CreateThread(NULL, 0, wws_watch, (LPVOID)(uintptr_t)10, 0, NULL);
     { extern void ps3_sampler_start(void); ps3_sampler_start(); }   /* PS3_SAMPLE=<ms> */
+    gowa_freeze_watch_start();
 
     printf("\n[boot] dispatching entry OPD 0x%08X (stack top 0x%08X)\n\n",
            entry, STACK_TOP);
