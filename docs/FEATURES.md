@@ -61,7 +61,7 @@ to 4, or `native` for the window's size. Targets the size of the display are dra
 stay at the game's size, and what the game reads back is brought down to it. FSR 3.1 and frame generation go no higher
 than the window, and the log says so. Otherwise a render larger than the window is scaled down to it. The first session
 at a new scale compiles part of the shaders again. Disable Mesh Trimming in Game patches is meant for this, though on the
-route it made no visible difference at 2x. The [note](https://github.com/rigaz29/Ascension-R/blob/notes-2026-11-09/docs/notes/2026-11-08-internal-resolution.md) has what was measured
+route it made no visible difference at 2x. The [note](notes/2026-11-08-internal-resolution.md) has what was measured
 and what has not been tried.
 
 ## FSR 3.1
@@ -87,10 +87,10 @@ Both take what moves from the title's motion blur draws, so Disable Motion Blur 
 to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a cool machine, more on a hot one.
 `graphics.frame_generation_objects = off` goes back to the camera's motion alone, and the patch applies. Both need Disable
 MLAA on: with MLAA the depth at the final composite is the next frame's, so FSR 3 stays off and the log says why. The
-[plan](https://github.com/rigaz29/Ascension-R/blob/notes-2026-11-09/docs/notes/2026-11-07-fsr31-plan.md) has the measurements.
+[plan](notes/2026-11-07-fsr31-plan.md) has the measurements.
 
 ## Cheats
 
 The launcher's Cheats tab: Damage to Kratos (half, a quarter or none), Kratos's damage (2x, 5x or one hit), Max red orbs,
 Infinite magic and items, Infinite rage and Infinite double jumps. All are off by default and hook the title's own code, its
-damage, its meters and its jump ([note](https://github.com/rigaz29/Ascension-R/blob/notes-2026-11-09/docs/notes/2026-11-07-cheats.md)).
+damage, its meters and its jump ([note](notes/2026-11-07-cheats.md)).

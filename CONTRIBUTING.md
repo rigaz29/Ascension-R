@@ -54,5 +54,5 @@ changed. New behaviour goes behind a setting or a build option until it has been
 
 - [docs/ANALYSIS.md](docs/ANALYSIS.md): what the game is made of.
 - [docs/PERF.md](docs/PERF.md): what has been measured.
-- The development notes up to 2026-11-09, one per session, with the old plan and progress log, are at the tag
-  [`notes-2026-11-09`](https://github.com/rigaz29/Ascension-R/tree/notes-2026-11-09/docs/notes).
+- [docs/notes](docs/notes): the development notes, one per session. The old plan and progress log are at the tag
+  [`notes-2026-11-09`](https://github.com/rigaz29/Ascension-R/tree/notes-2026-11-09).
