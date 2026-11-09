@@ -89,9 +89,15 @@ Built on the player's PC, under the data folder: the decrypted `GOWA.elf` and `l
 ### 5. Setup in the launcher: 7-10 days
 
 - CPU check first: AVX2 and FMA, with a plain message. Then disk and RAM.
-- The game's folder: the launcher's existing search.
-- Decrypting: the player's RPCS3 run with `--decrypt` on copies, with `RPCS3_CONFIG_DIR` pointing into our data folder so it writes nothing in its own (RPCS3 refuses a temporary folder). Or "I have decrypted
-  files". Either way, checked by SHA-256.
+- The game's folder: the player picks an extracted PKG or RPCS3's own copy, with the launcher's existing search.
+- Decrypting, with nothing more for the player to do:
+  1. Find RPCS3: the one the game's folder is in, else by search, else the player picks `rpcs3.exe` once.
+  2. Copy `USRDIR/GOWA.SELF`, `dev_flash/sys/external/libsre.sprx` and the game's `.rap` from `dev_hdd0/home/*/exdata` into the data folder.
+  3. Run that RPCS3 with `--decrypt` on the copies, `RPCS3_CONFIG_DIR` pointing into the data folder so it writes nothing in its own. RPCS3 refuses a temporary folder.
+  4. Check `GOWA.elf` by SHA-256. The `lle` step checks that libsre exports what the port needs, so another firmware's copy is fine if it does.
+  5. The pipeline relocates and lifts libsre from there.
+  - "I have decrypted files" stays as the other way in. With neither, a plain message says what is missing: RPCS3 with the firmware and the game's licence.
+  - Not tried yet on this project. The first thing to test here is `--decrypt` with the redirected folder, on a `.rap` copied into it.
 - Build with an estimate, progress, stop and resume. Then the shader precompile, then Play.
 - The player's game folder is only read.
 - Optional: copy the saves from RPCS3.
