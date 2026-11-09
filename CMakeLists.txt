@@ -432,13 +432,13 @@ if(SPU_SOURCES)
     endif()
 endif()
 
-# app.rc carries the icon, the version block and the manifest, and needs a
+# app.rc carries the version block and the manifest, and needs a
 # resource compiler. Listing it as a source on a host that has none is not a
 # link error, it is a "no rule to make" for a file nothing can consume.
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/app.rc")
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/app.rc" PROPERTIES
-                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gowa.manifest")
+                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/version.h")
     # The manifest comes from app.rc; the linker's own would be a second one.
     if(MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")

@@ -6,6 +6,7 @@ analysis/
 recompiled/
 spu/
 build*/
+dist/
 logs/
 scratch/
 firmware/

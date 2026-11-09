@@ -7,6 +7,8 @@
     python scripts/gowa.py lift                    PPU -> C++ -> recompiled/
     python scripts/gowa.py missed                  what the sessions ran without a lift of it
     python scripts/gowa.py build                   configure + build with clang-cl -> build/
+    python scripts/gowa.py ffmpeg                  build the small FFmpeg a release carries
+    python scripts/gowa.py package                 build and zip a release -> dist/<version>/
     python scripts/gowa.py run                     start the port, log to logs/
     python scripts/gowa.py run --trace             the same, with an ftrace of the session (stutter)
 
@@ -31,7 +33,9 @@ import shutil
 import struct
 import subprocess
 import sys
+import tarfile
 import threading
+import zipfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench  # noqa: E402  (scripts/bench.py)
@@ -162,6 +166,27 @@ DXC_DLLS = ("dxcompiler.dll", "dxil.dll")
 VC_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 FSR_DLLS = ("amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll",
             "amd_fidelityfx_upscaler_dx12.dll")
+
+# A release carries FFmpeg with only the two decoders the runtime asks for (libs/codec/vdec_ffmpeg.c) and no other library.
+FFMPEG_VERSION = "8.1.3"
+FFMPEG_TARBALL = "ffmpeg-%s.tar.xz" % FFMPEG_VERSION
+FFMPEG_URL = "https://ffmpeg.org/releases/" + FFMPEG_TARBALL
+FFMPEG_SHA256 = "7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3"
+FFMPEG_DLLS = (("libavcodec", "avcodec-62.dll"), ("libavutil", "avutil-60.dll"))
+FFMPEG_CONFIGURE = ("--arch=x86_64", "--target-os=mingw32", "--prefix=/ffmpeg", "--cc=gcc",
+                    "--disable-everything", "--disable-autodetect", "--disable-programs", "--disable-doc", "--disable-debug",
+                    "--disable-network", "--disable-static", "--enable-shared", "--disable-avdevice", "--disable-avformat",
+                    "--disable-avfilter", "--disable-swresample", "--disable-swscale",
+                    "--enable-decoder=h264", "--enable-decoder=mpeg2video", "--extra-ldflags=-static")
+FFMPEG_HOME = os.path.join(os.path.dirname(ROOT), "ffmpeg-release")
+
+DIST = os.path.join(ROOT, "dist")
+# What a release is built with: `build` keeps a bench's -D in its cache.
+RELEASE_CMAKE = {"CMAKE_BUILD_TYPE": "Release", "PS3RECOMP_NO_DECRYPT": "ON", "PS3RECOMP_FFMPEG_RUNTIME": "ON",
+                 "PORT_SPU_JOBCAP": "OFF", "PORT_SPU_LINES": "OFF", "PORT_SPU_LS_DIAG": "OFF", "PORT_SPU_FLOAT_APPROX": "OFF",
+                 "PORT_PPU_PGO": "", "PORT_SPU_PGO": ""}
+# In this PC's System32 perhaps, but not on every PC.
+NOT_SYSTEM = re.compile(r"(msvcp|vcruntime|vcomp|concrt|mfc|libgcc|libstdc|libwinpthread|d3dx|dxcompiler|dxil|avcodec|avutil)", re.I)
 
 
 def find_ffmpeg():
@@ -1040,6 +1065,223 @@ def copy_vc_runtime(env):
             shutil.copy2(os.path.join(src, f), to)
 
 
+def git_shell():
+    """Git for Windows' bash, for FFmpeg's configure. The bash in System32 is WSL's."""
+    d = os.path.dirname(shutil.which("git") or "")
+    while d != os.path.dirname(d):
+        sh = os.path.join(d, "bin", "bash.exe")
+        if os.path.isfile(sh):
+            return sh
+        d = os.path.dirname(d)
+    return None
+
+
+def cmd_ffmpeg(args):
+    """avcodec and avutil for a release, from FFmpeg's source tarball. Needs a MinGW-w64 gcc and nasm on PATH."""
+    tarball = os.path.join(FFMPEG_HOME, FFMPEG_TARBALL)
+    if not os.path.isfile(tarball):
+        die("no %s: download it from %s into %s" % (FFMPEG_TARBALL, FFMPEG_URL, FFMPEG_HOME))
+    if sha256(tarball) != FFMPEG_SHA256:
+        die("%s is not the expected file" % tarball)
+    sh = git_shell()
+    if not sh:
+        die("no bash from Git for Windows")
+    missing = [t for t in ("gcc", "nasm", "mingw32-make") if not shutil.which(t)]
+    if missing:
+        die("not on PATH: %s" % ", ".join(missing))
+    base = os.path.join(FFMPEG_HOME, "src")
+    src = os.path.join(base, "ffmpeg-" + FFMPEG_VERSION)
+    if not os.path.isfile(os.path.join(src, "configure")):
+        with tarfile.open(tarball, "r:xz") as t:
+            t.extractall(base, filter="data")
+    tmp = os.path.join(FFMPEG_HOME, "tmp")
+    os.makedirs(tmp, exist_ok=True)
+    # configure takes TMPDIR as a POSIX path: the backslashes of a Windows one are lost.
+    env = dict(os.environ, TMPDIR="/%s%s" % (tmp[0].lower(), tmp[2:].replace("\\", "/")))
+    if run([sh, "-c", "./configure " + " ".join(FFMPEG_CONFIGURE)], cwd=src, env=env):
+        die("configure failed; see %s" % os.path.join(src, "ffbuild", "config.log"))
+    if run([sh, "-c", "mingw32-make -j" + args.jobs], cwd=src, env=env):
+        die("make failed")
+    out = os.path.join(FFMPEG_HOME, FFMPEG_VERSION)
+    os.makedirs(out, exist_ok=True)
+    for lib, dll in FFMPEG_DLLS:
+        shutil.copy2(os.path.join(src, lib, dll), out)
+    shutil.copy2(os.path.join(src, "COPYING.LGPLv2.1"), out)
+    gcc = subprocess.run(["gcc", "--version"], stdout=subprocess.PIPE, text=True).stdout.splitlines()[0]
+    with open(os.path.join(out, "FFmpeg-build.txt"), "w", encoding="utf-8") as f:
+        f.write("FFmpeg %s, unchanged, from %s\nSHA-256 of that file: %s\n\nBuilt with %s:\n\n./configure %s\nmake\n"
+                % (FFMPEG_VERSION, FFMPEG_URL, FFMPEG_SHA256, gcc, " ".join(FFMPEG_CONFIGURE)))
+    say("FFmpeg %s -> %s" % (FFMPEG_VERSION, out))
+    return 0
+
+
+def find_dxc_redist():
+    """The Windows SDK's folder of the files that may be passed on. Returns it, or None."""
+    d = os.path.join(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)"), "Windows Kits", "10", "Redist", "D3D", "x64")
+    return d if all(os.path.isfile(os.path.join(d, f)) for f in DXC_DLLS) else None
+
+
+def git_text(cwd, *a):
+    return subprocess.run(["git", "-C", cwd] + list(a), stdout=subprocess.PIPE, text=True, check=True).stdout.strip()
+
+
+def release_tree_problems():
+    """A release is built from what is committed and pushed. scratch/ in the submodule is not built."""
+    out = git_text(ROOT, "status", "--porcelain", "--ignore-submodules=dirty").splitlines()
+    out += [l for l in git_text(PS3RECOMP, "status", "--porcelain").splitlines() if not l[3:].startswith("scratch/")]
+    for repo in (ROOT, PS3RECOMP):
+        if not git_text(repo, "branch", "-r", "--contains", "HEAD"):
+            out.append("%s: HEAD is not pushed" % os.path.basename(repo))
+    return out
+
+
+def check_release_build():
+    """build/'s cache can hold a bench's -D, and the exe must have seen the headers of the FFmpeg that goes with it."""
+    cache = {}
+    with open(os.path.join(BUILD, "CMakeCache.txt"), encoding="utf-8", errors="replace") as f:
+        for line in f:
+            m = re.match(r"(\w+):\w+=(.*)$", line.rstrip("\r\n"))
+            if m:
+                cache[m.group(1)] = m.group(2)
+    wrong = ["%s=%s, a release needs %s" % (k, cache.get(k), v) for k, v in RELEASE_CMAKE.items() if cache.get(k) != v]
+    inc = os.path.join(find_ffmpeg() or "", "include")
+    for (lib, dll), rel, name in zip(FFMPEG_DLLS, ("libavcodec/version_major.h", "libavutil/version.h"),
+                                     ("LIBAVCODEC_VERSION_MAJOR", "LIBAVUTIL_VERSION_MAJOR")):
+        with open(os.path.join(inc, rel), encoding="utf-8", errors="replace") as f:
+            major = re.search(r"#define\s+%s\s+(\d+)" % name, f.read()).group(1)
+        if "-%s.dll" % major not in dll:
+            wrong.append("the exe saw the headers of %s %s, the release carries %s" % (lib, major, dll))
+    if wrong:
+        die("not a release build:\n  " + "\n  ".join(wrong))
+
+
+def release_problems(stage, env):
+    """A DLL a player may lack, this machine's paths or the author's name in a binary."""
+    dumpbin = shutil.which("dumpbin", path=env.get("PATH"))
+    if not dumpbin:
+        die("no dumpbin in the toolchain")
+    system32 = os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")
+    names = [ROOT, os.path.expanduser("~"), os.environ.get("USERNAME", ""),
+             git_text(ROOT, "config", "user.email"), git_text(ROOT, "config", "user.name")]
+    needles = {}
+    for n in filter(None, names):
+        for v in (n, n.replace("\\", "/")):
+            needles[v.lower().encode()] = n
+            needles[v.lower().encode("utf-16-le")] = n
+    bad = []
+    for name in sorted(os.listdir(stage)):
+        path = os.path.join(stage, name)
+        if not name.lower().endswith((".exe", ".dll")):
+            continue
+        text = subprocess.run([dumpbin, "/nologo", "/dependents", path], stdout=subprocess.PIPE, text=True, check=True).stdout
+        for dep in sorted(set(re.findall(r"^\s+(\S+\.dll)\s*$", text, re.M | re.I))):
+            if os.path.isfile(os.path.join(stage, dep)) or dep.lower().startswith(("api-ms-win-", "ext-ms-")):
+                continue
+            if NOT_SYSTEM.match(dep) or not os.path.isfile(os.path.join(system32, dep)):
+                bad.append("%s needs %s, which is not in the package" % (name, dep))
+        with open(path, "rb") as f:
+            low = f.read().lower()
+        for own in ("github.com/rigaz29".encode(), "github.com/rigaz29".encode("utf-16-le")):  # the project's public address
+            low = low.replace(own, b"")
+        bad += ["%s holds %r" % (name, n) for n in sorted(set(n for k, n in needles.items() if k in low))]
+    return bad
+
+
+def fsr1_license():
+    with open(os.path.join(PS3RECOMP, "third_party", "fidelityfx_fsr1", "ffx_a.h"), encoding="utf-8", errors="replace") as f:
+        lines = f.read().splitlines()
+    a = next(i for i, l in enumerate(lines) if "Copyright (c) 2021 Advanced Micro Devices" in l)
+    b = next(i for i in range(a, len(lines)) if lines[i].rstrip().endswith("THE SOFTWARE."))
+    return "\n".join(l.lstrip("/ ").rstrip() for l in lines[a:b + 1]) + "\n"
+
+
+def cmd_package(args):
+    """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
+    import check_repo  # noqa: E402  (scripts/check_repo.py)
+    with open(os.path.join(ROOT, "version.h"), encoding="utf-8") as f:
+        version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
+    out = os.path.join(DIST, "test" if args.test else version)
+    if args.test:
+        shutil.rmtree(out, ignore_errors=True)
+    else:
+        if os.path.exists(out):
+            die("%s exists: a version is packaged once, so change version.h" % out)
+        problems = release_tree_problems()
+        if problems:
+            die("not a release tree:\n  " + "\n  ".join(problems))
+    ff = os.path.join(FFMPEG_HOME, FFMPEG_VERSION)
+    dxc, fsr = find_dxc_redist(), find_fsr()
+    if not all(os.path.isfile(os.path.join(ff, d)) for _, d in FFMPEG_DLLS):
+        die("no release FFmpeg; run `gowa.py ffmpeg`")
+    if not dxc or not fsr:
+        die("this takes the Windows SDK's Redist\\D3D\\x64 and an FSR SDK in ../fsr-sdk")
+    if cmd_build(argparse.Namespace(fresh=False, config="Release", no_spu=False, spu_lines=False, jobcap=False,
+                                    spu_approx=False, define=[], jobs=args.jobs)):
+        die("the build failed")
+    check_release_build()
+
+    name = "Ascension-R-" + version
+    stage = os.path.join(out, name)
+    lic = os.path.join(stage, "licenses")
+    os.makedirs(lic)
+    files = [(BUILD, f) for f in ("Ascension-R.exe",) + VC_DLLS] + [(fsr, f) for f in FSR_DLLS]
+    files += [(dxc, f) for f in DXC_DLLS] + [(ff, d) for _, d in FFMPEG_DLLS]
+    for folder, f in files:
+        shutil.copy2(os.path.join(folder, f), stage)
+    sdk = os.path.dirname(os.path.dirname(os.path.dirname(fsr)))
+    third = os.path.join(PS3RECOMP, "third_party")
+    for src, to in ((os.path.join(ROOT, "LICENSE"), "Ascension-R.txt"),
+                    (os.path.join(PS3RECOMP, "LICENSE"), "ps3recomp.txt"),
+                    (os.path.join(sdk, "docs", "license.md"), "AMD-FidelityFX-SDK.txt"),
+                    (os.path.join(third, "smaa", "LICENSE.txt"), "SMAA.txt"),
+                    (os.path.join(third, "zstd", "LICENSE"), "Zstandard.txt"),
+                    (os.path.join(ROOT, "third_party", "zlib", "LICENSE"), "zlib.txt"),
+                    (os.path.join(ff, "COPYING.LGPLv2.1"), "FFmpeg-LGPL-2.1.txt"),
+                    (os.path.join(ff, "FFmpeg-build.txt"), "FFmpeg-build.txt")):
+        shutil.copyfile(src, os.path.join(lic, to))
+    with open(os.path.join(lic, "AMD-FSR1.txt"), "w", encoding="utf-8") as f:
+        f.write(fsr1_license())
+    for src, to in (("README.txt", stage), ("THIRD-PARTY.txt", lic)):
+        with open(os.path.join(ROOT, "packaging", src), encoding="utf-8") as f:
+            text = f.read().replace("@VERSION@", version).replace("@FFMPEG_VERSION@", FFMPEG_VERSION)
+        with open(os.path.join(to, src), "w", encoding="utf-8") as f:
+            f.write(text)
+
+    env = toolchain_env()
+    problems = release_problems(stage, env)
+    say("looking for PS3 keys in the exe")
+    with open(os.path.join(stage, "Ascension-R.exe"), "rb") as f:
+        if check_repo.has_key(f.read()):
+            problems.append("Ascension-R.exe holds a PS3 key")
+    if problems:
+        die("not packaged:\n  " + "\n  ".join(problems))
+
+    zip_path = os.path.join(out, name + "-win64.zip")
+    with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
+        for folder, _, names in os.walk(stage):
+            for f in sorted(names):
+                p = os.path.join(folder, f)
+                z.write(p, os.path.relpath(p, out).replace("\\", "/"))
+    shutil.copy2(os.path.join(BUILD, "Ascension-R.map"), out)
+    shutil.copy2(os.path.join(FFMPEG_HOME, FFMPEG_TARBALL), out)
+    clang = subprocess.run([shutil.which("clang-cl", path=env.get("PATH")), "--version"], stdout=subprocess.PIPE, text=True).stdout
+    info = ["Ascension-R " + version + ("  TEST PACKAGE, not for release" if args.test else ""),
+            "port      " + git_text(ROOT, "rev-parse", "HEAD"),
+            "ps3recomp " + git_text(PS3RECOMP, "rev-parse", "HEAD"),
+            "exe SHA-256 " + sha256(os.path.join(stage, "Ascension-R.exe")),
+            "zip SHA-256 " + sha256(zip_path),
+            "compiler  " + clang.splitlines()[0],
+            "FSR SDK   " + os.path.basename(sdk),
+            "DXC       " + dxc,
+            "FFmpeg    " + FFMPEG_VERSION]
+    with open(os.path.join(out, "build-info.txt"), "w", encoding="utf-8") as f:
+        f.write("\n".join(info) + "\n")
+    unpacked = sum(os.path.getsize(os.path.join(d, f)) for d, _, ns in os.walk(stage) for f in ns)
+    shutil.rmtree(stage)
+    say("%s: %.1f MB, %.1f MB unpacked" % (zip_path, os.path.getsize(zip_path) / 1048576.0, unpacked / 1048576.0))
+    return 0
+
+
 def ini_set(lines, section, key, value, keep=False):
     """Set section.key in an INI kept as its lines, as the runtime's
     ps3_settings does: in place, else at the end of the section, else in a new
@@ -1461,11 +1703,17 @@ def main():
                         "0x3E000-0x3F780, the frames below the job's main frame)")
     p = sub.add_parser("frames", help="frame report of a PS3_FTRACE trace (workloads, waits, the RSX, a grid)")
     frames.add_args(p)
+    p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
+    p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
+    p = sub.add_parser("package", help="build and zip a release into dist/<version>/; nothing is uploaded")
+    p.add_argument("--jobs", default="3", help="parallel compile jobs (default 3 for 16 GB RAM)")
+    p.add_argument("--test", action="store_true", help="from the tree as it is, into dist/test/, which is replaced each time")
     args = ap.parse_args()
     return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
-            "bench": bench.main, "frames": frames.main, "replay": cmd_replay}[args.cmd](args)
+            "bench": bench.main, "frames": frames.main, "replay": cmd_replay,
+            "ffmpeg": cmd_ffmpeg, "package": cmd_package}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@
 #include "game_find.h"
 #include "game_prepare.h"
 #include "report.h"
+#include "version.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -1200,7 +1201,7 @@ static void draw_sidebar(void)
     {
         static const char d[] = __DATE__;   /* "Mmm dd yyyy", the day padded with a space */
         char b[40];
-        snprintf(b, sizeof b, "Built %d %.3s %.4s", atoi(d + 4), d, d + 7);
+        snprintf(b, sizeof b, "v%s \xC2\xB7 %d %.3s %.4s", AR_VERSION, atoi(d + 4), d, d + 7);
         text(W(b), s_tf_small, R(26, 150, 200, 18), C_MUTED);
     }
     float y = 186.0f;

@@ -13,7 +13,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Top-level folders that hold the game or what is made from it (.gitignore keeps them out; this catches `git add -f`).
-BAD_FOLDERS = {"analysis", "firmware", "gamedata", "logs", "recompiled", "scratch", "spu", "vfs"}
+BAD_FOLDERS = {"analysis", "dist", "firmware", "gamedata", "logs", "recompiled", "scratch", "spu", "vfs"}
 BAD_TYPES = {
     ".elf", ".self", ".sprx", ".prx", ".pkg", ".rap", ".rif", ".edat", ".sdat", ".psarc", ".iso", ".pup",  # game, firmware
     ".exe", ".dll", ".lib", ".obj", ".o", ".a", ".pdb", ".map", ".bin", ".zip", ".7z", ".rar",             # builds, archives

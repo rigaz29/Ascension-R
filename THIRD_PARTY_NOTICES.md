@@ -76,11 +76,14 @@ Platforms, Inc. and affiliates; the full text is in that folder's `LICENSE`.
 The game's movies are decoded with [FFmpeg](https://ffmpeg.org): the runtime loads `avcodec` and `avutil` when it starts.
 Their DLLs are not in this repository; `gowa.py build` looks for an LGPL build in `../ffmpeg` or `local.json`'s `ffmpeg_dir`.
 The build used here is under the GNU Lesser General Public License, version 3, and comes with its `LICENSE.txt`.
+A release carries a smaller build, which `gowa.py ffmpeg` makes from FFmpeg's source: only the H.264 and MPEG-2 decoders,
+under the GNU Lesser General Public License 2.1 or later.
 
 ## DirectX Shader Compiler
 
 `gowa.py build` copies `dxcompiler.dll` and `dxil.dll` beside the exe, from the Windows SDK or `local.json`'s `dxc_dir`, to
-compile the game's shaders. They are not in this repository. `dxcompiler.dll` is
+compile the game's shaders. They are not in this repository, and a release takes them from the SDK's `Redist\D3D\x64`.
+`dxcompiler.dll` is
 [DirectX Shader Compiler](https://github.com/microsoft/DirectXShaderCompiler), University of Illinois/NCSA Open Source
 License; see that project's `LICENSE.TXT` and `ThirdPartyNotices.txt`. `dxil.dll` comes under the Windows SDK's terms.
 

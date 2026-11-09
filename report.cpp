@@ -19,6 +19,7 @@
  * `Ascension-R --report [--with-saves]` makes one without the window.
  */
 #include "report.h"
+#include "version.h"
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -157,7 +158,7 @@ static void gpu_lines(std::string& s)
 
 static std::string system_text(void)
 {
-    std::string s;
+    std::string s = strf("Version: %s\n", AR_VERSION);
 #ifdef __clang__
     const std::string cc = strf("clang %d.%d.%d", __clang_major__, __clang_minor__, __clang_patchlevel__);
 #else
