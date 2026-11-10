@@ -16,6 +16,7 @@ is drawn with Direct3D 12, so no emulator runs while you play.
 
 - [Status](#status)
 - [Features](#features)
+- [Download](#download)
 - [What you need](#what-you-need)
 - [Building from source](#building-from-source)
 - [Playing](#playing)
@@ -37,7 +38,8 @@ problems further in.
 - **Speed:** above 30 frames a second in the two scenes measured, a fight of the first level and the gate, on a Ryzen 5 4600H with
   a GTX 1650 Ti and the Smooth preset.
 - **Online:** not supported. The port is single player.
-- **Downloads:** none. You build it yourself from your own copy of the game.
+- **Downloads:** the Kit, on the [releases page](https://github.com/rigaz29/Ascension-R/releases). It holds none of the game's code
+  and builds it on your PC from your copy.
 
 ## Features
 
@@ -56,7 +58,15 @@ problems further in.
 
 [docs/FEATURES.md](docs/FEATURES.md) describes each one and its setting.
 
+## Download
+
+The [releases page](https://github.com/rigaz29/Ascension-R/releases) has the Kit: a zip of the program without the game's code.
+Its launcher finds your copy of the game, decrypts it with RPCS3 and builds the game's code on your PC, once, in about ten minutes.
+There is nothing else to install: the Kit brings its own Python and LLVM. Each release's notes have the steps.
+
 ## What you need
+
+To build it from source:
 
 - Windows 10 or 11, 64-bit.
 - A CPU with AVX2 and FMA, and a GPU with Direct3D 12.
