@@ -132,7 +132,12 @@ GameState game_probe(const wchar_t* dir, GameInfo* g)
     if (!sfo_read(p, g)) return g->state = GAME_NONE;
     if (strcmp(g->title_id, k_title_id)) return g->state = GAME_OTHER_TITLE;
     swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.elf", g->dir);
-    if (!is_file(p)) return g->state = GAME_NO_ELF;
+    if (!is_file(p)) {
+        /* Not decrypted yet if GOWA.SELF is there to decrypt. The game's data folder, NPUA80918-DATA beside the game in
+         * RPCS3, has this title in its PARAM.SFO and neither file: it is not the game, and the search goes on past it. */
+        swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.SELF", g->dir);
+        return g->state = is_file(p) ? GAME_NO_ELF : GAME_NONE;
+    }
     return g->state = strcmp(g->app_ver, k_app_ver) || !game_elf_ok(p) ? GAME_OTHER_BUILD : GAME_OK;
 }
 

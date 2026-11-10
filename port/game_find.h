@@ -11,7 +11,7 @@ enum { GAME_PATH_MAX = 1024 };
 
 /* What a folder holds, worst to best. */
 enum GameState {
-    GAME_NONE,          /* no PARAM.SFO */
+    GAME_NONE,          /* no PARAM.SFO, or no GOWA.SELF or GOWA.elf under it (the game's data folder) */
     GAME_OTHER_TITLE,   /* another title, or another release of this one */
     GAME_NO_ELF,        /* this release, GOWA.SELF not decrypted to GOWA.elf yet */
     GAME_OTHER_BUILD,   /* this title, but another version, or another GOWA.elf */
