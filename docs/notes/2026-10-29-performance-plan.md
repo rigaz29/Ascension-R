@@ -2109,6 +2109,19 @@ of the RSX thread, weeks). The cheapest time left is not GPU work: `tex_csum`, `
 Heat sets the fight's numbers: a first run on a cool machine reads 36-39, one straight after another 32-36. In the fight,
 compare runs from the same place in a chain.
 
+### 2.36 Update, 2026-11-10: RPCS3 against the port with EDGE on the CPU
+
+[The comparison](2026-11-10-rpcs3-vs-port-cpu.md), the Megaera fight, the same picture, EDGE's GPU steps off:
+- **FPS.** RPCS3 18.5 against the port's 21.2 and 23.5.
+- **What bounds the port.** Both keep all six SPUs busy. In the port, EDGE is the chain: a list holds SPUs for 95% of
+  the frame. It may use SPUs 0-3 only, so the frame is EDGE's SPU time over ~3.8.
+- **What bounds RPCS3.** Its EDGE costs about the same a job (51.6 µs against 52.4-57.6). Its RenderJobs, General6 and
+  audio take 45 SPU-ms a frame more.
+- **Where an EDGE job goes in the port:** a third is the runtime (~19 µs), 7% the job manager, the rest the job's own
+  code.
+- **More EDGE workers cannot help** without rings of the port's own: each job allocates from its SPU's ring line, set
+  up for SPUs 0-3 only.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
