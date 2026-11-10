@@ -85,6 +85,12 @@ get_directory_property(port_compile_defs COMPILE_DEFINITIONS)
 if(PORT_SPU_JOBCAP)
     add_compile_definitions(PS3_SPU_JOBCAP)
 endif()
+# PORT_GAME_MODULE: the Kit release. The game's code goes into ascension_game.dll and the program is built without it
+# (port/game_module.h). Off, one exe, as the Prebuilt release has it.
+option(PORT_GAME_MODULE "The game's code in ascension_game.dll, the program without it (the Kit release)" OFF)
+if(PORT_GAME_MODULE)
+    add_compile_definitions(PS3_GAME_MODULE_HOST)
+endif()
 # The game has no SDATA and its one EDAT needs a key we do not have, so the build
 # leaves the decryption out: no keys in the exe and nothing written beside the
 # game's files.
@@ -249,6 +255,15 @@ if(JOBMOD_SOURCES)
     list(APPEND SPU_SOURCES ${NATIVE_SPU_SOURCES})
 endif()
 
+if(PORT_GAME_MODULE)
+    # Nothing calls it (the lifted code goes through spu_indirect_branch), so neither side builds it.
+    list(REMOVE_ITEM SPU_SOURCES "${PS3RECOMP_DIR}/runtime/spu/spu_dispatch_mt.c")
+    add_library(ascension_game SHARED port/game_module.c ${RECOMP_SOURCES} ${SPU_SOURCES})
+    set(PORT_GAME_SOURCES port/game_module_host.c)
+else()
+    set(PORT_GAME_SOURCES ${RECOMP_SOURCES} ${SPU_SOURCES})
+endif()
+
 add_executable(${PROJECT_NAME}
     port/cpu_check.c
     port/lfqueue.cpp
@@ -265,8 +280,7 @@ add_executable(${PROJECT_NAME}
     port/precompile.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
-    ${RECOMP_SOURCES}
-    ${SPU_SOURCES}
+    ${PORT_GAME_SOURCES}
 )
 
 # The commits this build came from, for the log and the problem report. Only on report.cpp: on the
@@ -370,6 +384,9 @@ set(PORT_PPU_PGO "" CACHE STRING "Lifted PPU code: 'gen' to instrument, or a .pr
 if(SPU_SOURCES)
     # SPU_INLINE_MFC_PARAMS: the MFC command parameters as stores, no call.
     set(spu_defs SPU_USE_DISPATCH_MT SPU_INLINE_MFC_PARAMS)
+    if(PORT_GAME_MODULE)
+        list(APPEND spu_defs PS3_GAME_MODULE)
+    endif()
     if(PORT_SPU_JOBCAP)
         list(APPEND spu_defs PS3_SPU_JOBCAP)
     endif()
@@ -586,6 +603,15 @@ if(PORT_PPU_MM_LEAN)
 endif()
 if(PORT_PPU_RESTRICT)
     set_property(SOURCE ${RECOMP_SOURCES} APPEND PROPERTY COMPILE_DEFINITIONS PPU_CTX_RESTRICT)
+endif()
+
+# The game's DLL takes the exe's flags and links against nothing: everything it calls comes through port/game_module.c.
+if(PORT_GAME_MODULE)
+    target_include_directories(ascension_game PRIVATE $<TARGET_PROPERTY:${PROJECT_NAME},INCLUDE_DIRECTORIES>)
+    target_compile_options(ascension_game PRIVATE $<TARGET_PROPERTY:${PROJECT_NAME},COMPILE_OPTIONS> /GS-)
+    set_target_properties(ascension_game PROPERTIES LINKER_LANGUAGE CXX)
+    target_link_options(ascension_game PRIVATE /NODEFAULTLIB /NOENTRY /MANIFEST:NO "/MAP:${CMAKE_BINARY_DIR}/ascension_game.map")
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/port/main.cpp" APPEND PROPERTY COMPILE_DEFINITIONS PORT_GAME_MODULE)
 endif()
 
 # ---------------------------------------------------------------------------

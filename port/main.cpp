@@ -1268,6 +1268,10 @@ extern "C" int  gowa_prepare_cli(const char* game, const char* rpcs3, const char
 /* patches.cpp: the title patches switched on in [patches], applied once the
  * ELF is in guest memory and before the title runs. */
 extern "C" void gowa_title_patches_apply(void);
+#ifdef PORT_GAME_MODULE
+extern "C" int game_module_load(void);        /* game_module_host.c */
+extern "C" void game_module_sync(void);
+#endif
 extern "C" void gowa_cheats_apply(void);
 extern "C" void ps3_pad_tune(double stick_full, int flick_hold);
 /* precompile.cpp: the game's vertex programs into the shader cache, without the game. */
@@ -1557,6 +1561,9 @@ int main(int argc, char** argv)
 #endif
     if (launcher && !gowa_launcher()) return 0;
     title_environment();
+#ifdef PORT_GAME_MODULE
+    if (!game_module_load()) return 1;
+#endif
     if (!elf) elf = ps3_settings_str("paths", "elf", NULL, NULL);
     if (!elf || !*elf) {
         printf("usage: %s [--settings <file>] [--set <section.key=value>] [<PPU ELF>]\n"
@@ -1589,6 +1596,9 @@ int main(int argc, char** argv)
     }
     gowa_title_patches_apply();   /* [patches]: the ones switched on (patches.cpp) */
     gowa_cheats_apply();          /* [cheats]: cheats.cpp */
+#ifdef PORT_GAME_MODULE
+    game_module_sync();
+#endif
     /* The evade smooths the right stick over its reads and wants ~0.87: a flick at 30 frames a
      * second is two reads at most. The whole of it, cellPad.c. */
     ps3_pad_tune(0.85, 4);

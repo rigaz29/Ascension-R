@@ -1223,7 +1223,7 @@ def cmd_package(args):
     """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
     import check_repo  # noqa: E402  (scripts/check_repo.py)
     if args.release == "kit":
-        die("the Kit cannot be made yet: the game's part is still linked into the exe")
+        die("the Kit cannot be made yet: the game's DLL builds here (PORT_GAME_MODULE), but nothing builds it on a player's PC")
     with open(os.path.join(ROOT, "port", "version.h"), encoding="utf-8") as f:
         version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
     version_dir = os.path.join(DIST, version)
