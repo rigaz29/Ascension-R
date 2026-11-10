@@ -216,10 +216,12 @@ static int vn_native(spu_context* c)
     return 1;
 }
 extern void edge_memo_skin_bbc8(spu_context* ctx);
+extern int edge_memo_rigid_bbc8(spu_context* ctx);
 int gowa_edge_vnorm_bbc8(spu_context* ctx)
 {
     if (t_vn_guard == ctx) return 0;
     edge_memo_skin_bbc8(ctx);
+    if (edge_memo_rigid_bbc8(ctx)) return 1;     /* an unskinned job's, left to the vertex pass */
     static int on = -1;
     if (on < 0) { on = edge_verify_on() && vn_on(); if (on) atexit(vn_vreport); }
     if (!on) return 0;

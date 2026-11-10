@@ -198,6 +198,29 @@ again:
     return 1;
 }
 
+/* The set-up's four constant vectors for the matrix at mat, as host floats, lane by lane: what the
+ * loop multiplies by (out[l] = fma(v[l+3], c[3][l], fma(v[l+2], c[2][l], fma(v[l+1], c[1][l],
+ * v[l] * c[0][l]))), er_xf in spu_edge_gpuskin.c). The same statements as xf_native's, from the same
+ * shuffle tables of the local store, so a job that leaves 0xF538 out hands the vertex pass what the
+ * function would have used (GOWA_EDGE_RIGID, spu_edge_memo.c). */
+void edge_xf_consts(const uint8_t* ls, uint32_t mat, float c[4][4])
+{
+    mat &= SPU_LS_SIZE - 16;
+    const u128 m0 = ec_u(ec_ldq(ls, mat)), m1 = ec_u(ec_ldq(ls, mat + 0x10));
+    const u128 m2 = ec_u(ec_ldq(ls, mat + 0x20)), m3 = ec_u(ec_ldq(ls, mat + 0x30));
+    const u128 k18 = ec_u(ec_ldq(ls, 0xFE70)), k16 = ec_u(ec_ldq(ls, 0xFF80)), k23 = ec_u(ec_ldq(ls, 0xFF60));
+    const u128 sel9 = spu_fsmbi(0xFF0), sel13 = spu_fsmbi(0xFF);
+    const u128 r21 = spu_rotqbyi(m1, 4), r6 = spu_rotqbyi(m3, 12), r3 = spu_rotqbyi(m2, 8);
+    const u128 r20 = spu_rotqbyi(k18, 8), r15 = spu_rotqbyi(k16, 8), r14 = spu_rotqbyi(k23, 8);
+    const u128 r8 = spu_selb(r6, r21, sel9), r4 = spu_selb(r21, r6, sel9);
+    const u128 r19 = spu_selb(r3, m0, sel9), r17 = spu_selb(m0, r3, sel9);
+    const u128 r10 = spu_shufb(r19, r8, r20), r2 = spu_shufb(r19, r8, r15);
+    const u128 r12 = spu_shufb(r17, r4, k18), r5 = spu_shufb(r17, r4, k16);
+    const u128 k[4] = { spu_shufb(r12, r10, r14), spu_selb(r10, r12, sel13), spu_selb(r2, r5, sel13), spu_selb(r5, r2, sel13) };
+    for (int j = 0; j < 4; j++)
+        for (int l = 0; l < 4; l++) memcpy(&c[j][l], &k[j]._u32[l], 4);
+}
+
 static void xf_stats(void)
 {
     fprintf(stderr, "[edge-native] transform F538: %lld calls native, %lld vertices, %lld declined, %lld exact ops, %lld passes redone\n",
@@ -234,4 +257,5 @@ int gowa_edge_xform_f538(spu_context* ctx)
 
 #else
 int gowa_edge_xform_f538(spu_context* ctx) { (void)ctx; return 0; }
+void edge_xf_consts(const uint8_t* ls, uint32_t mat, float c[4][4]) { (void)ls; (void)mat; memset(c, 0, 64); }
 #endif

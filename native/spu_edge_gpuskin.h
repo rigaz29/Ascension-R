@@ -33,4 +33,27 @@ void ek_give(const uint8_t* in, uint8_t* p, uint8_t* n, uint8_t* t);
 void ek_vertex_lit(const ek_rec* r, const uint8_t* in, uint8_t* out);
 void ek_vertex_pos(const ek_rec* r, const uint8_t* in, uint8_t* out);
 
+/* An unskinned job's transforms in the vertex pass (GOWA_EDGE_RIGID, spu_edge_memo.c): 0xF538's
+ * constants, the four vectors its set-up makes from a matrix, for the position (the call that links
+ * back to 0x5850) and in a lit job the normal (0x5A18) and the tangent (0x5A50). In a record's part
+ * where a skinned job has its palette: ER_RIGID in flags tells the two apart. */
+enum { ER_RIGID = 0x100 };
+enum { ER_POS = 0, ER_NRM = 1, ER_TAN = 2 };
+typedef struct {
+    uint32_t flags;                     /* ER_RIGID; EK_PN, EK_PT: 0xBBC8 normalizes the normal, the tangent */
+    uint32_t arrays, pad[2];            /* bit k: array k's constants */
+    float    c[3][4][4];                /* array, constant c0..c3, lane */
+} er_rec;
+#define ER_REC_BYTES ((uint32_t)sizeof(er_rec))
+/* What stays, a vertex's inputs in host order, as 0xF538 reads them: a lit job's position, normal and
+ * tangent; a position job's position. */
+#define ER_IN_LIT 48u
+#define ER_IN_POS 16u
+
+/* 0xF538 on one vertex: out[l] = fma(v[l+3], c3[l], fma(v[l+2], c2[l], fma(v[l+1], c1[l], v[l] * c0[l]))),
+ * the lanes mod 4; exact under the SPU's MXCSR */
+void er_xf(const float c[4][4], const float v[4], float o[4]);
+void er_vertex_lit(const er_rec* r, const uint8_t* in, uint8_t* out);
+void er_vertex_pos(const er_rec* r, const uint8_t* in, uint8_t* out);
+
 #endif

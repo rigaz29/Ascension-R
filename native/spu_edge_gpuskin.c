@@ -24,8 +24,15 @@
  *
  * Only what the game was seen to do. A job that goes on to 0xF538 stays on the SPU (spu_edge_memo.c):
  * no skinned job in the gate or the fight does.
+ *
+ * An unskinned job's transforms (er_*, GOWA_EDGE_RIGID): 0xF538 on the position, and in a lit job on
+ * the normal and the tangent, which 0xBBC8 then normalizes, with the same packing. Exact against the
+ * SPU, all 24 bytes, under its MXCSR (GOWA_EDGE_RIGID=2: 1.34 billion vertexes in the fight). The
+ * packing's conversion saturates as cflts does: a normalized component just above 1.0 reaches it.
  */
 #include "spu_edge_gpuskin.h"
+#include "spu_context.h"
+#include "spu_helpers.h"
 #include <immintrin.h>
 #include <math.h>
 #include <string.h>
@@ -130,6 +137,10 @@ void ek_vertex_pos(const ek_rec* r, const uint8_t* in, uint8_t* out)
     for (int l = 0; l < 3; l++) ek_wr32(out + 4 * l, ek_u(P[l]));
 }
 
+/* The lit output piece's packing (spu_edge_cmp.c): the position as it is, the normal I16N, the
+ * tangent X11Y11Z10 */
+static void ek_pack_lit(uint8_t* out, const float P[3], const float N[4], const float T[4]);
+
 void ek_vertex_lit(const ek_rec* r, const uint8_t* in, uint8_t* out)
 {
     float R[3][4], P[3], p[4], n[4], t[4], N[4], T[4];
@@ -140,15 +151,72 @@ void ek_vertex_lit(const ek_rec* r, const uint8_t* in, uint8_t* out)
     ek_rot(R, t, T);
     if (r->flags & EK_PN) ek_norm(N);
     if (r->flags & EK_PT) ek_norm(T);
+    ek_pack_lit(out, P, N, T);
+}
+
+/* A zero comes out of the SPU's fm and fma as +0. */
+static inline float er_pz(float x) { return x == 0.0f ? 0.0f : x; }
+
+void er_xf(const float c[4][4], const float v[4], float o[4])
+{
+    for (int l = 0; l < 4; l++) {
+        float a = er_pz(v[l] * c[0][l]);
+        a = er_pz(fmaf(v[(l + 1) & 3], c[1][l], a));
+        a = er_pz(fmaf(v[(l + 2) & 3], c[2][l], a));
+        o[l] = er_pz(fmaf(v[(l + 3) & 3], c[3][l], a));
+    }
+}
+
+void er_vertex_pos(const er_rec* r, const uint8_t* in, uint8_t* out)
+{
+    float p[4], P[4];
+    memcpy(p, in, 16);
+    er_xf(r->c[ER_POS], p, P);
+    for (int l = 0; l < 3; l++) ek_wr32(out + 4 * l, ek_u(P[l]));
+}
+
+/* 0xBBC8 on one vector, with the SPU's forms (the runtime's: a zero vector's estimate is in the
+ * extended range): L = fma(z, z, fma(y, y, fm(x, x))), s = fi(L, frsqest(L)), v = fm(v, (s s s 1)) */
+static void er_norm(float v[4])
+{
+    u128 q, X, Y, Z, S;
+    memcpy(q._u32, v, 16);
+    for (int i = 0; i < 4; i++) { X._u32[i] = q._u32[0]; Y._u32[i] = q._u32[1]; Z._u32[i] = q._u32[2]; }
+    const u128 L = spu_fma(Z, Z, spu_fma(Y, Y, spu_fm(X, X)));
+    const u128 s = spu_fi(L, spu_frsqest(L));
+    S._u32[0] = S._u32[1] = S._u32[2] = s._u32[0];
+    S._u32[3] = 0x3F800000u;
+    const u128 o = spu_fm(q, S);
+    memcpy(v, o._u32, 16);
+}
+
+void er_vertex_lit(const er_rec* r, const uint8_t* in, uint8_t* out)
+{
+    float p[4], n[4], t[4], P[4], N[4], T[4];
+    memcpy(p, in, 16); memcpy(n, in + 16, 16); memcpy(t, in + 32, 16);
+    er_xf(r->c[ER_POS], p, P);
+    er_xf(r->c[ER_NRM], n, N);
+    er_xf(r->c[ER_TAN], t, T);
+    if (r->flags & EK_PN) er_norm(N);
+    if (r->flags & EK_PT) er_norm(T);
+    ek_pack_lit(out, P, N, T);
+}
+
+/* cflts's conversion: toward zero, and a value past the top saturates (x86's gives 0x80000000 there,
+ * as for the bottom). A normalized component just above 1.0, from 0xBBC8's estimate, reaches it. */
+static inline uint32_t ek_cflts(float x) { return x >= 2147483648.0f ? 0x7FFFFFFFu : (uint32_t)(int32_t)x; }
+
+static void ek_pack_lit(uint8_t* out, const float P[3], const float N[4], const float T[4])
+{
     for (int l = 0; l < 3; l++) ek_wr32(out + 4 * l, ek_u(P[l]));
     for (int l = 0; l < 4; l++) {
         const float x = fmaf(N[l], ek_f(0x46FFFF00u), ek_f(0xBF000000u));
-        ek_wr16(out + 12 + 2 * l, (uint32_t)(int32_t)(x * 65536.0f) >> 16);
+        ek_wr16(out + 12 + 2 * l, ek_cflts(x * 65536.0f) >> 16);
     }
     const float tx = fmaf(T[0], ek_f(0x3F7FE000u), ek_f(0xBA000000u));
     const float ty = fmaf(T[1], ek_f(0x3F7FE000u), ek_f(0xBA000000u));
     const float tz = fmaf(T[2], ek_f(0x3F7FC000u), ek_f(0xBA800000u));
-    const uint32_t ix = (uint32_t)(int32_t)(tx * 2147483648.0f), iy = (uint32_t)(int32_t)(ty * 2147483648.0f);
-    const uint32_t iz = (uint32_t)(int32_t)(tz * 2147483648.0f);
+    const uint32_t ix = ek_cflts(tx * 2147483648.0f), iy = ek_cflts(ty * 2147483648.0f);
+    const uint32_t iz = ek_cflts(tz * 2147483648.0f);
     ek_wr32(out + 20, ((ix >> 21) & 0x7FFu) | (((iy >> 21) & 0x7FFu) << 11) | (((iz >> 22) & 0x3FFu) << 22));
 }

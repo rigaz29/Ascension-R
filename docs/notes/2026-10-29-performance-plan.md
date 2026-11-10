@@ -2136,6 +2136,19 @@ FSR's motion):
 - **Next limits.** 10% of EDGE jobs have a layout the reader does not know. The render thread drains the GPU before
   every batch, which is next once EDGE is lighter.
 
+### 2.38 Update, 2026-11-11: B, unskinned jobs' transforms in the vertex pass
+
+[The note](2026-11-11-edge-rigid.md):
+- **What.** `GOWA_EDGE_RIGID`, on by default. An unskinned EDGE job's key leaves out its matrix and slot
+  4, its result keeps what `0xF538` reads, and the vertex pass does `0xF538`, `0xBBC8` and the packing.
+- **Exact.** The check found the CPU's version bit for bit the same as the SPU's: 1.34 billion vertexes
+  in the fight.
+- **Results.**
+  - Unskinned jobs with a result: 41-43% -> 92% in the fight.
+  - EDGE's SPU time a flip: -7%.
+  - The gate: 40.1 -> 44.3 flips/s (+10%). The fight: within its spread.
+- **Next.** Rigid hits without unpacking (~4% of EDGE), slot 4 out of K's key, then A, the velocity jobs.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

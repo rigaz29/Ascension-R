@@ -33,6 +33,11 @@
  * backend (rsx_kept.h), which draws from a resident copy: the same bytes went to the ring and from the
  * ring to the GPU every frame.
  *
+ * GOWA_EDGE_RIGID=1 (memo_rigid_mode, the default): an unskinned job's vertexes depend on its matrices
+ * only through 0xF538, so its key leaves the matrix out and its result keeps what 0xF538 reads; the job
+ * hands the vertex pass the transforms' constants, as a skinned job hands over its palette.
+ * GOWA_EDGE_MEMO_MB: an arena's size, 128 MB unless set.
+ *
  * A result is kept in an arena, the second time its job is seen: 128-bit hash, list and records.
  * Results are never written after they are published. When an arena is full the table moves to the other one, emptied: the jobs
  * still reading a result of the old one end long before it is used again (a change waits 5 s).
@@ -53,7 +58,18 @@
 
 #if defined(__AVX2__)
 
-#define MEMO_ARENA  (128u << 20)
+/* GOWA_EDGE_MEMO_MB: an arena's size (two of them), 128 MB unless set */
+static size_t memo_arena_bytes(void)
+{
+    static size_t b;
+    if (!b) {
+        const char* e = getenv("GOWA_EDGE_MEMO_MB");
+        const long mb = e ? atol(e) : 128;
+        b = (size_t)(mb >= 16 && mb <= 2048 ? mb : 128) << 20;
+    }
+    return b;
+}
+#define MEMO_ARENA  memo_arena_bytes()
 #define MEMO_SLOTS  (1u << 17)
 #define MEMO_PROBES 16
 #define MEMO_IDX_MAX 32768u
@@ -91,6 +107,7 @@ static SPU_THREAD_LOCAL struct {
     int state;                  /* 0 none; 1 keeping; 2 a result; 3 a result, checked */
     int lit;
     int skin;                   /* a skinned job's (spu_edge_gpuskin.c) */
+    int rigid;                  /* an unskinned job's, its transforms left to the pass (GOWA_EDGE_RIGID) */
     int ring;                   /* a result that goes out whole after all */
     uint32_t nverts, nidx;      /* the segment's exact counts */
     uint64_t k0, k1;
@@ -150,6 +167,43 @@ static int memo_resident_mode(void)
     const char* e = getenv("GOWA_EDGE_RESIDENT");
     v = e ? atoi(e) : 1;
     if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
+    m = v;
+    return v;
+}
+
+/* GOWA_EDGE_RIGID: 1 on (the default), 0 off, 2 the check.
+ *
+ * An unskinned job's vertexes depend on its matrices only through 0xF538: one call in a position job
+ * (the position), three in a lit one (the position, the normal, the tangent), each in place, linked
+ * back to 0x5850, 0x5A18 and 0x5A50, the position's matrix at 0x10480 and the other two's at 0x3F4F0.
+ * A lit job then normalizes the normal and the tangent with 0xBBC8. With the matrix in the key a
+ * moving object's jobs never had a result: in the fight 57-59% of unskinned jobs had none, and 94% of
+ * those had a mesh seen before with another matrix (docs/notes/2026-11-10-gpu-candidates.md). So:
+ *  - the key leaves out the matrix (slot 18) and slot 4: 16 bytes, a bit pattern the index stage reads
+ *    in a few jobs, which changes from frame to frame for the same mesh. With it in, results kept
+ *    coming anew and filled the arena. With culling left to the RSX the check found every kept list
+ *    the same as the job's without it;
+ *  - a result keeps what 0xF538 reads (er_note);
+ *  - a job with a result still unpacks, then leaves 0xF538 and 0xBBC8 out, taking the constants
+ *    0xF538's set-up makes from each matrix (edge_xf_consts) and which arrays 0xBBC8 normalizes, and
+ *    hands them over in the record's part, where a skinned job has its palette (er_rec);
+ *  - the vertex pass does 0xF538, 0xBBC8 and the packing (spu_edge_gpulight.c), the position the SPU's
+ *    way, bit for bit: the game's depth pass and lit pass test EQUAL, and either may be done there or
+ *    on the SPU. The CPU's version is er_xf and er_vertex_lit (spu_edge_gpuskin.c).
+ * A result given up later (edge_memo_revoke) runs what was left out, in its order: the arrays are
+ * still there. The check: every unskinned job's vertexes worked out on the CPU from what 0xF538 read,
+ * against what the job packs, its list against a kept result's, and a kept result's inputs against
+ * the job's own; the stages all run. In the fight: 4.85 million jobs, 1.34 billion vertexes, nothing
+ * different (docs/notes/2026-11-11-edge-rigid.md). */
+static int memo_rigid_mode(void)
+{
+    static volatile int m = -1;
+    int v = m;
+    if (v >= 0) return v;
+    const char* e = getenv("GOWA_EDGE_RIGID");
+    v = e ? atoi(e) : 1;
+    if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
+    if (v == 1 && memo_resident_mode() != 1) v = 0;
     m = v;
     return v;
 }
@@ -239,6 +293,7 @@ static inline const uint8_t* memo_records(const memo_entry* e)
 }
 
 static void ek_fill(const rsx_kept* k, const void* skin, uint8_t* ring, uint32_t n);
+static void er_fill(const rsx_kept* k, const void* part, uint8_t* ring, uint32_t n);
 static void memo_keep(uint64_t k0, uint64_t k1, const uint8_t* idx, uint32_t idx_bytes,
                       const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec,
                       const uint8_t* stream, uint32_t stream_bytes,
@@ -280,7 +335,7 @@ static void memo_keep(uint64_t k0, uint64_t k1, const uint8_t* idx, uint32_t idx
     e->kb.list = e->data; e->kb.verts = d;
     e->kb.list_bytes = idx_bytes; e->kb.nverts = n; e->kb.rec = rec; e->kb.stride = ring_stride;
     e->kb.skin = ring != src;
-    e->kb.fill = ek_fill;
+    e->kb.fill = (skin_flags & ER_RIGID) ? er_fill : ek_fill;
     memcpy(e->kb.tag, ring, 16);
 
     uint32_t i = (uint32_t)k0 & (MEMO_SLOTS - 1);
@@ -342,6 +397,153 @@ static void ek_fill(const rsx_kept* k, const void* skin, uint8_t* ring, uint32_t
         if (k->rec == EK_IN_LIT) ek_vertex_lit((const ek_rec*)skin, in, ring + (size_t)v * k->stride);
         else ek_vertex_pos((const ek_rec*)skin, in, ring + (size_t)v * k->stride);
     }
+}
+
+/* ------------------------------------------------------------------- an unskinned job's inputs */
+#define ER_MAX_VTX 0x4000u
+static SPU_THREAD_LOCAL struct {
+    er_rec* rec;                /* this job's constants */
+    uint8_t* in;                /* a job keeping its result: what 0xF538 read, host order */
+    uint32_t got[3];            /* the vertexes taken of each array */
+    uint32_t addr[3];           /* each array's place, where 0xF538 and 0xBBC8 work */
+} t_r;
+static volatile long long s_r_jobs, s_r_hits, s_r_declined, s_r_kept, s_r_revoked;
+static volatile long long s_rc_jobs, s_rc_vtx, s_rc_pos, s_rc_nt, s_rc_in, s_rc_in_jobs;
+static void er_report(void)
+{
+    fprintf(stderr, "[edge-rigid] %lld unskinned jobs looked up, %lld with a result, %lld kept, %lld declined, "
+            "%lld given up; the check: %lld jobs, %lld vertexes, position words differing %lld, normal and tangent "
+            "bytes differing %lld; kept inputs not the job's %lld words in %lld jobs\n",
+            s_r_jobs, s_r_hits, s_r_kept, s_r_declined, s_r_revoked, s_rc_jobs, s_rc_vtx, s_rc_pos, s_rc_nt,
+            s_rc_in, s_rc_in_jobs);
+}
+
+/* the local store's quadword as host words */
+static inline __m128i er_q(const uint8_t* p)
+{
+    return _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)p),
+                            _mm_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
+}
+
+static inline uint32_t er_need(void) { return t_m.lit ? 7u : 1u; }
+
+static int er_bufs(void)
+{
+    if (!t_r.rec) t_r.rec = (er_rec*)calloc(1, sizeof(er_rec));
+    if (!t_r.in) t_r.in = (uint8_t*)malloc((size_t)ER_MAX_VTX * ER_IN_LIT);
+    return t_r.rec && t_r.in;
+}
+
+/* not this way after all: the transforms left out so far run (edge_memo_revoke), the rest on the SPU */
+static void er_decline(spu_context* ctx)
+{
+    __atomic_add_fetch(&s_r_declined, 1, __ATOMIC_RELAXED);
+    if (t_m.state == 2) edge_memo_revoke(ctx);
+    t_m.rigid = 0;
+    t_m.state = 0;
+}
+
+/* 0xF538's entry in an unskinned job: which array, the constants for its matrix, and in a job
+ * without a result what it reads (it works in place: after it the array holds its output). The
+ * function transforms (count + 7) & ~7 vertexes, eight a pass. 0: the job was given up. */
+static int er_note(spu_context* ctx)
+{
+    const uint32_t link = ctx->gpr[0]._u32[0];
+    const int a = link == 0x5850 ? ER_POS : link == 0x5A18 ? ER_NRM : link == 0x5A50 ? ER_TAN : -1;
+    const uint32_t count = ctx->gpr[3]._u32[0], src = ctx->gpr[4]._u32[0], n8 = (count + 7u) & ~7u;
+    if (a < 0 || (!t_m.lit && a != ER_POS) || !count || n8 > ER_MAX_VTX || (src & 15) ||
+        src + 16u * n8 > SPU_LS_SIZE || !er_bufs()) {
+        er_decline(ctx);
+        return 0;
+    }
+    edge_xf_consts(ctx->ls, ctx->gpr[6]._u32[0], t_r.rec->c[a]);
+    t_r.rec->arrays |= 1u << a;
+    t_r.addr[a] = src;
+    const uint32_t stride = t_m.lit ? ER_IN_LIT : ER_IN_POS;
+    const uint8_t* s = ctx->ls + src;
+    if (t_m.state == 1) {
+        for (uint32_t v = 0; v < n8; v++)
+            _mm_storeu_si128((__m128i*)(t_r.in + (size_t)v * stride + 16u * a), er_q(s + 16u * v));
+        t_r.got[a] = n8;
+    } else if (t_m.state == 3) {
+        /* the check: a kept result's inputs against the job's, for the segment's vertexes */
+        const uint8_t* kin = memo_records(t_m.e);
+        const uint32_t m = t_m.e->nverts < t_m.nverts ? t_m.e->nverts : t_m.nverts;
+        long long bad = 0;
+        for (uint32_t v = 0; v < m && v < count; v++) {
+            const __m128i q = er_q(s + 16u * v);
+            const __m128i k = _mm_loadu_si128((const __m128i*)(kin + (size_t)v * stride + 16u * a));
+            bad += 4 - __builtin_popcount((unsigned)_mm_movemask_ps(_mm_castsi128_ps(_mm_cmpeq_epi32(q, k))));
+        }
+        if (bad) {
+            __atomic_add_fetch(&s_rc_in, bad, __ATOMIC_RELAXED);
+            if (a == ER_POS) __atomic_add_fetch(&s_rc_in_jobs, 1, __ATOMIC_RELAXED);
+        }
+    }
+    return 1;
+}
+
+/* 0xBBC8's entry: a lit unskinned job normalizes its normal and tangent after 0xF538 (r3 the array, in
+ * place, r4 its count). The record says so to the pass; with a result the call is left out, kept for
+ * edge_memo_revoke, which runs the calls in their order. 1: left out. */
+int edge_memo_rigid_bbc8(spu_context* ctx)
+{
+    if (!t_m.rigid || !t_m.state) return 0;
+    const uint32_t a = ctx->gpr[3]._u32[0];
+    const int k = !t_m.lit || !t_r.rec ? 0
+                : (t_r.rec->arrays & (1u << ER_NRM)) && a == t_r.addr[ER_NRM] ? EK_PN
+                : (t_r.rec->arrays & (1u << ER_TAN)) && a == t_r.addr[ER_TAN] ? EK_PT : 0;
+    if (!k) { er_decline(ctx); return 0; }
+    t_r.rec->flags |= (uint32_t)k;
+    if (t_m.state != 2) return 0;
+    if (t_m.ncalls == MEMO_DEFER) { edge_memo_revoke(ctx); return 0; }     /* not seen */
+    memo_call* c = &t_m.calls[t_m.ncalls++];
+    c->kind = 4;
+    c->r[0] = ctx->gpr[0];
+    for (int r = 3; r < 12; r++) c->r[r - 2] = ctx->gpr[r];
+    return 1;
+}
+
+/* the check: the job's n packed vertexes at stride against the CPU's, from what 0xF538 read (a
+ * result's inputs when it had one) and this job's constants */
+static void er_check(const uint8_t* src, uint32_t n, uint32_t stride)
+{
+    if ((t_r.rec->arrays & er_need()) != er_need()) return;
+    const uint8_t* in = t_m.state == 3 ? memo_records(t_m.e) : t_r.in;
+    const uint32_t is = t_m.lit ? ER_IN_LIT : ER_IN_POS;
+    uint32_t m = t_m.nverts < n ? t_m.nverts : n;
+    if (t_m.state == 3 && t_m.e->nverts < m) m = t_m.e->nverts;
+    if (t_m.state == 1) for (int a = 0; a < 3; a++) if (((er_need() >> a) & 1u) && t_r.got[a] < m) m = t_r.got[a];
+    long long pos = 0, nt = 0;
+    for (uint32_t v = 0; v < m; v++) {
+        uint8_t o[24];
+        const uint8_t* s = src + (size_t)v * stride;
+        if (t_m.lit) {
+            er_vertex_lit(t_r.rec, in + (size_t)v * is, o);
+            for (int b = 12; b < 24; b++) nt += o[b] != s[b];
+        } else {
+            er_vertex_pos(t_r.rec, in + (size_t)v * is, o);
+        }
+        for (int l = 0; l < 3; l++) pos += memcmp(o + 4 * l, s + 4 * l, 4) != 0;
+    }
+    __atomic_add_fetch(&s_rc_jobs, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(&s_rc_vtx, (long long)m, __ATOMIC_RELAXED);
+    if (pos) __atomic_add_fetch(&s_rc_pos, pos, __ATOMIC_RELAXED);
+    if (nt) __atomic_add_fetch(&s_rc_nt, nt, __ATOMIC_RELAXED);
+}
+
+/* the backend's way when a draw does not go through the pass; on its own thread, so under the SPU's
+ * rounding for the call */
+static void er_fill(const rsx_kept* k, const void* part, uint8_t* ring, uint32_t n)
+{
+    const unsigned csr = _mm_getcsr();
+    _mm_setcsr(csr | 0xE040u);
+    const uint8_t* in = (const uint8_t*)k->verts;
+    for (uint32_t v = 0; v < n; v++, in += k->rec) {
+        if (k->rec == ER_IN_LIT) er_vertex_lit((const er_rec*)part, in, ring + (size_t)v * k->stride);
+        else er_vertex_pos((const er_rec*)part, in, ring + (size_t)v * k->stride);
+    }
+    _mm_setcsr(csr);
 }
 
 /* 0xE550's entry: 1 = left out */
@@ -452,6 +654,9 @@ void edge_memo_job(void)
 {
     t_m.state = 0;
     t_m.skin = 0;
+    t_m.rigid = 0;
+    if (t_r.rec) t_r.rec->arrays = t_r.rec->flags = 0;
+    t_r.got[0] = t_r.got[1] = t_r.got[2] = 0;
     t_m.ring = 0;
     t_k.taken = 0;
     t_m.ncalls = 0;
@@ -479,9 +684,15 @@ void gowa_edge_memo_9a40(spu_context* ctx)
     /* more lights than the stage's record takes: it will run on the SPU */
     if (t_m.lit && ej_be32_at(ctx->ls + v.slot_lsa[0] + 0x20) > 32) return;
     const uint8_t* ls = ctx->ls;
-    /* a skinned job: the weights too, not the matrix, which goes with the palette */
+    /* a skinned job: the weights too, not the matrix, which goes with the palette. An unskinned one
+     * with its transforms left to the pass: neither (GOWA_EDGE_RIGID), and a word that keeps its
+     * results apart from the others' */
     static const int slots_plain[7] = { 4, 5, 11, 13, 14, 16, 18 }, slots_skin[7] = { 4, 5, 11, 13, 14, 16, 10 };
-    const int* const slots = v.skinned ? slots_skin : slots_plain;
+    static const int slots_rigid[5] = { 5, 11, 13, 14, 16 };
+    const int rmode = v.skinned ? 0 : memo_rigid_mode();
+    t_m.rigid = rmode && edge_cull_left_out();
+    const int* const slots = t_m.rigid ? slots_rigid : v.skinned ? slots_skin : slots_plain;
+    const unsigned nslots = t_m.rigid ? 5u : 7u;
     static const uint8_t words[] = { 14, 18, 19, 24, 25, 26, 27, 32, 33, 35, 36, 37, 38 };
     memo_h h;
     memo_h_init(&h);
@@ -491,19 +702,27 @@ void gowa_edge_memo_9a40(spu_context* ctx)
         for (unsigned i = 0; i < sizeof words; i++) w[n++] = v.desc[words[i]];
         w[n++] = v.desc[34] >> 16;
         w[n++] = v.out_piece; w[n++] = v.in_piece; w[n++] = v.meth_piece;
-        for (unsigned i = 0; i < 7; i++) w[n++] = v.slot_size[slots[i]];
+        for (unsigned i = 0; i < nslots; i++) w[n++] = v.slot_size[slots[i]];
+        if (t_m.rigid) w[n++] = 0x52494744u;
         memo_h_bytes(&h, (const uint8_t*)w, (uint32_t)n * 4u);
     }
-    for (unsigned i = 0; i < 7; i++)
+    for (unsigned i = 0; i < nslots; i++)
         memo_h_bytes(&h, ls + v.slot_lsa[slots[i]], v.slot_size[slots[i]]);
     memo_h_end(&h, &t_m.k0, &t_m.k1);
     __atomic_add_fetch(&s_jobs, 1, __ATOMIC_RELAXED);
     t_m.e = t_m.skin && memo_skin_mode() == 2 ? NULL : memo_find(t_m.k0, t_m.k1);
     if (t_m.e) {
         __atomic_add_fetch(&s_hits, 1, __ATOMIC_RELAXED);
-        t_m.state = mode == 2 ? 3 : 2;
+        t_m.state = mode == 2 || (t_m.rigid && rmode == 2) ? 3 : 2;
     } else {
         t_m.state = 1;
+    }
+    if (t_m.rigid) {
+        static int rstats = -1;
+        if (rstats < 0) { rstats = stats; if (rstats) atexit(er_report); }
+        const long long rj = __atomic_add_fetch(&s_r_jobs, 1, __ATOMIC_RELAXED);
+        if (t_m.e) __atomic_add_fetch(&s_r_hits, 1, __ATOMIC_RELAXED);
+        if (rstats && !(rj & 0xFFFF)) er_report();
     }
     if (stats && !(s_jobs & 0xFFFF)) memo_report();
 }
@@ -511,6 +730,7 @@ void gowa_edge_memo_9a40(spu_context* ctx)
 int edge_memo_left_out(spu_context* ctx)
 {
     if (t_m.skin) ek_transform(ctx);
+    if (t_m.rigid && t_m.state && !er_note(ctx)) return 0;
     if (t_m.state != 2) return 0;
     if (t_m.ncalls == MEMO_DEFER) { edge_memo_revoke(ctx); return 0; }     /* not seen */
     memo_call* c = &t_m.calls[t_m.ncalls++];
@@ -523,6 +743,7 @@ int edge_memo_left_out(spu_context* ctx)
 
 int edge_memo_unpack(spu_context* ctx, int lit, uint32_t src, uint32_t cnt, uint32_t p0, uint32_t n0, uint32_t t0)
 {
+    if (t_m.rigid) return 0;                  /* it keeps what 0xF538 reads: unpack runs */
     if (t_m.state == 1 && lit) {              /* kept for a late unpack */
         const uint32_t n = 18u * cnt;
         if (n > MEMO_STREAM_MAX) { t_m.state = 0; return 0; }
@@ -576,6 +797,8 @@ void edge_memo_cancel(void)
 const uint8_t* edge_memo_vtx(uint32_t n, uint32_t rec)
 {
     if (t_m.skin) return t_m.state == 2 && t_m.e->nverts == n ? t_m.e->kb.tag : NULL;
+    if (t_m.rigid)      /* NULL gives it up: the output stage then revokes it */
+        return t_m.state == 2 && t_m.e->nverts == n && (t_r.rec->arrays & er_need()) == er_need() ? t_m.e->kb.tag : NULL;
     if (t_m.state != 2 || t_m.e->nverts != n || t_m.e->rec != rec) return NULL;
     return memo_records(t_m.e);
 }
@@ -589,15 +812,20 @@ int edge_memo_resident(void)
 /* the output stage cannot leave this result out of the ring */
 void edge_memo_ring(spu_context* ctx)
 {
-    if (t_m.skin) edge_memo_revoke(ctx);
+    if (t_m.skin || t_m.rigid) edge_memo_revoke(ctx);
     else t_m.ring = 1;
 }
 
 int edge_memo_skip_decode(void) { return t_m.state == 2 && t_m.skin; }
 
-/* a skinned result's part of the record, or NULL */
+/* a skinned result's part of the record, or an unskinned one's transforms, or NULL */
 const void* edge_memo_skin_part(uint32_t* bytes)
 {
+    if (t_m.state == 2 && t_m.rigid && t_r.rec && (t_r.rec->arrays & er_need()) == er_need()) {
+        t_r.rec->flags |= ER_RIGID;
+        *bytes = ER_REC_BYTES;
+        return t_r.rec;
+    }
     if (t_m.state != 2 || !t_m.skin || !t_k.taken) return NULL;
     *bytes = EK_REC_BYTES(t_k.rec->nmat);
     return t_k.rec;
@@ -609,9 +837,11 @@ void edge_memo_publish(uint32_t vio, uint32_t nverts)
     if (!memo_resident_mode()) return;
     const int kept = edge_memo_resident();
     if (kept) ((rsx_kept*)&t_m.e->kb)->put_verts = nverts;
-    if (kept && t_m.skin && !t_m.lit) {         /* a position's record: no lights, the palette */
+    if (kept && (t_m.skin || t_m.rigid) && !t_m.lit) {   /* a position's record: no lights, the palette or the transform */
         static const uint8_t none[32];
-        rsx_d3d12_vertex_pass_publish(vio, nverts, none, 32, 0, t_m.e->kb.tag, t_k.rec, EK_REC_BYTES(t_k.rec->nmat));
+        uint32_t pb = 0;
+        const void* part = edge_memo_skin_part(&pb);
+        if (part) rsx_d3d12_vertex_pass_publish(vio, nverts, none, 32, 0, t_m.e->kb.tag, part, pb);
     }
     rsx_d3d12_kept_publish(vio, kept ? (rsx_kept*)&t_m.e->kb : NULL);
 }
@@ -619,6 +849,8 @@ void edge_memo_publish(uint32_t vio, uint32_t nverts)
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec)
 {
     if (t_m.skin && memo_skin_mode() == 2) { ek_check(src, n, stride); t_m.state = 0; return; }
+    if (t_m.rigid && (t_m.state == 1 || t_m.state == 3) && memo_rigid_mode() == 2) er_check(src, n, stride);
+    if (t_m.rigid && t_m.state == 3) { t_m.state = 0; return; }
     if (t_m.state == 3) {
         const uint8_t* d = memo_records(t_m.e);
         int bad = t_m.e->nverts != n || t_m.e->rec != rec, tail = 0;
@@ -649,6 +881,17 @@ void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_
                       t_k.rec->flags & (EK_PN | EK_PT));
         return;
     }
+    if (t_m.rigid) {
+        /* what 0xF538 read, every array of the job's, as far as the packing reads */
+        const uint32_t in = t_m.lit ? ER_IN_LIT : ER_IN_POS, need = er_need();
+        int ok = t_r.rec && (t_r.rec->arrays & need) == need;
+        for (int a = 0; ok && a < 3; a++) if (((need >> a) & 1u) && t_r.got[a] < n) ok = 0;
+        if (ok) {
+            memo_keep(t_m.k0, t_m.k1, t_m.idx, t_m.idx_bytes, t_r.in, n, in, in, NULL, 0, src, stride, ER_RIGID);
+            __atomic_add_fetch(&s_r_kept, 1, __ATOMIC_RELAXED);
+        }
+        return;
+    }
     memo_keep(t_m.k0, t_m.k1, t_m.idx, t_m.idx_bytes, src, n, stride, rec, t_m.stream, t_m.stream_bytes, src, stride, 0);
     __atomic_add_fetch(&s_bytes, (long long)n * rec, __ATOMIC_RELAXED);
 }
@@ -658,6 +901,7 @@ void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_
 extern void edge_vtx_unpack_late(spu_context* ctx, const uint8_t* stream, const uint32_t a[5]);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000F538(spu_context* ctx);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E550(spu_context* ctx);
+extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000BBC8(spu_context* ctx);
 void edge_memo_revoke(spu_context* ctx)
 {
     if (t_m.state != 2) return;
@@ -665,6 +909,11 @@ void edge_memo_revoke(spu_context* ctx)
     __atomic_add_fetch(&s_revoked, 1, __ATOMIC_RELAXED);
     const int skin = t_m.skin;
     t_m.skin = 0;
+    /* an unskinned job keeping 0xF538's inputs unpacked, and 0xF538 works in place: its arrays are
+     * still what it reads, and the calls left out run below */
+    const int rigid = t_m.rigid;
+    t_m.rigid = 0;
+    if (rigid) __atomic_add_fetch(&s_r_revoked, 1, __ATOMIC_RELAXED);
     if (skin && t_k.taken && t_k.pa && (!t_m.lit || (t_k.na && t_k.ta))) {   /* the arrays as the input piece left them */
         const uint8_t* in = memo_records(t_m.e);
         uint8_t* const ls = ctx->ls;
@@ -672,7 +921,7 @@ void edge_memo_revoke(spu_context* ctx)
         for (uint32_t v = 0; v < n; v++, in += t_m.e->rec)
             ek_give(in, ls + t_k.pa + 16u * v, t_m.lit ? ls + t_k.na + 16u * v : NULL, t_m.lit ? ls + t_k.ta + 16u * v : NULL);
     }
-    if (!t_m.lit && !skin) {
+    if (!t_m.lit && !skin && !rigid) {
         /* a position's array is what the packing would read: the records, w = 1.0 */
         for (int i = 0; i < t_m.ncalls; i++) {
             if (t_m.calls[i].kind != 2) continue;
@@ -702,6 +951,8 @@ void edge_memo_revoke(spu_context* ctx)
         ctx->host_depth++;
         if (c->kind == 3) {
             jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E550(ctx);
+        } else if (c->kind == 4) {
+            jobmod_e8f44fbc6dbf_e6D98_spu_func_0000BBC8(ctx);
         } else {
             const uint32_t mat = (ctx->gpr[1]._u32[0] - 0x800u) & (SPU_LS_SIZE - 16);
             memcpy(ctx->ls + mat, c->mat, 64);
@@ -743,4 +994,5 @@ int edge_memo_skip_decode(void) { return 0; }
 const void* edge_memo_skin_part(uint32_t* bytes) { (void)bytes; return NULL; }
 int edge_memo_skin_e550(spu_context* ctx) { (void)ctx; return 0; }
 void edge_memo_skin_bbc8(spu_context* ctx) { (void)ctx; }
+int edge_memo_rigid_bbc8(spu_context* ctx) { (void)ctx; return 0; }
 #endif

@@ -34,5 +34,9 @@ void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_
 /* the arrays are wanted after all: in any job; in a lit job */
 void edge_memo_revoke(spu_context* ctx);
 void edge_memo_revoke_lit(spu_context* ctx);
+/* 0xBBC8's entry in an unskinned job (GOWA_EDGE_RIGID): 1 = left out, its arguments kept */
+int edge_memo_rigid_bbc8(spu_context* ctx);
+/* 0xF538's constant vectors for the matrix at mat (spu_edge_xform.c) */
+void edge_xf_consts(const uint8_t* ls, uint32_t mat, float c[4][4]);
 
 #endif
