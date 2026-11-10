@@ -2122,6 +2122,20 @@ compare runs from the same place in a chain.
 - **More EDGE workers cannot help** without rings of the port's own: each job allocates from its SPU's ring line, set
   up for SPUs 0-3 only.
 
+### 2.37 Update, 2026-11-10: what CPU work can still go to the GPU
+
+[The look](2026-11-10-gpu-candidates.md), with the player's settings uncapped (FSR 3.1 at 1.5, motion blur draws on for
+FSR's motion):
+- **The GPU** works 12-15 ms of a 36 ms frame in the fight, under half the time.
+- **The fight is bound by EDGE on the SPUs.** An EDGE list holds SPUs 89% of the frame.
+- **Two kinds of EDGE job take the GPU's way:**
+  - **A.** The velocity jobs (output piece `0x75F580`) are never kept: 28.6% of EDGE's SPU time, 73.5 µs a job.
+  - **B.** Unskinned jobs miss 57-59% of the time, and 94% of those misses are meshes seen before with another matrix.
+- **The estimate.** A and B together take ~24% of EDGE's SPU time, about +8-10% in the fight, and frame generation's 30
+  held.
+- **Next limits.** 10% of EDGE jobs have a layout the reader does not know. The render thread drains the GPU before
+  every batch, which is next once EDGE is lighter.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
