@@ -1,4 +1,4 @@
-/* NPUA80918 01.12: USRDIR's archives and the two lists that name them, in the order the game opens them, each
+/* NPUA80918 01.12: USRDIR's archives and the three lists that name them, in the order the game opens them, each
  * with its size and the SHA-256 of its first and last 64 KiB (game_find.cpp). Made by `gowa.py game-files`
  * from a whole copy; names, sizes and hashes only. */
 { "USRDIR/GAME.PSARC", 4893079ull, "a9b3d59b69dca365bd636224955765a0f7b6a414408694ad0e03fa5a6b13c011" },
@@ -51,3 +51,4 @@
 { "USRDIR/TPPS5.PSARC", 285593733ull, "6331bbb29ab103d44815f05cec3a875cccd99b09a924f64427d0bdb659ea6d40" },
 { "USRDIR/ARCHIVES", 264ull, "3cd1c8d2e99b22ebc0bf935c2a0603d21e6052865d90db45ce056eb4cd2c5baf" },
 { "USRDIR/LOCALIZED_ARCHIVES", 149ull, "85e282189821cd6fe9d73fe931af4dd86a739cfd77ca50aebb226b3fedd079ff" },
+{ "USRDIR/PATCHES", 1ull, "02d20bbd7e394ad5999a4cebabac9619732c343a4cac99470c03e23ba2bdc2bc" },

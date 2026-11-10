@@ -35,9 +35,10 @@ static const char k_app_ver[] = "01.12";
 static const char k_elf_sha256[] = "4bf75c897b82d1beb25514cbadaff3d03e1b0c7bf849fa5d289be4f9183462b5";
 static const wchar_t k_title_dir[] = L"NPUA80918";
 
-/* The game's files: USRDIR's archives and the two lists that name them, each with its size and the SHA-256 of its
+/* The game's files: USRDIR's archives and the three lists that name them, each with its size and the SHA-256 of its
  * first and last 64 KiB (game_files.inc, made by `gowa.py game-files` from a whole copy of 1.12). The game opens
- * them at its start; without one it stopped a few seconds in, with a black window and nothing said. A folder that
+ * them at its start; without one it stopped a few seconds in, with a black window and nothing said. With 1.12's
+ * EBOOT on the base game's TPPS.PSARC and no PATCHES it waited on its first loading screen (issue #2). A folder that
  * lacks any, or has one of another size or other ends, is not the game: nothing is decrypted, built or played from
  * it. tests/test_game_find.py builds this file with a list of its own (GAME_FILES_INC). */
 struct GameFile { const char* path; unsigned long long size; const char* ends; };
@@ -202,9 +203,11 @@ static int files_check(const wchar_t* dir, GameInfo* g)
         if (!GetFileAttributesExW(p, GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
             g->files_missing++;
             g->bytes_missing += k_files[i].size;
+            g->base_bad += !game_file_update(k_files[i].path);
             first_of(g->first_missing, sizeof g->first_missing, k_files[i].path);
         } else if (((unsigned long long)a.nFileSizeHigh << 32 | a.nFileSizeLow) != k_files[i].size) {
             g->files_wrong++;
+            g->base_bad += !game_file_update(k_files[i].path);
             first_of(g->first_wrong, sizeof g->first_wrong, k_files[i].path);
         }
     }
@@ -214,6 +217,7 @@ static int files_check(const wchar_t* dir, GameInfo* g)
         char hex[65];
         if (!ends_sha256(p, k_files[i].size, hex) || strcmp(hex, k_files[i].ends)) {
             g->files_wrong++;
+            g->base_bad += !game_file_update(k_files[i].path);
             first_of(g->first_wrong, sizeof g->first_wrong, k_files[i].path);
         }
     }
@@ -234,16 +238,25 @@ static void bytes_text(unsigned long long b, wchar_t* out, size_t n)
     else swprintf(out, n, L"%llu bytes", b);
 }
 
+/* What to install again: update 1.12 when only its files are at fault, else the game. A line of the System tab holds
+ * about a hundred characters. */
 void game_files_text(const GameInfo* g, wchar_t* out, size_t n)
 {
-    if (g->files_missing) {
+    const int one = (g->files_missing ? g->files_missing : g->files_wrong) == 1;
+    if (!g->base_bad && g->files_missing) {
+        swprintf(out, n, L"Update 1.12 is incomplete: %d %ls missing, %hs first. Install it again in RPCS3", g->files_missing,
+                 one ? L"file" : L"files", name_shown(g->first_missing));
+    } else if (!g->base_bad) {
+        swprintf(out, n, L"Update 1.12 is incomplete: %d %ls not as 1.12 has %ls, %hs first. Install it again in RPCS3",
+                 g->files_wrong, one ? L"file is" : L"files are", one ? L"it" : L"them", name_shown(g->first_wrong));
+    } else if (g->files_missing) {
         wchar_t size[32];
         bytes_text(g->bytes_missing, size, sizeof size / sizeof size[0]);
-        swprintf(out, n, L"Not the whole game: %d of its %d files are not in its folder (%ls), %hs first", g->files_missing,
-                 g->files, size, name_shown(g->first_missing));
+        swprintf(out, n, L"Not the whole game: %d of its %d files missing (%ls), %hs first. Install the game again",
+                 g->files_missing, g->files, size, name_shown(g->first_missing));
     } else {
-        swprintf(out, n, L"%d of the game's files %ls not as version 1.12 has them, %hs first", g->files_wrong,
-                 g->files_wrong == 1 ? L"is" : L"are", name_shown(g->first_wrong));
+        swprintf(out, n, L"%d of the game's files %ls not as version 1.12 has %ls, %hs first. Install the game again",
+                 g->files_wrong, one ? L"is" : L"are", one ? L"it" : L"them", name_shown(g->first_wrong));
     }
 }
 
@@ -256,15 +269,23 @@ static int same_char(char a, char b)
     return a == b;
 }
 
+/* Whether path starts with name, or with whole set is name: either slash, any case. */
+static int name_is(const char* path, const char* name, int whole)
+{
+    while (*name && *path && same_char(*path, *name)) { path++; name++; }
+    return !*name && (!whole || !*path);
+}
+
 int game_file_needed(const char* path)
 {
-    for (int i = 0; i < N_FILES; i++) {
-        const char* a = k_files[i].path;
-        const char* b = path;
-        while (*a && *b && same_char(*a, *b)) { a++; b++; }
-        if (!*a && !*b) return 1;
-    }
+    for (int i = 0; i < N_FILES; i++)
+        if (name_is(path, k_files[i].path, 1)) return 1;
     return 0;
+}
+
+int game_file_update(const char* path)
+{
+    return name_is(path, "USRDIR/TPPS", 0) || name_is(path, "USRDIR/PATCHES", 1);
 }
 
 GameState game_probe(const wchar_t* dir, GameInfo* g)

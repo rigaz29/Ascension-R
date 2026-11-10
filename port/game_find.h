@@ -25,14 +25,19 @@ struct GameInfo {
     GameState state;
     int other_version;            /* GAME_OTHER_BUILD: PARAM.SFO says another version than 1.12 */
     /* The game's files (game_files.inc), looked at when the folder is this release: how many there are, how many of
-     * them are not in the folder and their bytes, how many are there but not as 1.12 has them, and the first of each. */
-    int files, files_missing, files_wrong;
+     * them are not in the folder and their bytes, how many are there but not as 1.12 has them, and the first of each.
+     * base_bad: how many of those two are the base game's; none, and only update 1.12's files are at fault. */
+    int files, files_missing, files_wrong, base_bad;
     unsigned long long bytes_missing;
     char first_missing[64], first_wrong[64];
 };
 
-/* What GAME_INCOMPLETE is about, in a line for the player. */
+/* What GAME_INCOMPLETE is about, and what to install again, in a line for the player. */
 void game_files_text(const GameInfo* g, wchar_t* out, size_t n);
+
+/* Whether a file of the game's list ("USRDIR/TPPS1.PSARC", either slash, any case) comes with update 1.12: its TPPS
+ * archives and PATCHES, which names TPPS1 to TPPS5. */
+int game_file_update(const char* path);
 
 /* Whether a file of the game's folder ("USRDIR/GAME.PSARC", either slash, any case) is one the game cannot start
  * without (game_files.inc). */

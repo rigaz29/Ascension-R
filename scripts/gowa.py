@@ -160,15 +160,28 @@ def ends_sha256(path, size=None):
 
 
 def archive_list(path):
-    """The archives one of USRDIR's two lists names: a count on the first line, then a name a line."""
+    """The archives ARCHIVES or LOCALIZED_ARCHIVES names: a count on the first line, then a name a line."""
     with open(path, encoding="ascii", errors="replace") as f:
         lines = [line.strip() for line in f.read().splitlines()]
     return [line for line in lines[1:] if line]
 
 
+def patch_count(path):
+    """What PATCHES holds: a count alone. The game then opens TPPS1.PSARC to TPPS<count>.PSARC."""
+    with open(path, encoding="ascii", errors="replace") as f:
+        first = (f.read().splitlines() or [""])[0].strip()
+    return int(first) if first.isdigit() else 0
+
+
+def game_file_update(rel):
+    """Whether a file of the list comes with update 1.12 (its TPPS archives and PATCHES), as game_find.cpp tells."""
+    rel = rel.replace("\\", "/").upper()
+    return rel.startswith("USRDIR/TPPS") or rel == "USRDIR/PATCHES"
+
+
 def game_file_names(game):
     """The files the launcher checks, in the order the game opens them: the archives ARCHIVES names, those
-    LOCALIZED_ARCHIVES names, the other archives at USRDIR's top (the updates' TPPS ones), then the two lists."""
+    LOCALIZED_ARCHIVES names, the other archives at USRDIR's top (the update's TPPS ones), then the three lists."""
     usr = os.path.join(game, "USRDIR")
     on_disk = sorted(n for n in os.listdir(usr)
                      if n.upper().endswith(".PSARC") and os.path.isfile(os.path.join(usr, n)))
@@ -176,7 +189,7 @@ def game_file_names(game):
     for lst in ("ARCHIVES", "LOCALIZED_ARCHIVES"):
         order += [n for n in archive_list(os.path.join(usr, lst)) if n in on_disk and n not in order]
     order += [n for n in on_disk if n not in order]
-    return ["USRDIR/" + n for n in order] + ["USRDIR/ARCHIVES", "USRDIR/LOCALIZED_ARCHIVES"]
+    return ["USRDIR/" + n for n in order] + ["USRDIR/ARCHIVES", "USRDIR/LOCALIZED_ARCHIVES", "USRDIR/PATCHES"]
 
 
 def read_game_files_inc(path=GAME_FILES_INC):
@@ -469,10 +482,12 @@ def cmd_doctor(args):
         if s.get("APP_VER") == APP_VER:
             files = read_game_files_inc()
             missing, wrong = game_files_check(VFS_GAME, files)
+            fix = ("install update %s again in RPCS3" % APP_VER if all(map(game_file_update, missing + wrong))
+                   else "install the game again")
             check("game files", not missing and not wrong,
                   "all %d as %s has them" % (len(files), APP_VER) if not missing and not wrong else
-                  "%d not there, %d not as %s has them: %s first" % (len(missing), len(wrong), APP_VER,
-                                                                     (missing + wrong)[0]))
+                  "%d not there, %d not as %s has them, %s first: %s" % (len(missing), len(wrong), APP_VER,
+                                                                         (missing + wrong)[0], fix))
     else:
         check("vfs/PS3_GAME", False, "run `setup --game-dir ...`")
     elf = game_elf()
@@ -501,8 +516,12 @@ def cmd_game_files(args):
     if s.get("TITLE_ID") != TITLE_ID or s.get("APP_VER") != APP_VER:
         die("%s is %s %s; the list is made from %s %s" % (game, s.get("TITLE_ID"), s.get("APP_VER"), TITLE_ID, APP_VER))
     usr = os.path.join(game, "USRDIR")
-    for lst in ("ARCHIVES", "LOCALIZED_ARCHIVES"):
-        gone = [n for n in archive_list(os.path.join(usr, lst)) if not os.path.isfile(os.path.join(usr, n))]
+    if not os.path.isfile(os.path.join(usr, "PATCHES")):
+        die("no PATCHES in %s: the list is made from a whole copy, with update %s" % (usr, APP_VER))
+    named = {lst: archive_list(os.path.join(usr, lst)) for lst in ("ARCHIVES", "LOCALIZED_ARCHIVES")}
+    named["PATCHES"] = ["TPPS%d.PSARC" % i for i in range(1, patch_count(os.path.join(usr, "PATCHES")) + 1)]
+    for lst, names in named.items():
+        gone = [n for n in names if not os.path.isfile(os.path.join(usr, n))]
         if gone:
             die("%s names %s, which %s not in %s: the list is made from a whole copy"
                 % (lst, ", ".join(gone), "is" if len(gone) == 1 else "are", usr))
@@ -512,7 +531,7 @@ def cmd_game_files(args):
         size = os.path.getsize(p)
         rows.append('{ "%s", %dull, "%s" },' % (rel, size, ends_sha256(p, size)))
         total += size
-    text = ("/* NPUA80918 %s: USRDIR's archives and the two lists that name them, in the order the game opens them, each\n"
+    text = ("/* NPUA80918 %s: USRDIR's archives and the three lists that name them, in the order the game opens them, each\n"
             " * with its size and the SHA-256 of its first and last 64 KiB (game_find.cpp). Made by `gowa.py game-files`\n"
             " * from a whole copy; names, sizes and hashes only. */\n" % APP_VER) + "\n".join(rows) + "\n"
     with open(args.out, "w", encoding="utf-8", newline="\n") as f:

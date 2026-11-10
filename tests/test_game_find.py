@@ -88,8 +88,10 @@ def sfo(title_id="NPUA80918", app_ver="01.12", title="God of War: Ascension"):
     return struct.pack("<4sIIII", b"\0PSF", 0x101, key_tab, data_tab, len(items)) + table + keys + data
 
 
-# The game's files of the test's list: one smaller than an end (64 KiB), one with ends that overlap, one larger.
-TEST_FILES = (("USRDIR/GAME.PSARC", 200000), ("USRDIR/ENGLISH.PSARC", 70000), ("USRDIR/ARCHIVES", 40))
+# The game's files of the test's list: one larger than an end (64 KiB), one with ends that overlap, smaller ones; the
+# base game's and update 1.12's (its TPPS archives and PATCHES), in the order game_files.inc has them.
+TEST_FILES = (("USRDIR/GAME.PSARC", 200000), ("USRDIR/ENGLISH.PSARC", 70000), ("USRDIR/TPPS1.PSARC", 1000),
+              ("USRDIR/ARCHIVES", 40), ("USRDIR/PATCHES", 1))
 
 
 def file_bytes(rel, size):
@@ -226,11 +228,11 @@ class GameFind(unittest.TestCase):
         # PARAM.SFO and GOWA.SELF, as a license would decrypt: nothing to decrypt or build from.
         make_game(self.p("g"), elf=False, files=False)
         out = self.run_t("files", self.p("g"))
-        self.assertEqual(out[1:5], ["incomplete", "3", "3", "0"])
+        self.assertEqual(out[1:5], ["incomplete", "5", "5", "0"])
         self.assertEqual(out[5], str(sum(size for _, size in TEST_FILES)))
         self.assertEqual(out[6], "USRDIR/GAME.PSARC")
-        self.assertEqual(out[9], "Not the whole game: 3 of its 3 files are not in its folder (270040 bytes), "
-                                 "GAME.PSARC first")
+        self.assertEqual(out[9], "Not the whole game: 5 of its 5 files missing (271041 bytes), GAME.PSARC first. "
+                                 "Install the game again")
 
     def test_a_decrypted_elf_does_not_make_up_for_them(self):
         make_game(self.p("g"), files=False)
@@ -240,7 +242,7 @@ class GameFind(unittest.TestCase):
         make_game(self.p("g"))
         os.remove(self.p("g", "USRDIR", "ARCHIVES"))
         out = self.run_t("files", self.p("g"))
-        self.assertEqual(out[1:6], ["incomplete", "3", "1", "0", "40"])
+        self.assertEqual(out[1:6], ["incomplete", "5", "1", "0", "40"])
         self.assertEqual(out[6], "USRDIR/ARCHIVES")
 
     def test_a_file_cut_short(self):
@@ -248,9 +250,38 @@ class GameFind(unittest.TestCase):
         f = Path(self.p("g", "USRDIR", "ENGLISH.PSARC"))
         f.write_bytes(f.read_bytes()[:-1])
         out = self.run_t("files", self.p("g"))
-        self.assertEqual(out[1:5], ["incomplete", "3", "0", "1"])
+        self.assertEqual(out[1:5], ["incomplete", "5", "0", "1"])
         self.assertEqual(out[7], "USRDIR/ENGLISH.PSARC")
-        self.assertEqual(out[9], "1 of the game's files is not as version 1.12 has them, ENGLISH.PSARC first")
+        self.assertEqual(out[9], "1 of the game's files is not as version 1.12 has it, ENGLISH.PSARC first. "
+                                 "Install the game again")
+
+    def test_the_update_missing(self):
+        # Issue #2: the base game's data under 1.12's EBOOT, without PATCHES or the TPPS archives it names.
+        make_game(self.p("g"))
+        os.remove(self.p("g", "USRDIR", "TPPS1.PSARC"))
+        os.remove(self.p("g", "USRDIR", "PATCHES"))
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:5], ["incomplete", "5", "2", "0"])
+        self.assertEqual(out[6], "USRDIR/TPPS1.PSARC")
+        self.assertEqual(out[9], "Update 1.12 is incomplete: 2 files missing, TPPS1.PSARC first. Install it again in RPCS3")
+
+    def test_an_update_file_of_another_version(self):
+        # The base game's own TPPS archive is another, much smaller one.
+        make_game(self.p("g"))
+        Path(self.p("g", "USRDIR", "TPPS1.PSARC")).write_bytes(b"PSAR" + bytes(108))
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:5], ["incomplete", "5", "0", "1"])
+        self.assertEqual(out[9], "Update 1.12 is incomplete: 1 file is not as 1.12 has it, TPPS1.PSARC first. "
+                                 "Install it again in RPCS3")
+
+    def test_the_game_again_when_one_of_its_own_is_missing_too(self):
+        make_game(self.p("g"))
+        os.remove(self.p("g", "USRDIR", "ENGLISH.PSARC"))
+        os.remove(self.p("g", "USRDIR", "PATCHES"))
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:5], ["incomplete", "5", "2", "0"])
+        self.assertEqual(out[9], "Not the whole game: 2 of its 5 files missing (70001 bytes), ENGLISH.PSARC first. "
+                                 "Install the game again")
 
     def test_a_file_of_its_size_with_other_bytes(self):
         for rel, size in TEST_FILES:
@@ -259,7 +290,7 @@ class GameFind(unittest.TestCase):
                 make_game(g)
                 Path(g, *rel.split("/")).write_bytes(bytes(size))
                 out = self.run_t("files", g)
-                self.assertEqual(out[1:5], ["incomplete", "3", "0", "1"])
+                self.assertEqual(out[1:5], ["incomplete", "5", "0", "1"])
                 self.assertEqual(out[7], rel)
 
     def test_its_last_byte_counts(self):
@@ -272,7 +303,7 @@ class GameFind(unittest.TestCase):
 
     def test_whole_and_not_decrypted(self):
         make_game(self.p("g"), elf=False)
-        self.assertEqual(self.run_t("files", self.p("g"))[1:5], ["no_elf", "3", "0", "0"])
+        self.assertEqual(self.run_t("files", self.p("g"))[1:5], ["no_elf", "5", "0", "0"])
 
     def test_another_version_is_said_before_its_files(self):
         make_game(self.p("g"), elf=False, files=False, app_ver="01.00")
@@ -291,10 +322,17 @@ class GameFind(unittest.TestCase):
 
     def test_what_the_game_cannot_start_without(self):
         for path, want in (("USRDIR/GAME.PSARC", "1"), ("usrdir\\game.psarc", "1"), ("USRDIR/ARCHIVES", "1"),
-                           ("USRDIR/TPPS1-ENGLISH.PSARC", "0"), ("USRDIR/GAME.PSARC.PATCH", "0"), ("USRDIR", "0"),
-                           ("", "0")):
+                           ("USRDIR/PATCHES", "1"), ("USRDIR/TPPS1-ENGLISH.PSARC", "0"), ("USRDIR/GAME.PSARC.PATCH", "0"),
+                           ("USRDIR", "0"), ("", "0")):
             with self.subTest(path):
                 self.assertEqual(self.run_t("needed", path)[1], want)
+
+    def test_which_files_come_with_the_update(self):
+        for rel, want in (("USRDIR/TPPS1.PSARC", True), ("usrdir\\tpps.psarc", True), ("USRDIR/TPPS4-ENGLISH.PSARC", True),
+                          ("USRDIR/PATCHES", True), ("USRDIR/PATCHES.BAK", False), ("USRDIR/GAME.PSARC", False),
+                          ("USRDIR/ARCHIVES", False)):
+            with self.subTest(rel):
+                self.assertEqual(self.gowa.game_file_update(rel), want)
 
     def test_the_list_reads_back(self):
         self.assertEqual(self.gowa.read_game_files_inc(self.inc),
