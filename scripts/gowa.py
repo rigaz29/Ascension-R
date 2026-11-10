@@ -24,6 +24,7 @@ tools use 3.10 syntax).
 import argparse
 import bisect
 import datetime
+import glob
 import hashlib
 import json
 import os
@@ -45,8 +46,11 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PS3RECOMP = os.path.join(ROOT, "ps3recomp")
 TOOLS = os.path.join(PS3RECOMP, "tools")
 LOCAL = os.path.join(ROOT, "local.json")
-ANALYSIS = os.path.join(ROOT, "analysis")
-RECOMPILED = os.path.join(ROOT, "recompiled")
+# GOWA_WORK: where what is made from the game goes (analysis/, recompiled/, spu/), and GOWA_ELF: the decrypted
+# GOWA.elf. The Kit's setup sets both to the player's data folder; by default they are this tree's.
+WORK = os.path.abspath(os.environ.get("GOWA_WORK") or ROOT)
+ANALYSIS = os.path.join(WORK, "analysis")
+RECOMPILED = os.path.join(WORK, "recompiled")
 # GOWA_BUILD_DIR: another build tree (relative to the repo, or absolute), e.g. a --jobcap one
 # beside the normal build, so the two need not rebuild everything each time one is switched.
 BUILD = os.path.join(ROOT, os.environ.get("GOWA_BUILD_DIR") or "build")
@@ -133,7 +137,7 @@ def load_local():
 
 
 def game_elf():
-    return os.path.join(VFS_GAME, "USRDIR", GAME_ELF)
+    return os.environ.get("GOWA_ELF") or os.path.join(VFS_GAME, "USRDIR", GAME_ELF)
 
 
 def need_elf():
@@ -360,6 +364,8 @@ def cmd_analyze(args):
     shutil.rmtree(spu, ignore_errors=True)
     if run([py, os.path.join(TOOLS, "extract_spu_images.py"), elf, "--output", spu]):
         die("extract_spu_images failed")
+    if WORK != ROOT:   # the Kit's setup: the coverage report is for developers
+        return 0
     with open(os.path.join(ANALYSIS, "hle_coverage.txt"), "w") as out:
         rc = run([py, os.path.join(ROOT, "tools", "hle_coverage.py")],
                  stdout=out, stderr=subprocess.STDOUT)
@@ -379,7 +385,7 @@ WWS_PM_SIZE = 12288
 WWS_PM_FNV = 0xC8D774963A96DCF2
 WWS_PM_BASE = 0xA00          # policy modules load and enter at LS 0xA00
 WWS_PM_IMAGE_ID = 0x57575350
-WWS_PM_DIR = os.path.join(ROOT, "spu", "wwspm")
+WWS_PM_DIR = os.path.join(WORK, "spu", "wwspm")
 # spu_lifter.py --float-spec for every SPU image: a function with no store, channel op, call
 # or internal branch and at least this many single-precision float ops gets a speculative body
 # (registers in locals, native float ops checked once at each exit, the exact body as the
@@ -506,7 +512,7 @@ def wws_job_modules(elf):
 # base 0x4000). The Wws_Job policy module streams each from its address into
 # local store; lifted and registered as verified regions, they run as native
 # code instead of in the SPU interpreter.
-JOBMODS_DIR = os.path.join(ROOT, "spu", "jobmods")
+JOBMODS_DIR = os.path.join(WORK, "spu", "jobmods")
 # Job entries the function finder doesn't reach, per module: indirect branch
 # targets that missed the lifted set in the first boots (callbacks the job API
 # calls through a register, the return points of indirect calls). Modules
@@ -665,7 +671,7 @@ def native_hooks(lift_dir, pic=False, only=None):
 # and dispatched wherever they land, instead of interpreted. The list -- EA,
 # size, entry offset -- is in scripts/spu_pic_pieces.json, found by running the
 # title (docs/notes/2026-10-27-l2-analysis.md).
-PIC_DIR = os.path.join(ROOT, "spu", "picfrags")
+PIC_DIR = os.path.join(WORK, "spu", "picfrags")
 PIC_LIST = os.path.join(ROOT, "scripts", "spu_pic_pieces.json")
 
 
@@ -1308,6 +1314,229 @@ def cmd_package(args):
     return 0
 
 
+# ---------------------------------------------------------------------------
+# The game's DLL the way the Kit builds it on a player's PC
+# ---------------------------------------------------------------------------
+
+KIT_DIR = os.path.join(ROOT, "port", "kit")
+# The Visual C++ the code is compiled as. clang-cl takes the installed one's version when it finds one, 19.33 when it
+# does not; one fixed version gives the same objects on every PC, and the same as CMake's here.
+KIT_MSVC = "19.51.36247"
+MODULE_DLL = "ascension_game.dll"
+MODULE_DEFINES_SPU = ("SPU_USE_DISPATCH_MT", "SPU_INLINE_MFC_PARAMS", "PS3_GAME_MODULE", "SPU_LS_NO_DIAG", "SPU_FLOAT_RZ_ONLY")
+
+
+def kit_llvm():
+    """The folder with clang-cl.exe and lld-link.exe: $GOWA_KIT_LLVM (the Kit's own), local.json's "llvm_bin",
+    $GOWA_LLVM_BIN or ../llvm/bin."""
+    for c in (os.environ.get("GOWA_KIT_LLVM"), load_local().get("llvm_bin"), os.environ.get("GOWA_LLVM_BIN"),
+              os.path.join(os.path.dirname(ROOT), "llvm", "bin")):
+        if c and all(os.path.isfile(os.path.join(c, t)) for t in ("clang-cl.exe", "lld-link.exe")):
+            return c
+    die("no clang-cl.exe and lld-link.exe: set llvm_bin in local.json")
+
+
+def module_sources(out):
+    """(kind, path) of every translation unit of the DLL, in the order CMake has them (PORT_GAME_MODULE)."""
+    def listed(*pats):
+        names = []
+        for p in pats:
+            names += glob.glob(p)
+        return sorted(os.path.normpath(n) for n in names)
+
+    gen = os.path.join(out, "generated_spu")
+    with open(os.path.join(gen, "sources.cmake"), encoding="utf-8") as f:
+        generated = [os.path.normpath(p) for p in re.findall(r"\[==\[(.+?)\]==\]", f.read())]
+    spu_dir = os.path.join(WORK, "spu")
+    native = []
+    for n in listed(os.path.join(ROOT, "native", "spu_*.c")):
+        native.append(os.path.join(out, "native", "spu_g6_routines.c") if os.path.basename(n) == "spu_g6_routines.c" else n)
+    spu = (generated + listed(os.path.join(spu_dir, "wwspm", "*.c"))
+           + listed(os.path.join(spu_dir, "jobmods", "*", "spu_recomp.c"), os.path.join(spu_dir, "jobmods", "jobmods_register.c"))
+           + listed(os.path.join(spu_dir, "picfrags", "*", "spu_recomp.c"), os.path.join(spu_dir, "picfrags", "pic_register.c"))
+           + native)
+    return ([("c", os.path.join(ROOT, "port", "game_module.c"))]
+            + [("ppu", p) for p in listed(os.path.join(RECOMPILED, "*.c"), os.path.join(RECOMPILED, "*.cpp"))]
+            + [("spu", p) for p in spu])
+
+
+def module_flags(kind, src):
+    """clang-cl's options for one translation unit: CMake's for the DLL, and no header but the Kit's and clang's own."""
+    cxx = src.endswith(".cpp")
+    rt = os.path.join(PS3RECOMP, "runtime")
+    inc = [RECOMPILED, os.path.join(PS3RECOMP, "include"), os.path.join(rt, "ppu"), os.path.join(rt, "spu"),
+           os.path.join(rt, "memory"), os.path.join(rt, "syscalls"), os.path.join(rt, "platform"),
+           os.path.join(PS3RECOMP, "libs", "video"), ROOT]
+    f = ["/nologo", "/X", "-fms-compatibility-version=" + KIT_MSVC, "/TP" if cxx else "/TC", "/DWIN32", "/D_WINDOWS"]
+    f += (["/EHsc"] if cxx else []) + ["/O2", "/Ob2", "/DNDEBUG", "-std:c++20" if cxx else "/std:c17", "-MD", "-Wall", "-Wextra",
+                                       "-Wno-unused-parameter", "-fno-strict-aliasing", "-fwrapv"]
+    f += (["/Zc:tlsGuards-"] if cxx else []) + ["/GS-"]
+    if kind == "ppu":
+        f += ["/w", "/bigobj", "/clang:-ffp-contract=off", "/clang:-mfma", "-DPPU_MM_LEAN", "/FI" + os.path.join(KIT_DIR, "prelude.h")]
+    elif kind == "spu":
+        f += ["-O2", "-msse4.1", "-mavx2", "-mfma", "-ffp-contract=off", "/GS-"] + ["-D" + d for d in MODULE_DEFINES_SPU]
+        inc = [os.path.join(rt, "spu")] + inc
+        if os.path.basename(src) == "spu_g6_routines.c":   # written into the build folder, away from the headers it shares
+            inc.append(os.path.join(ROOT, "native"))
+    return f + ["-I" + d for d in inc] + ["/imsvc" + os.path.join(KIT_DIR, "include")]
+
+
+def module_headers_digest(out):
+    """One digest of every header a translation unit can see, so an object is made again when one changes."""
+    h = hashlib.sha256()
+    pats = [os.path.join(KIT_DIR, "**", "*.h"), os.path.join(ROOT, "port", "*.h"), os.path.join(ROOT, "native", "*.h"),
+            os.path.join(RECOMPILED, "*.h"), os.path.join(WORK, "spu", "**", "*.h"), os.path.join(out, "generated_spu", "**", "*.h"),
+            os.path.join(PS3RECOMP, "include", "**", "*.h"), os.path.join(PS3RECOMP, "runtime", "**", "*.h"),
+            os.path.join(PS3RECOMP, "libs", "video", "*.h")]
+    for p in sorted(set(n for pat in pats for n in glob.glob(pat, recursive=True))):
+        h.update(p.encode())
+        with open(p, "rb") as f:
+            h.update(hashlib.sha256(f.read()).digest())
+    return h.hexdigest()
+
+
+def peak_mb(proc):
+    """A finished process's peak working set and peak commit, in MB."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PMC(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("faults", wintypes.DWORD), ("peak_ws", ctypes.c_size_t), ("ws", ctypes.c_size_t),
+                    ("a", ctypes.c_size_t), ("b", ctypes.c_size_t), ("c", ctypes.c_size_t), ("d", ctypes.c_size_t),
+                    ("pagefile", ctypes.c_size_t), ("peak_pagefile", ctypes.c_size_t)]
+    pmc = PMC()
+    pmc.cb = ctypes.sizeof(pmc)
+    k = ctypes.windll.kernel32
+    k.K32GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    if not k.K32GetProcessMemoryInfo(int(proc._handle), ctypes.byref(pmc), pmc.cb):
+        return 0, 0
+    return pmc.peak_ws // (1 << 20), pmc.peak_pagefile // (1 << 20)
+
+
+def module_jobs(arg):
+    """--jobs, or as many compiles as the cores and 1 GB of free memory each allow (the most one took was 325 MB)."""
+    if arg != "auto":
+        return max(1, int(arg))
+    return max(1, min(os.cpu_count() or 1, (bench.free_ram_mb() - 2048) // 1024))
+
+
+def cmd_module(args):
+    """The game's DLL with clang-cl and lld-link alone: port/kit's headers in place of a C runtime's, nothing from Visual
+    Studio or the Windows SDK, and the lift's output (`lift`) as it is. Objects made before with the same command,
+    source and headers are kept, so a stopped build goes on where it was."""
+    import concurrent.futures
+    import time
+    elf = need_elf()
+    if not os.path.isfile(os.path.join(RECOMPILED, "ppu_recomp.h")):
+        die("no lifted code in %s; run `lift` first" % RECOMPILED)
+    llvm = kit_llvm()
+    out = os.path.abspath(args.out or os.path.join(WORK, "build-module"))
+    os.makedirs(out, exist_ok=True)
+    log = open(os.path.join(out, "module.log"), "a", encoding="utf-8")
+    t0 = time.monotonic()
+    py = [sys.executable, "-E", "-s"]   # not -I: a tool imports its neighbours from its own folder
+
+    def step(what, cmd, env=None):
+        log.write("> %s\n" % " ".join(cmd))
+        log.flush()
+        r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", env=env)
+        log.write(r.stdout)
+        if r.returncode:
+            say(r.stdout[-3000:])
+            die("%s failed (%s)" % (what, os.path.join(out, "module.log")))
+
+    gen = os.path.join(out, "generated_spu")
+    os.makedirs(gen, exist_ok=True)
+    say("[module] the SPU programs inside the game's ELF")
+    step("build_spu_workloads", py + [os.path.join(TOOLS, "build_spu_workloads.py"), "--lifted", gen,
+                                      "--out", os.path.join(gen, "spu_workloads.c"), "--constructor", "--merge-chunks", "--input", elf])
+    os.makedirs(os.path.join(out, "native"), exist_ok=True)
+    env = dict(os.environ, GOWA_WORK=WORK, GOWA_ELF=elf)
+    step("spu_to_native", py + [os.path.join(ROOT, "scripts", "spu_to_native.py"), os.path.join(ROOT, "scripts", "spu_g6_routines.json"),
+                                os.path.join(out, "native", "spu_g6_routines.c")], env)
+
+    srcs = module_sources(out)
+    headers = module_headers_digest(out)
+    clean = {"SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"), "windir": os.environ.get("windir", r"C:\Windows"),
+             "TEMP": os.environ.get("TEMP", out), "TMP": os.environ.get("TMP", out),
+             "PATH": llvm + os.pathsep + os.path.join(os.environ.get("SystemRoot", r"C:\Windows"), "System32")}
+    clang = os.path.join(llvm, "clang-cl.exe")
+    work = []
+    for kind, src in srcs:
+        rel = os.path.relpath(src, out if src.startswith(out) else (WORK if src.startswith(WORK) else ROOT))
+        obj = os.path.join(out, "obj", rel.replace(os.sep, "_") + ".obj")
+        cmd = [clang] + module_flags(kind, src) + ["/c", src, "/Fo" + obj]
+        h = hashlib.sha256((" ".join(cmd) + "\n" + headers + "\n").encode())
+        with open(src, "rb") as f:
+            h.update(f.read())
+        work.append((kind, src, obj, cmd, h.hexdigest()))
+    os.makedirs(os.path.join(out, "obj"), exist_ok=True)
+    todo = []
+    for w in work:
+        stamp = w[2] + ".stamp"
+        if os.path.isfile(w[2]) and os.path.isfile(stamp) and open(stamp).read() == w[4]:
+            continue
+        todo.append(w)
+    jobs = module_jobs(args.jobs)
+    say("[module] %d translation units, %d to compile, %d at a time" % (len(work), len(todo), jobs))
+    stats, failed, done = [], [], [0]
+    lock = threading.Lock()
+
+    def compile_one(w):
+        kind, src, obj, cmd, digest = w
+        if failed:
+            return
+        start = time.monotonic()
+        p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, env=clean, cwd=out)
+        text = p.communicate()[0].decode("utf-8", "replace")
+        ws, commit = peak_mb(p)
+        secs = time.monotonic() - start
+        with lock:
+            done[0] += 1
+            log.write("> %s\n%s" % (" ".join(cmd), text))
+            if p.returncode:
+                failed.append((src, text))
+                return
+            open(obj + ".stamp", "w").write(digest)
+            stats.append((kind, src, secs, ws, commit))
+            if done[0] % 10 == 0 or done[0] == len(todo):
+                el = time.monotonic() - t0
+                say("[module] %d/%d compiled, %d:%02d" % (done[0], len(todo), el // 60, el % 60))
+
+    # The big ones first, so the last minutes are not one long compile alone.
+    todo.sort(key=lambda w: -os.path.getsize(w[1]))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=jobs) as ex:
+        list(ex.map(compile_one, todo))
+    if failed:
+        src, text = failed[0]
+        say(text[-4000:])
+        die("%s did not compile (%d failed; %s)" % (src, len(failed), os.path.join(out, "module.log")))
+
+    lib = os.path.join(out, "kernel32.lib")
+    if not os.path.isfile(lib):
+        step("llvm-lib", [os.path.join(llvm, "llvm-lib.exe"), "/nologo", "/machine:x64", "/def:" + os.path.join(KIT_DIR, "kernel32.def"),
+                          "/out:" + lib])
+    rsp = os.path.join(out, "objects.rsp")
+    with open(rsp, "w", encoding="utf-8") as f:
+        f.write("\n".join('"%s"' % w[2] for w in work) + "\n")
+    dll = os.path.join(out, MODULE_DLL)
+    say("[module] linking")
+    step("lld-link", [os.path.join(llvm, "lld-link.exe"), "/nologo", "/dll", "/NODEFAULTLIB", "/NOENTRY", "/MANIFEST:NO", "/machine:x64",
+                      "/INCREMENTAL:NO", "/MAP:" + os.path.join(out, "ascension_game.map"), "/OUT:" + dll, "@" + rsp, lib], clean)
+    el = time.monotonic() - t0
+    if stats:
+        cpu = sum(s[2] for s in stats)
+        top = max(stats, key=lambda s: s[4])
+        say("[module] compile: %.0f s of compiler time; the most memory one took: %d MB (%s)"
+            % (cpu, top[4], os.path.basename(top[1])))
+        with open(os.path.join(out, "module-stats.tsv"), "w", encoding="utf-8") as f:
+            f.write("kind\tsource\tseconds\tpeak_ws_mb\tpeak_commit_mb\n")
+            for s in stats:
+                f.write("%s\t%s\t%.1f\t%d\t%d\n" % (s[0], os.path.relpath(s[1], ROOT) if s[1].startswith(ROOT) else s[1], s[2], s[3], s[4]))
+    say("[module] %s: %.1f MB, %d:%02d" % (dll, os.path.getsize(dll) / 1048576.0, el // 60, el % 60))
+    return 0
+
+
 def ini_set(lines, section, key, value, keep=False):
     """Set section.key in an INI kept as its lines, as the runtime's
     ps3_settings does: in place, else at the end of the section, else in a new
@@ -1729,6 +1958,9 @@ def main():
                         "0x3E000-0x3F780, the frames below the job's main frame)")
     p = sub.add_parser("frames", help="frame report of a PS3_FTRACE trace (workloads, waits, the RSX, a grid)")
     frames.add_args(p)
+    p = sub.add_parser("module", help="the game's DLL with clang-cl and lld-link alone, as the Kit builds it")
+    p.add_argument("--out", help="where (default build-module/ in the work folder)")
+    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
     p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
     p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
     p = sub.add_parser("package", help="build and zip a release into dist/<version>/<release>/; nothing is uploaded")
@@ -1741,7 +1973,7 @@ def main():
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
             "bench": bench.main, "frames": frames.main, "replay": cmd_replay,
-            "ffmpeg": cmd_ffmpeg, "package": cmd_package}[args.cmd](args)
+            "ffmpeg": cmd_ffmpeg, "package": cmd_package, "module": cmd_module}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -17,11 +17,14 @@ been stored but the stack, and the lifted code does the work.
 usage: spu_to_native.py <routines.json> <out.c>
 """
 import json
+import os
 import re
 import struct
 import sys
 
 ROOT = __file__.replace("\\", "/").rsplit("/scripts/", 1)[0]
+# GOWA_WORK and GOWA_ELF: the lift's folder and the decrypted GOWA.elf, when they are not this tree's (scripts/gowa.py).
+WORK = (os.environ.get("GOWA_WORK") or ROOT).replace("\\", "/")
 FLOAT = {"fm", "fa", "fs", "fma", "fnms", "fms"}
 FLOAT_READ = FLOAT | {"fcgt", "fceq", "cflts"}
 
@@ -29,8 +32,8 @@ FLOAT_READ = FLOAT | {"fcgt", "fceq", "cflts"}
 class Module:
     def __init__(self, name, elf):
         self.name = name
-        self.src = open("%s/spu/jobmods/%s/spu_recomp.c" % (ROOT, name), encoding="utf-8", errors="replace").read().split("\n")
-        man = [m for m in json.load(open(ROOT + "/spu/jobmods/jobmods_manifest.json")) if m["name"] == name][0]
+        self.src = open("%s/spu/jobmods/%s/spu_recomp.c" % (WORK, name), encoding="utf-8", errors="replace").read().split("\n")
+        man = [m for m in json.load(open(WORK + "/spu/jobmods/jobmods_manifest.json")) if m["name"] == name][0]
         self.base, self.ea = man["base"], man["ea"]
         d = open(elf, "rb").read()
         phoff = struct.unpack(">Q", d[0x20:0x28])[0]
@@ -601,7 +604,7 @@ static int g6r_stats_on(void)
 
 def main():
     spec = json.load(open(sys.argv[1]))
-    mod = Module(spec["module"], spec["elf"])
+    mod = Module(spec["module"], os.environ.get("GOWA_ELF") or spec["elf"])
     out = [HEAD]
     shorts = [r["short"] for r in spec["routines"]]
     for s in shorts:
