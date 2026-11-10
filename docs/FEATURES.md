@@ -98,6 +98,9 @@ local.json's `fsr_dir`. Without the DLLs the log says so and the game goes on wi
   even pace, and suits a PC that cannot hold the rate, 30 on a 120 Hz monitor.
   `graphics.frame_generation_refresh` gives the rate by hand, for a VRR display: 120 on a 144 Hz one is 60 frames a second.
   While the game is under 25 generation stands aside (`graphics.frame_generation_floor`).
+  On one hybrid laptop, frame generation once froze the game at its boot logos, with its GPU queue stopped behind the
+  swap chain. When a session freezes with it on, the launcher's next start asks whether to turn it off
+  ([note](notes/2026-11-10-fg-freeze.md)).
 
 Both take what moves from the title's motion blur draws, so Disable Motion Blur is left off with them: EDGE goes from 46
 to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a cool machine, more on a hot one.

@@ -59,6 +59,7 @@
 extern "C" unsigned cellGcm_flip_request_count(void);
 extern "C" const char* g_hle_inflight[64];
 extern "C" void ppu_report_guest_lrs(void);
+extern "C" int rsx_d3d12_backend_generating(void);   /* rsx_d3d12_backend.c: frame generation runs */
 
 static std::string s_session_log;   /* this session's, "" when a script took the output */
 
@@ -313,6 +314,9 @@ static void freeze_report(ULONGLONG idle, unsigned frames)
     Sleep(1000);
     const int nb = threads_read(b, MAX_THREADS);
     fprintf(stderr, "[freeze] no new frame for %llu s, %u frames so far\n", idle, frames);
+    if (rsx_d3d12_backend_generating())
+        fprintf(stderr, "[freeze] frame generation is on: its swap chain has stopped the GPU at the start of a session on "
+                        "some PCs. If this repeats, turn it off in the launcher's Graphics tab\n");
     for (unsigned t = 0; t < 64; t++)
         if (g_hle_inflight[t]) fprintf(stderr, "[freeze] guest thread %u is inside %s\n", t, g_hle_inflight[t]);
     ppu_report_guest_lrs();
@@ -414,6 +418,11 @@ static SessionEnd session_end_of(const std::string& log, std::string* why)
     size_t p;
     if ((p = log.rfind("[crash] exception")) != no) { *why = line_at(log, p); return SESSION_CRASH; }
     if ((p = log.rfind("[D3D12] device lost")) != no) { *why = line_at(log, p); return SESSION_GPU_LOST; }
+    /* Frames that stopped and never came back: the player closing the window of a frozen game still saw it freeze. */
+    if ((p = log.rfind("[freeze] no new frame")) != no && log.find("[freeze] frames again", p) == no) {
+        *why = line_at(log, p);
+        return SESSION_FROZE;
+    }
     static const char* const clean[] = {
         "[rsx] window closed", "sys_process_exit", "[quit] ", "[boot] ppu_run returned", "[session] ended",
     };
@@ -451,8 +460,9 @@ static std::vector<std::string> session_logs(void)
     return v;
 }
 
-SessionEnd gowa_last_session(void)
+SessionEnd gowa_last_session(int* generating)
 {
+    if (generating) *generating = 0;
     const std::vector<std::string> logs = session_logs();
     if (logs.empty()) return SESSION_NONE;
     const std::string path = logs_dir() + "\\" + logs[0];
@@ -462,6 +472,7 @@ SessionEnd gowa_last_session(void)
     CloseHandle(h);
     std::string log, why;
     if (!read_capped(path, log, 1u << 20, 8u << 20)) return SESSION_NONE;
+    if (generating) *generating = log.find("[D3D12] frame generation on:") != std::string::npos;
     return session_end_of(log, &why);
 }
 
@@ -973,6 +984,6 @@ int gowa_report_create(int with_saves, char* out, size_t n)
 void gowa_report_session_start(const char*) {}
 void gowa_where(const void*, char* out, size_t n) { if (n) out[0] = 0; }
 void gowa_freeze_watch_start(void) {}
-SessionEnd gowa_last_session(void) { return SESSION_NONE; }
+SessionEnd gowa_last_session(int* generating) { if (generating) *generating = 0; return SESSION_NONE; }
 int gowa_report_create(int, char*, size_t) { return -1; }
 #endif

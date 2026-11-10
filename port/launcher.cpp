@@ -2471,11 +2471,52 @@ static void report_make(const wchar_t* heading)
     }
 }
 
+/* The last session froze with frame generation on, and it is still on: AMD FSR 3.1's frame generation swap chain has
+ * stopped the GPU at the start of a session on this kind of PC (a laptop whose display hangs off the other GPU,
+ * 2026-11-10). One click turns it off; FSR 3.1's scaling stays. 1 = asked. */
+static int fg_offer(void)
+{
+    Opt* fg = opt_find("graphics", "frame_generation");
+    if (!fg || !ps3_settings_ieq(fg->cur, "on")) return 0;
+    static const wchar_t what[] =
+        L"Frame generation (AMD FSR 3.1) can stop the game at its start on some PCs, and it was on when the game froze. "
+        L"Turning it off keeps everything else, FSR 3.1's scaling too. You can turn it on again in the Graphics tab.";
+    int pressed = 0;
+    const task_dialog_fn td = task_dialog();
+    if (td) {
+        TASKDIALOG_BUTTON b[2] = { { 100, L"Turn frame generation off" }, { 101, L"Keep it on" } };
+        TASKDIALOGCONFIG c = {};
+        c.cbSize = sizeof c;
+        c.hwndParent = s_main;
+        c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        c.pszWindowTitle = L"Frame generation";
+        c.pszMainIcon = TD_WARNING_ICON;
+        c.pszMainInstruction = L"The game froze in the last session, with frame generation on";
+        c.pszContent = what;
+        c.cButtons = 2;
+        c.pButtons = b;
+        c.nDefaultButton = 100;
+        if (FAILED(td(&c, &pressed, NULL, NULL))) return 1;
+    } else {
+        pressed = MessageBoxW(s_main, what, L"The game froze with frame generation on", MB_YESNO | MB_ICONWARNING) == IDYES
+                      ? 100 : 101;
+    }
+    if (pressed != 100) return 1;
+    opt_set(*fg, "off");
+    ps3_settings_set("graphics", "frame_generation", "off");
+    if (ps3_settings_save(NULL) == 0) toast("Frame generation is off");
+    else toast_bad("Could not save the settings");
+    return 1;
+}
+
 /* Once per session: the next session's own log takes its place as the last one. */
 static void report_offer(void)
 {
     const wchar_t* h = NULL;
-    switch (gowa_last_session()) {
+    int generating = 0;
+    const SessionEnd end = gowa_last_session(&generating);
+    if (end == SESSION_FROZE && generating && fg_offer()) return;
+    switch (end) {
     case SESSION_CRASH:    h = L"The last session crashed. Make a report of it?"; break;
     case SESSION_GPU_LOST: h = L"The last session lost the graphics device. Make a report of it?"; break;
     case SESSION_FROZE:    h = L"The game froze in the last session. Make a report of it?"; break;

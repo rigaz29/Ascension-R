@@ -25,8 +25,8 @@ void gowa_where(const void* addr, char* out, size_t n);
 /* Watches for frames that stop, in a session with a log or with GOWA_FREEZE_WATCH set. */
 void gowa_freeze_watch_start(void);
 
-/* How the session before this one ended. */
-SessionEnd gowa_last_session(void);
+/* How the session before this one ended, and in *generating whether frame generation ran in it. */
+SessionEnd gowa_last_session(int* generating = NULL);
 
 /* Makes the zip of the last sessions beside the logs, and puts its path in out. 0 = made. */
 int gowa_report_create(int with_saves, char* out, size_t n);
