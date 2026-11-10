@@ -1609,6 +1609,9 @@ KIT_SCRIPTS = ("gowa.py", "bench.py", "frames.py", "spu_to_native.py", "jobmods_
 # Never in the Kit, whatever names them: what decrypts.
 KIT_NEVER = {"sdata_decrypt.h", "edat.c", "edat.h", "pkg_extract.py", "extract_jobmods.py", "check_repo.py"}
 KIT_ID = "kit-id.txt"
+# LLVM's license texts, from llvm-project at the tag of the clang the Kit takes: local.json's "llvm_license", or
+# ../llvm-license/llvmorg-<version>, each as <part>/LICENSE.TXT. The Kit ships clang and lld, which are built on llvm.
+KIT_LLVM_LICENSES = ("llvm", "clang", "lld")
 # The lifted PPU code in this many files whatever the PC, so that every PC compiles the same sources.
 KIT_CHUNKS = 96
 # Where kit-build leaves the DLL: <the settings' folder>\game-code (port/game_module_host.c).
@@ -1934,6 +1937,17 @@ def cmd_kit_tree(args):
     os.makedirs(os.path.join(out, "llvm", "bin"))
     for t in ("clang-cl.exe", "lld-link.exe"):
         shutil.copyfile(os.path.join(llvm, t), os.path.join(out, "llvm", "bin", t))
+    ver = re.search(r"clang version (\S+)", subprocess.run([os.path.join(llvm, "clang-cl.exe"), "--version"],
+                                                          stdout=subprocess.PIPE, text=True).stdout).group(1)
+    lic = load_local().get("llvm_license") or os.path.join(os.path.dirname(ROOT), "llvm-license", "llvmorg-" + ver)
+    have = [n for n in KIT_LLVM_LICENSES if os.path.isfile(os.path.join(lic, n, "LICENSE.TXT"))]
+    if "llvm" not in have:
+        die("no llvm\\LICENSE.TXT in %s: llvm-project's, at the tag llvmorg-%s" % (lic, ver))
+    for n in have:
+        shutil.copyfile(os.path.join(lic, n, "LICENSE.TXT"), os.path.join(out, "llvm", "LICENSE-%s.TXT" % n))
+    missing = [n for n in KIT_LLVM_LICENSES if n not in have]
+    if missing:
+        say("not in the Kit yet: the LICENSE.TXT of %s (llvm-project, llvmorg-%s)" % (" and ".join(missing), ver))
     inc = glob.glob(os.path.join(os.path.dirname(llvm), "lib", "clang", "*", "include"))
     if len(inc) != 1:
         die("not one clang resource folder: %s" % inc)
