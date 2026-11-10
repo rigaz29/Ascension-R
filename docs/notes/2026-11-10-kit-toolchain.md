@@ -51,5 +51,5 @@ With `GOWA_WORK` and `GOWA_ELF` set, `analyze`, `lift` and `module` work in anot
 - A Windows with no Visual Studio at all: Windows Sandbox is not enabled on this PC. Here `/X`, a bare `PATH`
   and `/NODEFAULTLIB` keep Visual Studio out, and `/showIncludes` shows that it stays out.
 - The Kit's own Python: the pipeline ran on this PC's Python in isolated mode, with the standard library only. The
-  embeddable Python still has to be downloaded and tried.
-- The launcher's step that runs this, and `package kit`.
+  embeddable Python was tried next, with the launcher's step (`2026-11-10-kit-setup.md`).
+- `package kit`.

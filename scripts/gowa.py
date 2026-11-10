@@ -9,6 +9,9 @@
     python scripts/gowa.py build                   configure + build with clang-cl -> build/
     python scripts/gowa.py ffmpeg                  build the small FFmpeg a release carries
     python scripts/gowa.py package prebuilt|kit    build and zip a release -> dist/<version>/<release>/
+    python scripts/gowa.py module                  the game's DLL with clang-cl and lld-link alone, as the Kit builds it
+    python scripts/gowa.py kit-tree --out DIR      the Kit's folder: Python, clang, lld and what of this tree they run
+    python scripts/gowa.py kit-build --out DIR     the Kit's build on a player's PC (the launcher runs it)
     python scripts/gowa.py run                     start the port, log to logs/
     python scripts/gowa.py run --trace             the same, with an ftrace of the session (stutter)
 
@@ -74,14 +77,46 @@ def say(msg):
     print(msg, flush=True)
 
 
+LAST_ERROR = []   # what die() said last, for kit-build's report
+
+
 def die(msg):
     say("error: " + msg)
+    LAST_ERROR[:] = [msg]
     sys.exit(1)
+
+
+class NoProgress:
+    """Where the steps say how far they are: nowhere, unless kit-build listens (KitProgress)."""
+    listens = False
+
+    def phase(self, name, text):
+        pass
+
+    def part(self, done, total, text=None):
+        pass
+
+    def tool_line(self, line):
+        pass
+
+
+PROGRESS = NoProgress()
 
 
 def run(cmd, **kw):
     say("> " + " ".join(str(c) for c in cmd))
-    return subprocess.run([str(c) for c in cmd], **kw).returncode
+    cmd = [str(c) for c in cmd]
+    if not PROGRESS.listens or "stdout" in kw:
+        return subprocess.run(cmd, **kw).returncode
+    # kit-build reads how far a tool is from what it prints: unbuffered, line by line, into the log as it comes.
+    if cmd[0] == sys.executable:
+        cmd = cmd[:1] + ["-u"] + cmd[1:]
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace", **kw)
+    for line in p.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()   # a build stopped or killed keeps its log to the last line
+        PROGRESS.tool_line(line)
+    return p.wait()
 
 
 def sha256(path):
@@ -356,6 +391,7 @@ def cmd_setup(args):
 
 def cmd_analyze(args):
     elf = need_elf()
+    PROGRESS.phase("analyze", "Reading the game's code")
     py = sys.executable
     os.makedirs(ANALYSIS, exist_ok=True)
     if run([py, os.path.join(TOOLS, "ppu_loader.py"), elf, "-o", ANALYSIS]):
@@ -984,6 +1020,7 @@ def cmd_lift(args):
         cmd += ["--insn-patches", insn_patches]
         say("title patches: %d, %d instruction edit(s) lifted both ways (off unless switched on)"
             % (len(patches), len(edits)))
+    PROGRESS.phase("lift_ppu", "Translating the game's code")
     rc = run(cmd)
     if rc:
         shutil.rmtree(stage, ignore_errors=True)
@@ -994,8 +1031,11 @@ def cmd_lift(args):
     size = sum(os.path.getsize(os.path.join(RECOMPILED, f)) for f in files) / 2**20
     say("lifted: %d source files, %.0f MB in recompiled/ (%d of %d files changed)"
         % (len(files), size, written, total))
+    PROGRESS.phase("lift_spu", "Translating the SPU programs")
     lift_wws_pm(elf)
+    PROGRESS.part(1, 90)   # the job modules take most of the SPU lift: 80 s of 90 here
     lift_jobmods(elf)
+    PROGRESS.part(81, 90)
     lift_pic(elf)
     say("re-run `build` so CMake picks up the new file list")
     return 0
@@ -1229,7 +1269,8 @@ def cmd_package(args):
     """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
     import check_repo  # noqa: E402  (scripts/check_repo.py)
     if args.release == "kit":
-        die("the Kit cannot be made yet: the game's DLL builds here (PORT_GAME_MODULE), but nothing builds it on a player's PC")
+        die("the Kit is not packaged yet: `kit-tree` makes its folder and the launcher builds the game's DLL from it, but the "
+            "zip, its audit and the licenses of LLVM and Python come next")
     with open(os.path.join(ROOT, "port", "version.h"), encoding="utf-8") as f:
         version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
     version_dir = os.path.join(DIST, version)
@@ -1327,10 +1368,10 @@ MODULE_DEFINES_SPU = ("SPU_USE_DISPATCH_MT", "SPU_INLINE_MFC_PARAMS", "PS3_GAME_
 
 
 def kit_llvm():
-    """The folder with clang-cl.exe and lld-link.exe: $GOWA_KIT_LLVM (the Kit's own), local.json's "llvm_bin",
-    $GOWA_LLVM_BIN or ../llvm/bin."""
-    for c in (os.environ.get("GOWA_KIT_LLVM"), load_local().get("llvm_bin"), os.environ.get("GOWA_LLVM_BIN"),
-              os.path.join(os.path.dirname(ROOT), "llvm", "bin")):
+    """The folder with clang-cl.exe and lld-link.exe: the Kit's own (llvm/bin in it), $GOWA_KIT_LLVM, local.json's
+    "llvm_bin", $GOWA_LLVM_BIN or ../llvm/bin."""
+    for c in (os.path.join(ROOT, "llvm", "bin"), os.environ.get("GOWA_KIT_LLVM"), load_local().get("llvm_bin"),
+              os.environ.get("GOWA_LLVM_BIN"), os.path.join(os.path.dirname(ROOT), "llvm", "bin")):
         if c and all(os.path.isfile(os.path.join(c, t)) for t in ("clang-cl.exe", "lld-link.exe")):
             return c
     die("no clang-cl.exe and lld-link.exe: set llvm_bin in local.json")
@@ -1348,9 +1389,11 @@ def module_sources(out):
     with open(os.path.join(gen, "sources.cmake"), encoding="utf-8") as f:
         generated = [os.path.normpath(p) for p in re.findall(r"\[==\[(.+?)\]==\]", f.read())]
     spu_dir = os.path.join(WORK, "spu")
-    native = []
-    for n in listed(os.path.join(ROOT, "native", "spu_*.c")):
-        native.append(os.path.join(out, "native", "spu_g6_routines.c") if os.path.basename(n) == "spu_g6_routines.c" else n)
+    # General6's routines are written into the build folder (spu_to_native.py), in the place native/'s copy sorts
+    # into; the Kit has no copy.
+    names = set(os.path.basename(n) for n in glob.glob(os.path.join(ROOT, "native", "spu_*.c"))) | {"spu_g6_routines.c"}
+    native = [os.path.join(out, "native", n) if n == "spu_g6_routines.c" else os.path.normpath(os.path.join(ROOT, "native", n))
+              for n in sorted(names)]
     spu = (generated + listed(os.path.join(spu_dir, "wwspm", "*.c"))
            + listed(os.path.join(spu_dir, "jobmods", "*", "spu_recomp.c"), os.path.join(spu_dir, "jobmods", "jobmods_register.c"))
            + listed(os.path.join(spu_dir, "picfrags", "*", "spu_recomp.c"), os.path.join(spu_dir, "picfrags", "pic_register.c"))
@@ -1367,7 +1410,9 @@ def module_flags(kind, src):
     inc = [RECOMPILED, os.path.join(PS3RECOMP, "include"), os.path.join(rt, "ppu"), os.path.join(rt, "spu"),
            os.path.join(rt, "memory"), os.path.join(rt, "syscalls"), os.path.join(rt, "platform"),
            os.path.join(PS3RECOMP, "libs", "video"), ROOT]
-    f = ["/nologo", "/X", "-fms-compatibility-version=" + KIT_MSVC, "/TP" if cxx else "/TC", "/DWIN32", "/D_WINDOWS"]
+    # No source line under a diagnostic: build.log goes into a player's problem report, and the lifted lines stay out.
+    f = ["/nologo", "/X", "-fms-compatibility-version=" + KIT_MSVC, "/clang:-fno-caret-diagnostics", "/TP" if cxx else "/TC",
+         "/DWIN32", "/D_WINDOWS"]
     f += (["/EHsc"] if cxx else []) + ["/O2", "/Ob2", "/DNDEBUG", "-std:c++20" if cxx else "/std:c17", "-MD", "-Wall", "-Wextra",
                                        "-Wno-unused-parameter", "-fno-strict-aliasing", "-fwrapv"]
     f += (["/Zc:tlsGuards-"] if cxx else []) + ["/GS-"]
@@ -1448,8 +1493,10 @@ def cmd_module(args):
     gen = os.path.join(out, "generated_spu")
     os.makedirs(gen, exist_ok=True)
     say("[module] the SPU programs inside the game's ELF")
+    PROGRESS.phase("spu_programs", "Translating the SPU programs")
     step("build_spu_workloads", py + [os.path.join(TOOLS, "build_spu_workloads.py"), "--lifted", gen,
                                       "--out", os.path.join(gen, "spu_workloads.c"), "--constructor", "--merge-chunks", "--input", elf])
+    PROGRESS.part(1, 2)
     os.makedirs(os.path.join(out, "native"), exist_ok=True)
     env = dict(os.environ, GOWA_WORK=WORK, GOWA_ELF=elf)
     step("spu_to_native", py + [os.path.join(ROOT, "scripts", "spu_to_native.py"), os.path.join(ROOT, "scripts", "spu_g6_routines.json"),
@@ -1481,6 +1528,11 @@ def cmd_module(args):
     say("[module] %d translation units, %d to compile, %d at a time" % (len(work), len(todo), jobs))
     stats, failed, done = [], [], [0]
     lock = threading.Lock()
+    # How far, by the bytes of source compiled: the time a file takes goes more with its size than with the count.
+    all_bytes = sum(os.path.getsize(w[1]) for w in work) or 1
+    done_bytes = [all_bytes - sum(os.path.getsize(w[1]) for w in todo)]
+    PROGRESS.phase("compile", "Compiling")
+    PROGRESS.part(done_bytes[0], all_bytes, "Compiling: %d of %d files" % (len(work) - len(todo), len(work)))
 
     def compile_one(w):
         kind, src, obj, cmd, digest = w
@@ -1499,6 +1551,8 @@ def cmd_module(args):
                 return
             open(obj + ".stamp", "w").write(digest)
             stats.append((kind, src, secs, ws, commit))
+            done_bytes[0] += os.path.getsize(src)
+            PROGRESS.part(done_bytes[0], all_bytes, "Compiling: %d of %d files" % (len(work) - len(todo) + done[0], len(work)))
             if done[0] % 10 == 0 or done[0] == len(todo):
                 el = time.monotonic() - t0
                 say("[module] %d/%d compiled, %d:%02d" % (done[0], len(todo), el // 60, el % 60))
@@ -1510,12 +1564,13 @@ def cmd_module(args):
     if failed:
         src, text = failed[0]
         say(text[-4000:])
-        die("%s did not compile (%d failed; %s)" % (src, len(failed), os.path.join(out, "module.log")))
+        die("%d of %d files did not compile, %s first (%s)" % (len(failed), len(todo), os.path.basename(src), os.path.join(out, "module.log")))
 
+    PROGRESS.phase("link", "Linking")
     lib = os.path.join(out, "kernel32.lib")
-    if not os.path.isfile(lib):
-        step("llvm-lib", [os.path.join(llvm, "llvm-lib.exe"), "/nologo", "/machine:x64", "/def:" + os.path.join(KIT_DIR, "kernel32.def"),
-                          "/out:" + lib])
+    if not os.path.isfile(lib):   # lld-link /lib is llvm-lib: the same library, one program fewer in the Kit
+        step("lld-link /lib", [os.path.join(llvm, "lld-link.exe"), "/lib", "/nologo", "/machine:x64",
+                               "/def:" + os.path.join(KIT_DIR, "kernel32.def"), "/out:" + lib], clean)
     rsp = os.path.join(out, "objects.rsp")
     with open(rsp, "w", encoding="utf-8") as f:
         f.write("\n".join('"%s"' % w[2] for w in work) + "\n")
@@ -1534,6 +1589,365 @@ def cmd_module(args):
             for s in stats:
                 f.write("%s\t%s\t%.1f\t%d\t%d\n" % (s[0], os.path.relpath(s[1], ROOT) if s[1].startswith(ROOT) else s[1], s[2], s[3], s[4]))
     say("[module] %s: %.1f MB, %d:%02d" % (dll, os.path.getsize(dll) / 1048576.0, el // 60, el % 60))
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# The Kit: its folder (kit-tree) and its build on a player's PC (kit-build)
+# ---------------------------------------------------------------------------
+
+# The Kit's Python: python.org's embeddable package of this version, unpacked (local.json's "kit_python", or
+# ../python-embed/<version>). Its ._pth makes it ignore any other Python and the environment.
+KIT_PYTHON = "3.14.3"
+KIT_PYTHON_PTH = "python314._pth"
+# The ps3recomp tools the Kit's build starts. With what they import and start, they are the tools in the Kit.
+KIT_TOOLS = ("ppu_loader.py", "extract_spu_images.py", "wrap_spu_elf.py", "spu_lifter.py", "lift_jobmods.py",
+             "lift_spu_pic.py", "ppu_lifter.py", "build_spu_workloads.py")
+# What of scripts/ the build reads: this script, its two modules, the routines' writer and the lists of the lift.
+KIT_SCRIPTS = ("gowa.py", "bench.py", "frames.py", "spu_to_native.py", "jobmods_extra.json", "ppu_hooks.json",
+               "spu_g6_routines.json", "spu_native_hooks.json", "spu_pic_pieces.json", "title_patches.json")
+# Never in the Kit, whatever names them: what decrypts.
+KIT_NEVER = {"sdata_decrypt.h", "edat.c", "edat.h", "pkg_extract.py", "extract_jobmods.py", "check_repo.py"}
+KIT_ID = "kit-id.txt"
+# The lifted PPU code in this many files whatever the PC, so that every PC compiles the same sources.
+KIT_CHUNKS = 96
+# Where kit-build leaves the DLL: <the settings' folder>\game-code (port/game_module_host.c).
+KIT_INI = "ascension_game.ini"
+# What kit-build makes in GOWA_WORK, and so what it removes when the DLL is in place.
+KIT_WORK_MADE = ("analysis", "recompiled", "recompiled.new", "spu", "build-module", "lifted.txt")
+
+
+def module_abi():
+    with open(os.path.join(ROOT, "port", "game_module.h"), encoding="utf-8") as f:
+        return int(re.search(r"#define\s+GAME_MODULE_ABI\s+(\d+)", f.read()).group(1))
+
+
+def kit_id():
+    """The Kit this is: its kit-id.txt (kit-tree), or "dev" in a source tree."""
+    p = os.path.join(ROOT, KIT_ID)
+    return open(p, encoding="ascii").read().strip() if os.path.isfile(p) else "dev"
+
+
+class KitProgress(NoProgress):
+    """kit-build's progress for the launcher: "@progress <per mille> <seconds left, or -1> <what>" on its own
+    stdout, at least once a second. Each phase's share is its time on a Ryzen 5 4600H at 6 compiles, the compiling's
+    scaled by the compiles at a time. The PPU lift and the compiling say how far they are; through the phases whose
+    tools say nothing, the bar moves by the time the phase is expected to take on this PC (the phases before it tell
+    how fast it is), up to 90% of it. The time left comes from how fast the last minute and a half went."""
+    ORDER = ("check", "analyze", "lift_ppu", "lift_spu", "spu_programs", "compile", "link")
+    SECONDS = {"check": 1.0, "analyze": 2.0, "lift_ppu": 97.0, "lift_spu": 89.0, "spu_programs": 13.0, "compile": 1600.0,
+               "link": 2.0}
+    QUIET = ("check", "analyze", "lift_spu", "spu_programs", "link")
+    LIFTED = re.compile(r"lifted (\d+)/(\d+) functions")
+    WROTE = re.compile(r"wrote ppu_recomp_(\d+)\.c")
+    listens = True
+
+    def __init__(self, report, jobs, chunks):
+        import collections
+        import threading
+        import time
+        self.report, self.chunks = report, chunks
+        self.w = dict(self.SECONDS)
+        self.w["compile"] /= max(1, jobs)
+        self.total = sum(self.w.values())
+        self.cur, self.base, self.part_frac, self.text = "check", 0.0, 0.0, ""
+        self.t0 = self.phase_t = time.monotonic()
+        self.done_w = self.done_t = 0.0   # the phases run to their end: their shares and the time they took
+        self.shown, self.last, self.closed = 0.0, 0.0, False
+        self.samples = collections.deque()
+        self.lock = threading.RLock()
+        threading.Thread(target=self.tick, daemon=True).start()
+
+    def tick(self):
+        import time
+        while not self.closed:
+            time.sleep(1.0)
+            self.emit(True)
+
+    def phase(self, name, text):
+        import time
+        with self.lock:
+            now = time.monotonic()
+            say("[kit-build] %s at %.0f s" % (name, now - self.t0))   # the phases' times, in the log
+            if self.ORDER.index(name) == self.ORDER.index(self.cur) + 1:   # one after the other: a measure of this PC
+                self.done_w += self.w[self.cur]
+                self.done_t += now - self.phase_t
+            self.cur, self.part_frac, self.text, self.phase_t = name, 0.0, text, now
+            self.base = sum(self.w[n] for n in self.ORDER[:self.ORDER.index(name)])
+            self.emit(True)
+
+    def part(self, done, total, text=None):
+        with self.lock:
+            self.part_frac = max(self.part_frac, min(1.0, float(done) / total) if total else 0.0)
+            if text:
+                self.text = text
+            self.emit(False)
+
+    def tool_line(self, line):
+        if self.cur != "lift_ppu":
+            return
+        m = self.LIFTED.search(line)
+        if m:   # the lifting is about a quarter of the phase, the writing the rest
+            n, total = int(m.group(1)), int(m.group(2))
+            self.part(n, 4 * total, "Translating the game's code: {:,} of {:,} functions".format(n, total))
+            return
+        m = self.WROTE.search(line)
+        if m:
+            k = int(m.group(1)) + 1
+            self.part(self.chunks + 3 * k, 4 * self.chunks, "Translating the game's code: %d of %d files written" % (k, self.chunks))
+
+    def emit(self, force):
+        import time
+        with self.lock:
+            now = time.monotonic()
+            if self.closed or (not force and now - self.last < 0.5):
+                return
+            self.last = now
+            part = self.part_frac
+            if self.cur in self.QUIET:
+                speed = self.done_t / self.done_w if self.done_w >= 50 else 1.0
+                part = max(part, min(0.9, (now - self.phase_t) / max(1.0, self.w[self.cur] * speed)))
+            frac = min(1.0, (self.base + self.w[self.cur] * part) / self.total)
+            self.shown = frac = max(self.shown, frac)
+            self.samples.append((now, frac))
+            while len(self.samples) > 2 and now - self.samples[1][0] >= 90:
+                self.samples.popleft()
+            t, f = self.samples[0]
+            left = int((1.0 - frac) * (now - t) / (frac - f)) if now - t >= 15 and frac - f > 0.003 else -1
+            self.say("@progress %d %d %s" % (int(frac * 1000), left, self.text))
+
+    def say(self, line, last=False):
+        with self.lock:
+            if self.closed:
+                return
+            self.closed = last
+            self.report.write(line + "\n")
+            self.report.flush()
+
+
+def cmd_kit_build(args):
+    """The Kit's step on a player's PC, which the launcher runs: GOWA_ELF checked against the build this port was made
+    from, analyzed and lifted into GOWA_WORK, the DLL compiled and linked there (`module`), then put into --out with
+    what it was made from (ascension_game.ini), and what it made in GOWA_WORK removed. A stopped build goes on from the
+    lift it finished and the objects it made. For the launcher it writes only "@" lines; the rest goes to build.log
+    in --out."""
+    import time
+    global PROGRESS
+    t0 = time.monotonic()
+    out = os.path.abspath(args.out)
+    if not os.environ.get("GOWA_WORK") or not os.path.normcase(WORK).startswith(os.path.normcase(out) + os.sep):
+        die("GOWA_WORK must be a folder inside --out")   # what it removes at the end is under it
+    os.makedirs(out, exist_ok=True)
+    report = os.fdopen(os.dup(1), "w", encoding="utf-8", errors="replace")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    fd = os.open(os.path.join(out, "build.log"), os.O_WRONLY | os.O_CREAT | os.O_TRUNC | getattr(os, "O_BINARY", 0))
+    os.dup2(fd, 1)
+    os.dup2(fd, 2)
+    os.close(fd)
+    jobs = module_jobs(args.jobs)
+    PROGRESS = KitProgress(report, jobs, KIT_CHUNKS)
+    say("kit-build %s: Python %s, %d cores, %d MB free, %d compiles at a time\nwork %s\nout  %s"
+        % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), platform.python_version(), os.cpu_count() or 0,
+           bench.free_ram_mb(), jobs, WORK, out))
+    try:
+        rc = kit_build(out, jobs, args, t0)
+    except SystemExit as e:
+        rc = e.code if isinstance(e.code, int) else 1
+        if rc:
+            PROGRESS.say("@error " + (LAST_ERROR[0] if LAST_ERROR else "stopped"), True)
+    except BaseException as e:   # what nobody foresaw, said in one line, with its trace in the log
+        import traceback
+        traceback.print_exc()
+        PROGRESS.say("@error %s: %s" % (type(e).__name__, e), True)
+        rc = 1
+    sys.stdout.flush()
+    return rc
+
+
+def kit_build(out, jobs, args, t0):
+    import time
+    PROGRESS.phase("check", "Checking the game")
+    elf = game_elf()
+    if not os.path.isfile(elf):
+        die("no GOWA.elf: %s" % elf)
+    if sha256(elf) != GAME_ELF_SHA256:
+        die("not the GOWA.elf of 1.12: %s" % elf)
+    made = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(WORK) for f in fs) if os.path.isdir(WORK) else 0
+    need, free = max(256 << 20, (1536 << 20) - made), shutil.disk_usage(out).free
+    if free < need:
+        die("needs %.1f GB free on %s, has %.1f GB" % (need / 2.0**30, os.path.splitdrive(out)[0] or out, free / 2.0**30))
+    os.makedirs(WORK, exist_ok=True)
+    kit, abi = kit_id(), module_abi()
+    stamp = os.path.join(WORK, "lifted.txt")
+    lifted = "elf %s\nkit %s\n" % (GAME_ELF_SHA256, kit)
+    if os.path.isfile(stamp) and open(stamp, encoding="ascii").read() == lifted:
+        say("lifted before (%s): on to the compiling" % stamp)
+    else:
+        cmd_analyze(argparse.Namespace())
+        cmd_lift(argparse.Namespace(no_missed=True, jobmods_only=False, jobs="6", chunks=str(KIT_CHUNKS), lazy_flags="on",
+                                    dead_saves="off"))
+        with open(stamp, "w", encoding="ascii") as f:
+            f.write(lifted)
+    mod = os.path.join(WORK, "build-module")
+    cmd_module(argparse.Namespace(out=mod, jobs=str(jobs)))
+    # The DLL first, then what it was made from: the launcher takes the DLL only with that.
+    dll = os.path.join(out, MODULE_DLL)
+    shutil.copyfile(os.path.join(mod, MODULE_DLL), dll + ".new")
+    os.replace(dll + ".new", dll)
+    secs = int(time.monotonic() - t0)
+    ini = os.path.join(out, KIT_INI)
+    with open(ini + ".new", "w", encoding="utf-8", newline="\n") as f:
+        f.write("; ascension_game.dll beside this file was built on this PC from the game's GOWA.elf by gowa.py kit-build.\n"
+                "; The launcher builds it again when the program or the Kit is another version.\n"
+                "abi = %d\nkit = %s\nelf = %s\nseconds = %d\n" % (abi, kit, GAME_ELF_SHA256, secs))
+    os.replace(ini + ".new", ini)
+    if not args.keep_work:
+        for name in KIT_WORK_MADE:
+            p = os.path.join(WORK, name)
+            if os.path.isdir(p):
+                shutil.rmtree(p, ignore_errors=True)
+            elif os.path.isfile(p):
+                os.remove(p)
+        try:
+            os.rmdir(WORK)
+        except OSError:
+            pass
+    say("built in %d:%02d: %s" % (secs // 60, secs % 60, dll))
+    PROGRESS.say("@done %d" % secs, True)
+    return 0
+
+
+def py_closure(entries, folder):
+    """The .py files of folder that entries import or name, and those that they import or name, and so on."""
+    import ast
+    seen, todo = [], list(entries)
+    while todo:
+        p = todo.pop()
+        if p in seen:
+            continue
+        seen.append(p)
+        with open(p, encoding="utf-8") as f:
+            tree = ast.parse(f.read(), p)
+        for node in ast.walk(tree):
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name.split(".")[0] for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
+                names = [node.module.split(".")[0]]
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str) and re.fullmatch(r"[\w.-]+\.py", node.value):
+                names = [node.value[:-3]]
+            for n in names:
+                if os.path.isdir(os.path.join(folder, n)):
+                    die("%s imports the package %s: the Kit takes single files" % (p, n))
+                f = os.path.join(folder, n + ".py")
+                if os.path.isfile(f) and f not in seen:
+                    todo.append(f)
+    return seen
+
+
+def kit_headers(mod):
+    """Every file of this tree that clang includes for a source of the DLL, for the sources `module` made in mod."""
+    import concurrent.futures
+    llvm = kit_llvm()
+    clang = os.path.join(llvm, "clang-cl.exe")
+    resource = os.path.normcase(os.path.join(os.path.dirname(llvm), "lib", "clang"))
+    made = [os.path.normcase(p) + os.sep for p in (RECOMPILED, os.path.join(WORK, "spu"), mod)]
+    env = {"SystemRoot": os.environ.get("SystemRoot", r"C:\Windows"), "TEMP": os.environ.get("TEMP", mod),
+           "TMP": os.environ.get("TMP", mod), "PATH": llvm}
+
+    def includes(ks):
+        kind, src = ks
+        r = subprocess.run([clang] + module_flags(kind, src) + ["/E", "/showIncludes", src], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.PIPE, env=env, cwd=mod)
+        if r.returncode:
+            die("%s does not preprocess: %s" % (src, r.stderr.decode("utf-8", "replace")[-2000:]))
+        return [m.strip() for m in re.findall(r"Note: including file:\s*(.+)", r.stderr.decode("utf-8", "replace"))]
+
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=os.cpu_count() or 4) as ex:
+        for paths in ex.map(includes, module_sources(mod)):
+            for p in paths:
+                p = os.path.abspath(os.path.join(mod, p))
+                found[os.path.normcase(p)] = p
+    keep, root = set(), os.path.normcase(ROOT) + os.sep
+    for low, p in found.items():
+        if low.startswith(resource) or any(low.startswith(m) for m in made):
+            continue   # clang's own, or made from the game
+        if not low.startswith(root):
+            die("%s is included from outside this tree and clang" % p)
+        keep.add(p[len(root):])
+    return keep
+
+
+def cmd_kit_tree(args):
+    """The Kit's folder, kit/ beside Ascension-R.exe in the Kit release: python.org's embeddable Python, clang-cl and
+    lld-link, and the files of this tree that build the game's DLL from a player's GOWA.elf. Those are found from what
+    the build runs: the tools by what they import and start, the headers by what clang includes for every source of the
+    DLL that `module` made here. Nothing made from the game, and nothing that decrypts, goes into it."""
+    import check_repo  # noqa: E402  (scripts/check_repo.py)
+    out = os.path.abspath(args.out)
+    if os.path.exists(out):
+        if not args.replace:
+            die("%s exists (--replace)" % out)
+        shutil.rmtree(out)
+    mod = os.path.join(WORK, "build-module")
+    if not os.path.isfile(os.path.join(mod, "native", "spu_g6_routines.c")):
+        die("run `module` first: the Kit's headers are the ones its sources include")
+    say("which headers the DLL's sources include")
+    rel = set(kit_headers(mod))
+    rel |= set(os.path.join("scripts", n) for n in KIT_SCRIPTS)
+    rel |= set(os.path.relpath(p, ROOT) for p in py_closure([os.path.join(TOOLS, t) for t in KIT_TOOLS], TOOLS))
+    rel.add(os.path.join("port", "game_module.c"))
+    rel |= set(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(KIT_DIR, "**", "*"), recursive=True) if os.path.isfile(p))
+    rel |= set(os.path.relpath(p, ROOT) for p in glob.glob(os.path.join(ROOT, "native", "spu_*.c"))
+               if os.path.basename(p) != "spu_g6_routines.c")   # written from the game at build time
+    rel = sorted(os.path.normpath(r) for r in rel)
+    bad = [r for r in rel if os.path.basename(r).lower() in KIT_NEVER or r.split(os.sep)[0] in check_repo.BAD_FOLDERS]
+    for r in rel:
+        with open(os.path.join(ROOT, r), "rb") as f:
+            if check_repo.has_key(f.read()):
+                bad.append(r + " (a key)")
+    if bad:
+        die("not for the Kit:\n  " + "\n  ".join(bad))
+    for r in rel:
+        os.makedirs(os.path.dirname(os.path.join(out, r)), exist_ok=True)
+        shutil.copyfile(os.path.join(ROOT, r), os.path.join(out, r))
+    names = {}
+    for r in rel:   # the Python finds scripts/ and ps3recomp/tools/ by one path: one name, one module
+        if r.endswith(".py"):
+            names.setdefault(os.path.basename(r), []).append(r)
+    clash = [v for v in names.values() if len(v) > 1]
+    if clash:
+        die("the same module in two folders: %s" % clash)
+
+    py = load_local().get("kit_python") or os.path.join(os.path.dirname(ROOT), "python-embed", KIT_PYTHON)
+    if not os.path.isfile(os.path.join(py, "python.exe")) or not os.path.isfile(os.path.join(py, KIT_PYTHON_PTH)):
+        die("no embeddable Python %s in %s (python.org's python-%s-embed-amd64.zip, unpacked)" % (KIT_PYTHON, py, KIT_PYTHON))
+    os.makedirs(os.path.join(out, "python"))
+    for n in os.listdir(py):
+        if os.path.isfile(os.path.join(py, n)) and not n.endswith("._pth"):
+            shutil.copyfile(os.path.join(py, n), os.path.join(out, "python", n))
+    with open(os.path.join(out, "python", KIT_PYTHON_PTH), "w", encoding="utf-8", newline="\r\n") as f:
+        f.write("python314.zip\n.\n..\\scripts\n..\\ps3recomp\\tools\n")
+    llvm = kit_llvm()
+    os.makedirs(os.path.join(out, "llvm", "bin"))
+    for t in ("clang-cl.exe", "lld-link.exe"):
+        shutil.copyfile(os.path.join(llvm, t), os.path.join(out, "llvm", "bin", t))
+    inc = glob.glob(os.path.join(os.path.dirname(llvm), "lib", "clang", "*", "include"))
+    if len(inc) != 1:
+        die("not one clang resource folder: %s" % inc)
+    shutil.copytree(inc[0], os.path.join(out, "llvm", os.path.relpath(inc[0], os.path.dirname(llvm))))
+
+    h = hashlib.sha256()
+    files = sorted(os.path.relpath(os.path.join(d, f), out) for d, _, fs in os.walk(out) for f in fs)
+    for r in files:
+        h.update(("%s %s\n" % (r.replace(os.sep, "/"), sha256(os.path.join(out, r)))).encode())
+    with open(os.path.join(out, KIT_ID), "w", encoding="ascii") as f:
+        f.write(h.hexdigest() + "\n")
+    size = sum(os.path.getsize(os.path.join(out, r)) for r in files)
+    say("%s: %d files from this tree, %d in all, %.0f MB; kit %s" % (out, len(rel), len(files) + 1, size / 1048576.0,
+                                                                    h.hexdigest()[:16]))
     return 0
 
 
@@ -1961,6 +2375,14 @@ def main():
     p = sub.add_parser("module", help="the game's DLL with clang-cl and lld-link alone, as the Kit builds it")
     p.add_argument("--out", help="where (default build-module/ in the work folder)")
     p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
+    p = sub.add_parser("kit-tree", help="the Kit's folder: its Python, clang and lld, and what of this tree builds the DLL")
+    p.add_argument("--out", required=True, help="where, e.g. build-kit/kit")
+    p.add_argument("--replace", action="store_true", help="replace the folder if it is there")
+    p = sub.add_parser("kit-build", help="the Kit's build on a player's PC, which the launcher runs: GOWA_ELF lifted and "
+                                         "built into GOWA_WORK, the DLL put into --out")
+    p.add_argument("--out", required=True, help="where the DLL goes, with build.log and ascension_game.ini")
+    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
+    p.add_argument("--keep-work", action="store_true", help="leave what it made in GOWA_WORK")
     p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
     p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
     p = sub.add_parser("package", help="build and zip a release into dist/<version>/<release>/; nothing is uploaded")
@@ -1973,7 +2395,8 @@ def main():
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
             "bench": bench.main, "frames": frames.main, "replay": cmd_replay,
-            "ffmpeg": cmd_ffmpeg, "package": cmd_package, "module": cmd_module}[args.cmd](args)
+            "ffmpeg": cmd_ffmpeg, "package": cmd_package, "module": cmd_module, "kit-tree": cmd_kit_tree,
+            "kit-build": cmd_kit_build}[args.cmd](args)
 
 
 if __name__ == "__main__":

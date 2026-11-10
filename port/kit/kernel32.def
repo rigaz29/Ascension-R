@@ -1,5 +1,5 @@
 ; The one function the game's DLL imports (port/game_module.c): Windows sets up a DLL's thread-locals only if it
-; imports something. `llvm-lib /def:kernel32.def /machine:x64` makes the import library from it.
+; imports something. `lld-link /lib /def:kernel32.def /machine:x64` makes the import library from it.
 LIBRARY KERNEL32.dll
 EXPORTS
     GetCurrentThreadId

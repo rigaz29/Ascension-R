@@ -611,7 +611,8 @@ if(PORT_GAME_MODULE)
     target_compile_options(ascension_game PRIVATE $<TARGET_PROPERTY:${PROJECT_NAME},COMPILE_OPTIONS> /GS-)
     set_target_properties(ascension_game PROPERTIES LINKER_LANGUAGE CXX)
     target_link_options(ascension_game PRIVATE /NODEFAULTLIB /NOENTRY /MANIFEST:NO "/MAP:${CMAKE_BINARY_DIR}/ascension_game.map")
-    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/port/main.cpp" APPEND PROPERTY COMPILE_DEFINITIONS PORT_GAME_MODULE)
+    set_property(SOURCE "${CMAKE_CURRENT_SOURCE_DIR}/port/main.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/port/launcher.cpp"
+                 "${CMAKE_CURRENT_SOURCE_DIR}/port/report.cpp" APPEND PROPERTY COMPILE_DEFINITIONS PORT_GAME_MODULE)
 endif()
 
 # ---------------------------------------------------------------------------

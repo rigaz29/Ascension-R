@@ -10,6 +10,7 @@
 #include <string.h>
 #include <time.h>
 #include "game_module.h"
+#include "ps3emu/ps3_settings.h"
 
 #define DECLARE_FUNC(n) void n(void);
 GAME_MODULE_FUNCS(DECLARE_FUNC)
@@ -48,14 +49,98 @@ static void host_fill(void)
     s_api.tramp_offset = (uint64_t)((char*)&g_spu_trampoline_fn - ((char**)__readgsqword(0x58))[_tls_index]);
 }
 
+/* A file of the folder the launcher builds the DLL in, <the settings' folder>\game-code (gowa.py kit-build); ""
+ * gives the folder. */
+void game_module_built(wchar_t* out, size_t n, const wchar_t* name)
+{
+    wchar_t d[MAX_PATH + 64];
+    if (!MultiByteToWideChar(CP_UTF8, 0, ps3_settings_path(), -1, d, MAX_PATH)) d[0] = 0;
+    for (wchar_t* p = d; *p; p++) if (*p == L'/') *p = L'\\';
+    wchar_t* slash = wcsrchr(d, L'\\');
+    if (slash) *slash = 0;
+    else wcscpy(d, L".");
+    if (name[0]) swprintf(out, n, L"%ls\\game-code\\%ls", d, name);
+    else swprintf(out, n, L"%ls\\game-code", d);
+}
+
+/* The game's DLL: beside the program (a build's own), else the one the launcher built. 1 beside, 2 built here,
+ * 0 neither; path gets the one found, or where the launcher would build it. */
+int game_module_where(wchar_t* path, size_t n)
+{
+    wchar_t p[MAX_PATH + 32];
+    const DWORD len = GetModuleFileNameW(NULL, p, MAX_PATH);
+    wchar_t* slash = len && len < MAX_PATH ? wcsrchr(p, L'\\') : NULL;
+    if (slash) {
+        wcscpy(slash + 1, L"ascension_game.dll");
+        if (GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES) {
+            swprintf(path, n, L"%ls", p);
+            return 1;
+        }
+    }
+    game_module_built(path, n, L"ascension_game.dll");
+    return GetFileAttributesW(path) != INVALID_FILE_ATTRIBUTES ? 2 : 0;
+}
+
+/* A file of the Kit's folder, kit\ beside the program (gowa.py kit-tree). */
+void game_module_kit(wchar_t* out, size_t n, const wchar_t* name)
+{
+    wchar_t p[MAX_PATH + 32];
+    const DWORD len = GetModuleFileNameW(NULL, p, MAX_PATH);
+    wchar_t* slash = len && len < MAX_PATH ? wcsrchr(p, L'\\') : NULL;
+    if (slash) slash[1] = 0;
+    else p[0] = 0;
+    swprintf(out, n, L"%lskit\\%ls", p, name);
+}
+
+/* The first line of a small text file, without its line end; "" when there is none. */
+static void first_line(const wchar_t* path, char* out, size_t n)
+{
+    out[0] = 0;
+    FILE* f = _wfopen(path, L"rb");
+    if (!f) return;
+    if (!fgets(out, (int)n, f)) out[0] = 0;
+    fclose(f);
+    out[strcspn(out, "\r\n")] = 0;
+}
+
+/* What stands between the player and the game's code: 0 nothing (a DLL beside the program, or one the launcher built
+ * for this program from this Kit), 1 not built yet, 2 built for another version of the program or the Kit, 3 no DLL
+ * that will do, and no Kit to build one with. */
+int game_module_state(void)
+{
+    wchar_t p[MAX_PATH + 64];
+    const int where = game_module_where(p, sizeof p / sizeof p[0]);
+    if (where == 1) return 0;
+    char kit[96];
+    game_module_kit(p, sizeof p / sizeof p[0], L"kit-id.txt");
+    first_line(p, kit, sizeof kit);
+    if (where == 0) return kit[0] ? 1 : 3;
+    /* Built here: ascension_game.ini says for what (gowa.py kit-build). */
+    int abi = -1;
+    char built_kit[96] = "", line[200];
+    game_module_built(p, sizeof p / sizeof p[0], L"ascension_game.ini");
+    FILE* f = _wfopen(p, L"rb");
+    const int said = f != NULL;
+    if (f) {
+        while (fgets(line, sizeof line, f)) {
+            line[strcspn(line, "\r\n")] = 0;
+            if (!strncmp(line, "abi = ", 6)) abi = atoi(line + 6);
+            else if (!strncmp(line, "kit = ", 6)) snprintf(built_kit, sizeof built_kit, "%s", line + 6);
+        }
+        fclose(f);
+    }
+    if (!kit[0]) return abi == GAME_MODULE_ABI || !said ? 0 : 3;   /* nothing to build it again with: loading it tells */
+    return abi == GAME_MODULE_ABI && !strcmp(kit, built_kit) ? 0 : 2;
+}
+
 /* Before anything looks for lifted code. */
 int game_module_load(void)
 {
-    wchar_t path[MAX_PATH + 32];
-    const DWORD n = GetModuleFileNameW(NULL, path, MAX_PATH);
-    wchar_t* slash = n ? wcsrchr(path, L'\\') : NULL;
-    if (!slash) return 0;
-    wcscpy(slash + 1, L"ascension_game.dll");
+    wchar_t path[MAX_PATH + 64];
+    if (!game_module_where(path, sizeof path / sizeof path[0])) {
+        fprintf(stderr, "[module] no ascension_game.dll beside the program or in %ls: the launcher builds it\n", path);
+        return 0;
+    }
     HMODULE dll = LoadLibraryExW(path, NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
     if (!dll) {
         fprintf(stderr, "[module] could not load %ls: error %lu\n", path, GetLastError());

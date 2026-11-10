@@ -10,7 +10,10 @@ lld-link alone: no Visual Studio, no Windows SDK, no import library of a C runti
   the rest (`stdint.h`, `stddef.h`, `stdarg.h`, the intrinsics).
 - `prelude.h`: forced into the lifted PPU sources. It provides the guest barriers without C++'s `<atomic>`.
 - `kernel32.def`: the DLL's one import. Windows gives a DLL's thread-locals an index only if the DLL imports
-  something. `llvm-lib /def:kernel32.def /machine:x64` turns it into a library.
+  something. `lld-link /lib /def:kernel32.def /machine:x64` turns it into a library.
 
 `scripts/gowa.py module` builds the DLL with these files (`docs/notes/2026-11-10-kit-toolchain.md`). When the code
 starts to use something else from the C library, a compile error names it, and it goes into these headers.
+
+`scripts/gowa.py kit-tree` puts them, with the rest of what the build reads, into the Kit's folder, and the
+launcher runs `gowa.py kit-build` from there (`docs/notes/2026-11-10-kit-setup.md`).

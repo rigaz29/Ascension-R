@@ -1271,6 +1271,7 @@ extern "C" void gowa_title_patches_apply(void);
 #ifdef PORT_GAME_MODULE
 extern "C" int game_module_load(void);        /* game_module_host.c */
 extern "C" void game_module_sync(void);
+extern "C" int game_module_state(void);
 #endif
 extern "C" void gowa_cheats_apply(void);
 extern "C" void ps3_pad_tune(double stick_full, int flick_hold);
@@ -1558,6 +1559,10 @@ int main(int argc, char** argv)
         const char* e = ps3_settings_str("paths", "elf", NULL, NULL);
         if (!e || !*e || GetFileAttributesA(e) == INVALID_FILE_ATTRIBUTES) launcher = 1;
     }
+#ifdef PORT_GAME_MODULE
+    /* The game's code not built here yet, or built for another version: the launcher builds it. */
+    if (!no_launcher && game_module_state() != 0) launcher = 1;
+#endif
 #endif
     if (launcher && !gowa_launcher()) return 0;
     title_environment();

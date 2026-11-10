@@ -927,6 +927,18 @@ int gowa_report_create(int with_saves, char* out, size_t n)
     if (!added) note += "(no session logs)\n";
     note += "\n";
 
+#ifdef PORT_GAME_MODULE
+    /* The Kit: how the game's code was built on this PC, or how far that got (gowa.py kit-build). */
+    {
+        const std::string d = dir_of(ps3_settings_path());
+        std::string blog;
+        if (read_capped((d.empty() ? std::string(".") : d) + "\\game-code\\build.log", blog, 64u << 10, 192u << 10) && !blog.empty()) {
+            hide_in(blog);
+            zip_add(z, "build.log", blog);
+            note += "The game's code: build.log\n\n";
+        }
+    }
+#endif
     std::string ini;
     if (read_capped(ps3_settings_path(), ini, 1u << 20, 0) && !ini.empty()) {
         hide_in(ini);

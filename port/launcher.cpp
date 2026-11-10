@@ -550,6 +550,94 @@ static struct {
     wchar_t err[320];
 } s_prep;
 
+#ifdef PORT_GAME_MODULE
+extern "C" int game_module_state(void);                                        /* game_module_host.c */
+extern "C" void game_module_built(wchar_t* out, size_t n, const wchar_t* name);
+extern "C" void game_module_kit(wchar_t* out, size_t n, const wchar_t* name);
+
+/* The Kit: the game's code built on this PC, once (kit_start). The Kit's Python runs gowa.py kit-build, which says how
+ * far it is in lines that start with @; the rest of what it prints is in game-code\build.log. Stop ends it, and Build
+ * goes on where it stopped. */
+enum { WM_KIT_BUILD = WM_APP + 3 };
+static struct {
+    HANDLE proc, job, reader, out;     /* the Python, the job it and its compilers are in, the thread reading it */
+    volatile LONG running;
+    volatile LONG permille, left;      /* how far, and the seconds left (-1 while that is not known) */
+    SRWLOCK lock;                      /* over what and err */
+    wchar_t what[200];                 /* the step it is at, from @progress */
+    wchar_t err[400];                  /* @error, or how it ended */
+    char last[240];                    /* its last line that was not an @ line: Python's own complaint, if it had one */
+    volatile LONG done, stopped;       /* @done came; Stop was pressed */
+    int state;                         /* game_module_state(): 0 built, 1 not yet, 2 for another version, 3 no Kit */
+    int partly;                        /* a build that stopped left its work: Build goes on from there */
+    ULONGLONG started;
+} s_kit;
+
+static void kit_start(void);
+
+static void kit_refresh(void)
+{
+    wchar_t p[GAME_PATH_MAX];
+    s_kit.state = game_module_state();
+    game_module_built(p, GAME_PATH_MAX, L"work");
+    s_kit.partly = GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES;
+}
+
+/* UTF-8 into a buffer, cut to fit it. */
+static void kit_copy(wchar_t* to, size_t n, const char* s)
+{
+    const int k = MultiByteToWideChar(CP_UTF8, 0, s, (int)strnlen(s, n - 1), to, (int)n - 1);
+    to[k > 0 ? k : 0] = 0;
+}
+
+/* The line the ready check shows while it builds; the level as check_line takes it. */
+static int kit_line(wchar_t* b, size_t n)
+{
+    AcquireSRWLockShared(&s_kit.lock);
+    const long left = s_kit.left;
+    const int secs = (int)((GetTickCount64() - s_kit.started) / 1000);
+    if (s_kit.stopped) swprintf(b, n, L"Stopping\x2026");
+    else if (!s_kit.what[0]) swprintf(b, n, L"Starting\x2026");
+    else if (left >= 90) swprintf(b, n, L"%ls \x00B7 about %ld min left", s_kit.what, (left + 30) / 60);
+    else if (left >= 0) swprintf(b, n, L"%ls \x00B7 about a minute left", s_kit.what);
+    else swprintf(b, n, L"%ls \x00B7 %d:%02d", s_kit.what, secs / 60, secs % 60);
+    ReleaseSRWLockShared(&s_kit.lock);
+    return 2;
+}
+
+/* What the ready check says when the game's code is not there to play, and the line under it. */
+static int kit_need(wchar_t* b, size_t n, const wchar_t** hint)
+{
+    *hint = L"Once, on this PC: about 10 minutes";
+    AcquireSRWLockShared(&s_kit.lock);
+    const int failed = s_kit.err[0] != 0;
+    if (failed) swprintf(b, n, L"Not built: %ls", s_kit.err);
+    ReleaseSRWLockShared(&s_kit.lock);
+    if (failed) {
+        *hint = L"";   /* Log and Try again leave no room: the log says the rest */
+        return -1;
+    }
+    switch (s_kit.state) {
+    case 1:
+        if (s_kit.partly) {
+            swprintf(b, n, L"The game's code is partly built");
+            *hint = L"Build goes on where it stopped";
+        } else {
+            swprintf(b, n, L"The game's code is not built yet");
+        }
+        return 0;
+    case 2:
+        swprintf(b, n, L"The game's code is from another version");
+        *hint = L"Again, on this PC: about 10 minutes";
+        return 0;
+    default:
+        swprintf(b, n, L"No Kit folder to build the game's code with");
+        *hint = L"";
+        return -1;
+    }
+}
+#endif
+
 static void path_slashes(wchar_t* p) { for (; *p; p++) if (*p == L'/') *p = L'\\'; }
 
 /* A file beside the settings; "" gives the folder. */
@@ -647,6 +735,9 @@ static void game_refresh(void)
     }
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
     s_rc.elf_ok = elf && *elf && GetFileAttributesA(elf) != INVALID_FILE_ATTRIBUTES;
+#ifdef PORT_GAME_MODULE
+    kit_refresh();
+#endif
 }
 
 static const wchar_t* game_path_shown(void)
@@ -668,6 +759,9 @@ static int game_status(wchar_t* b, size_t n)
     if (s_game.note[0]) { swprintf(b, n, L"%ls", s_game.note); return -1; }
     switch (g.state) {
     case GAME_OK:
+#ifdef PORT_GAME_MODULE
+        if (s_kit.running) return kit_line(b, n);
+#endif
         swprintf(b, n, L"God of War: Ascension \x00B7 %ls \x00B7 %ls", W(g.title_id), game_version());
         return 1;
     case GAME_OTHER_BUILD:
@@ -1019,6 +1113,9 @@ enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
     H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE, H_REPORT,
     H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP,
+#ifdef PORT_GAME_MODULE
+    H_KIT_BUILD, H_KIT_STOP, H_KIT_LOG,
+#endif
     H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
@@ -1352,6 +1449,25 @@ static void draw_play(void)
         const int level = prep_line(b, 160, &f);
         check_line(x0 + 22, y, cw - 44, level, b);
         draw_progress(x0 + 54, y + 27, cw - 76, f, level == 0);
+#ifdef PORT_GAME_MODULE
+    } else if (s_kit.running || (s_rc.elf_ok && s_kit.state != 0)) {
+        /* The game's code, built here: what it is at, and under it the bar and Stop, or what Build would do. */
+        wchar_t b[480];
+        const wchar_t* hint = L"";
+        const int level = s_kit.running ? kit_line(b, 480) : kit_need(b, 480, &hint);
+        check_line(x0 + 22, y, cw - 44, level, b);
+        if (s_kit.running) {
+            y += 34;
+            draw_progress(x0 + 54, y + 12, cw - 76 - 106, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
+            w_button(L"Stop", R(x0 + cw - 118, y - 2, 96, 30), H_KIT_STOP, 0);
+        } else if (s_kit.state != 3) {
+            y += 34;
+            const int log = s_kit.err[0] != 0;
+            text(hint, s_tf_small, R(x0 + 54, y, cw - 76 - (log ? 212 : 106), 26), C_TEXT2);
+            if (log) w_button(L"Log", R(x0 + cw - 224, y - 2, 96, 30), H_KIT_LOG, 0);
+            w_button(log ? L"Try again" : L"Build", R(x0 + cw - 118, y - 2, 96, 30), H_KIT_BUILD, 0);
+        }
+#endif
     } else if (!s_rc.elf_ok) {
         check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
                                                                            : L"Game not found");
@@ -1446,7 +1562,11 @@ static const float GAME_ROW_H = 106.0f, GAME_ROW_ASK_H = 46.0f;
 
 /* Whether the row asks for what the decrypting needs. */
 static int prep_asks(void) { return s_game.g.state == GAME_NO_ELF && !s_prep.thread && !s_find.thread; }
+#ifdef PORT_GAME_MODULE
+static float game_row_h(void) { return GAME_ROW_H + (prep_asks() ? GAME_ROW_ASK_H : s_prep.thread || s_kit.running ? 36.0f : 0.0f); }
+#else
 static float game_row_h(void) { return GAME_ROW_H + (prep_asks() ? GAME_ROW_ASK_H : s_prep.thread ? 36.0f : 0.0f); }
+#endif
 
 static void draw_game_row(float x, float y, float w)
 {
@@ -1475,6 +1595,12 @@ static void draw_game_row(float x, float y, float w)
         draw_progress(x + 32, y + 112, w - 32 - 110, f, level == 0);
         w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_PREP_STOP, 0);
     }
+#ifdef PORT_GAME_MODULE
+    else if (s_kit.running) {   /* the game's code, after the decrypting: the status line above says how far */
+        draw_progress(x + 32, y + 112, w - 32 - 110, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
+        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_KIT_STOP, 0);
+    }
+#endif
     if (prep_asks()) {
         const float by = y + 106;
         float bx = x;
@@ -1813,6 +1939,12 @@ static void prepare_done(void)
     game_paths_fill();
     game_refresh();
     art_reload();
+#ifdef PORT_GAME_MODULE
+    if (s_kit.state == 1 || s_kit.state == 2) {   /* the game's code next, built here once */
+        kit_start();
+        return;
+    }
+#endif
     toast("Game ready");
 }
 
@@ -2017,6 +2149,214 @@ static void pc_start(void)
     }
 }
 
+#ifdef PORT_GAME_MODULE
+/* --- the Kit: the game's code built here ----------------------------------------- */
+static void kit_parse(const char* l)
+{
+    if (l[0] != '@') {
+        if (l[0]) snprintf(s_kit.last, sizeof s_kit.last, "%s", l);
+        return;
+    }
+    long pm = 0, left = -1;
+    int at = 0;
+    if (sscanf(l, "@progress %ld %ld %n", &pm, &left, &at) == 2 && at) {
+        AcquireSRWLockExclusive(&s_kit.lock);
+        kit_copy(s_kit.what, sizeof s_kit.what / sizeof s_kit.what[0], l + at);
+        ReleaseSRWLockExclusive(&s_kit.lock);
+        InterlockedExchange(&s_kit.permille, pm);
+        InterlockedExchange(&s_kit.left, left);
+    } else if (!strncmp(l, "@error ", 7)) {
+        AcquireSRWLockExclusive(&s_kit.lock);
+        kit_copy(s_kit.err, sizeof s_kit.err / sizeof s_kit.err[0], l + 7);
+        ReleaseSRWLockExclusive(&s_kit.lock);
+    } else if (!strncmp(l, "@done", 5)) {
+        InterlockedExchange(&s_kit.done, 1);
+    } else {
+        return;
+    }
+    PostMessageA(s_main, WM_KIT_BUILD, 0, 0);
+}
+
+static DWORD WINAPI kit_reader(LPVOID)
+{
+    char buf[4096], line[512];
+    size_t n = 0;
+    DWORD got = 0;
+    while (ReadFile(s_kit.out, buf, sizeof buf, &got, NULL) && got) {
+        for (DWORD i = 0; i < got; i++) {
+            if (buf[i] == '\n' || n + 1 >= sizeof line) {
+                line[n] = 0;
+                n = 0;
+                kit_parse(line);
+            } else if (buf[i] != '\r') {
+                line[n++] = buf[i];
+            }
+        }
+    }
+    WaitForSingleObject(s_kit.proc, INFINITE);
+    DWORD code = 1;
+    GetExitCodeProcess(s_kit.proc, &code);
+    AcquireSRWLockExclusive(&s_kit.lock);
+    if (s_kit.stopped) s_kit.err[0] = 0;   /* stopped is not failed */
+    else if (!s_kit.done && !s_kit.err[0]) {
+        swprintf(s_kit.err, sizeof s_kit.err / sizeof s_kit.err[0], L"it stopped (%lu)%ls", code, s_kit.last[0] ? L": " : L"");
+        const size_t k = wcslen(s_kit.err);
+        kit_copy(s_kit.err + k, sizeof s_kit.err / sizeof s_kit.err[0] - k, s_kit.last);
+    }
+    ReleaseSRWLockExclusive(&s_kit.lock);
+    PostMessageA(s_main, WM_KIT_BUILD, 1, 0);
+    return 0;
+}
+
+/* The Kit's Python, in a job of its own at below normal priority: closing the job ends it and every compiler it
+ * started, and so does this window's end, whatever way it ends. */
+static void kit_start(void)
+{
+    if (s_kit.running) return;
+    static wchar_t py[GAME_PATH_MAX], script[GAME_PATH_MAX], out[GAME_PATH_MAX], work[GAME_PATH_MAX + 8], dir[GAME_PATH_MAX];
+    game_module_kit(py, GAME_PATH_MAX, L"python\\python.exe");
+    game_module_kit(script, GAME_PATH_MAX, L"scripts\\gowa.py");
+    game_module_kit(dir, GAME_PATH_MAX, L"");
+    if (GetFileAttributesW(py) == INVALID_FILE_ATTRIBUTES || GetFileAttributesW(script) == INVALID_FILE_ATTRIBUTES) {
+        toast_bad("No Kit folder beside the program");
+        return;
+    }
+    const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
+    if (!s_rc.elf_ok || !elf) {
+        s_tab = T_SYSTEM;
+        toast_bad("Set the game's folder first");
+        return;
+    }
+    game_module_built(out, GAME_PATH_MAX, L"");
+    swprintf(work, GAME_PATH_MAX + 8, L"%ls\\work", out);
+    CreateDirectoryW(out, NULL);
+    /* This environment, with the Kit's two and nothing of another Python's. */
+    wchar_t* cur = GetEnvironmentStringsW();
+    size_t len = 0;
+    for (const wchar_t* p = cur; *p; p += wcslen(p) + 1) len += wcslen(p) + 1;
+    const size_t cap = len + 2 * GAME_PATH_MAX + 64;
+    wchar_t* env = (wchar_t*)malloc(cap * sizeof(wchar_t));
+    if (!env) { FreeEnvironmentStringsW(cur); return; }
+    size_t at = 0;
+    for (const wchar_t* p = cur; *p; p += wcslen(p) + 1) {
+        if (!_wcsnicmp(p, L"GOWA_", 5) || !_wcsnicmp(p, L"PYTHON", 6)) continue;
+        wcscpy(env + at, p);
+        at += wcslen(p) + 1;
+    }
+    FreeEnvironmentStringsW(cur);
+    at += swprintf(env + at, cap - at, L"GOWA_WORK=%ls", work) + 1;
+    at += swprintf(env + at, cap - at, L"GOWA_ELF=%ls", W(elf)) + 1;
+    env[at] = 0;
+
+    static wchar_t cmd[4 * GAME_PATH_MAX];
+    swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%ls\" -E -s -B -X utf8 \"%ls\" kit-build --out \"%ls\"", py, script, out);
+    SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
+    HANDLE rd = NULL, wr = NULL;
+    HANDLE job = CreateJobObjectW(NULL, NULL);
+    JOBOBJECT_EXTENDED_LIMIT_INFORMATION li = {};
+    li.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_PRIORITY_CLASS;
+    li.BasicLimitInformation.PriorityClass = BELOW_NORMAL_PRIORITY_CLASS;
+    if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &li, sizeof li) || !CreatePipe(&rd, &wr, &sa, 0)) {
+        if (job) CloseHandle(job);
+        free(env);
+        toast_bad("Could not start the build");
+        return;
+    }
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOW si = {};
+    si.cb = sizeof si;
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = wr;
+    si.hStdError = wr;
+    PROCESS_INFORMATION pi = {};
+    BOOL ok = CreateProcessW(py, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW | CREATE_SUSPENDED | CREATE_UNICODE_ENVIRONMENT,
+                             env, dir, &si, &pi);
+    free(env);
+    CloseHandle(wr);
+    if (ok && !AssignProcessToJobObject(job, pi.hProcess)) {
+        TerminateProcess(pi.hProcess, 1);
+        CloseHandle(pi.hProcess);
+        CloseHandle(pi.hThread);
+        ok = FALSE;
+    }
+    if (!ok) {
+        CloseHandle(rd);
+        CloseHandle(job);
+        toast_bad("Could not start the build");
+        return;
+    }
+    s_kit.proc = pi.hProcess;
+    s_kit.job = job;
+    s_kit.out = rd;
+    s_kit.permille = 0;
+    s_kit.left = -1;
+    s_kit.what[0] = s_kit.err[0] = 0;
+    s_kit.last[0] = 0;
+    s_kit.done = s_kit.stopped = 0;
+    s_kit.started = GetTickCount64();
+    s_kit.running = 1;
+    s_kit.reader = CreateThread(NULL, 0, kit_reader, NULL, 0, NULL);
+    if (!s_kit.reader) {   /* nothing would read it: stop it */
+        CloseHandle(job);   /* ends it */
+        CloseHandle(pi.hThread);
+        CloseHandle(s_kit.proc);
+        CloseHandle(s_kit.out);
+        s_kit.running = 0;
+        toast_bad("Could not start the build");
+        return;
+    }
+    ResumeThread(pi.hThread);
+    CloseHandle(pi.hThread);
+    toast("Building the game's code: about 10 minutes");
+}
+
+static void kit_stop(void)
+{
+    if (!s_kit.running || s_kit.stopped) return;
+    InterlockedExchange(&s_kit.stopped, 1);
+    TerminateJobObject(s_kit.job, 1);
+}
+
+/* Its end: the handles closed, what is there now looked at again, and the toast. */
+static void kit_end(void)
+{
+    if (!s_kit.running) return;
+    WaitForSingleObject(s_kit.reader, INFINITE);
+    CloseHandle(s_kit.reader);
+    CloseHandle(s_kit.proc);
+    CloseHandle(s_kit.out);
+    CloseHandle(s_kit.job);
+    s_kit.reader = s_kit.proc = s_kit.out = s_kit.job = NULL;
+    s_kit.running = 0;
+    kit_refresh();
+    if (s_kit.done && s_kit.state == 0) toast("The game's code is built");
+    else if (s_kit.stopped) toast("Stopped: Build goes on from there");
+    else toast_bad("The game's code could not be built");
+}
+
+/* The window closed under it: it stops, and Build goes on from there next time. */
+static void kit_kill(void)
+{
+    if (!s_kit.running) return;
+    InterlockedExchange(&s_kit.stopped, 1);
+    TerminateJobObject(s_kit.job, 1);
+    WaitForSingleObject(s_kit.reader, 5000);
+    CloseHandle(s_kit.reader);
+    CloseHandle(s_kit.proc);
+    CloseHandle(s_kit.out);
+    CloseHandle(s_kit.job);
+    s_kit.running = 0;
+}
+
+static void kit_log(void)
+{
+    wchar_t p[GAME_PATH_MAX];
+    game_module_built(p, GAME_PATH_MAX, L"build.log");
+    if (GetFileAttributesW(p) == INVALID_FILE_ATTRIBUTES) toast_bad("No build log yet");
+    else ShellExecuteW(s_main, L"open", p, NULL, NULL, SW_SHOWNORMAL);
+}
+#endif
+
 
 /* --- reporting a problem ------------------------------------------------------- */
 static const wchar_t k_issue_url[] = L"https://github.com/rigaz29/Ascension-R/issues/new?template=problem.yml";
@@ -2035,7 +2375,12 @@ static void report_make(const wchar_t* heading)
     static const wchar_t what[] =
         L"The report is a zip file for you to attach to an issue on GitHub. The game sends nothing by itself.\n\n"
         L"It holds the logs of your last sessions, your button presses and the files the game opened in them, your "
+#ifdef PORT_GAME_MODULE
+        L"settings, the log of building the game's code, this PC's hardware and driver versions, and Windows' records of "
+        L"crashes of this game.\n\n"
+#else
         L"settings, this PC's hardware and driver versions, and Windows' records of crashes of this game.\n\n"
+#endif
         L"Folder paths and your Windows name are hidden. No game files are in it.";
     const task_dialog_fn td = task_dialog();
     BOOL saves = FALSE;
@@ -2188,6 +2533,12 @@ static void act(int id)
                 toast_bad("Set the game's folder first");
                 break;
             }
+#ifdef PORT_GAME_MODULE
+            /* The game's code first: Play builds it, and the player plays once it is there. */
+            if (s_kit.running) { toast("The game's code is still being built"); break; }
+            if (s_kit.state == 3) { toast_bad("No Kit folder to build the game's code with"); break; }
+            if (s_kit.state != 0) { s_tab = T_PLAY; kit_start(); break; }
+#endif
             /* The second link, if only the first was made. */
             if (s_game.g.state >= GAME_NO_ELF && GetFileAttributesW(s_game.link_hdd0) == INVALID_FILE_ATTRIBUTES)
                 game_link(s_game.link_hdd0, s_game.g.dir, NULL, 0);
@@ -2214,6 +2565,11 @@ static void act(int id)
             break;
         case H_PREP_RETRY: prepare_begin(); break;
         case H_PREP_STOP: if (s_prep.thread) game_progress_stop(&s_prep.progress); break;
+#ifdef PORT_GAME_MODULE
+        case H_KIT_BUILD: kit_start(); break;
+        case H_KIT_STOP: kit_stop(); break;
+        case H_KIT_LOG: kit_log(); break;
+#endif
         case H_GAME_AUTO:
             if (s_find.thread) s_find.stop = 1;
             else find_start(NULL);
@@ -2401,11 +2757,20 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         prepare_done();
         redraw();
         return 0;
+#ifdef PORT_GAME_MODULE
+    case WM_KIT_BUILD:
+        if (w == 1) kit_end();   /* it exited */
+        redraw();
+        return 0;
+#endif
     case WM_TIMER: {
         if (w == 2) { redraw(); return 0; }
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
         if (s_find.thread) redraw();   /* the folder it is in */
         if (s_pc.running) redraw();    /* how far the precompile is */
+#ifdef PORT_GAME_MODULE
+        if (s_kit.running) redraw();    /* the time it has taken */
+#endif
         static int tick;
         if (++tick % 4 == 0) {   /* every 2 s: a controller plugged in or out */
             const int pad = pad_connected();
@@ -2590,6 +2955,9 @@ extern "C" int gowa_launcher(void)
         CloseHandle(s_pc.out);
         s_pc.running = 0;
     }
+#ifdef PORT_GAME_MODULE
+    kit_kill();
+#endif
     s_find.stop = 1;
     find_end();
     if (s_keys) DestroyWindow(s_keys);
