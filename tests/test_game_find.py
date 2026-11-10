@@ -41,9 +41,10 @@ int wmain(int argc, wchar_t** argv)
     wchar_t err[2048] = L"", t[2048] = L"";
     if (!wcscmp(argv[1], L"probe")) { game_probe(argv[2], &g); out(L"probe", g, 0); }
     else if (!wcscmp(argv[1], L"locate")) { game_locate(argv[2], &g); out(L"locate", g, 0); }
-    else if (!wcscmp(argv[1], L"search")) {
+    else if (!wcscmp(argv[1], L"search") || !wcscmp(argv[1], L"search_first")) {
+        /* search_first: as the launcher looks, the first copy that is this release will do */
         volatile long stop = 0;
-        GameSearch s = { argv[2], &stop, NULL, 20, 0 };
+        GameSearch s = { argv[2], &stop, NULL, 20, 0, !wcscmp(argv[1], L"search_first") ? GAME_NO_ELF : 0 };
         game_search(&s, &g);
         out(L"search", g, s.copies);
     } else if (!wcscmp(argv[1], L"link")) {
@@ -160,6 +161,25 @@ class GameFind(unittest.TestCase):
         self.assertEqual(out[1], "other_build")
         self.assertTrue(out[2].endswith("NPUA80918"), out)
         self.assertEqual(out[5], "2")
+
+    def test_the_games_data_folder_is_no_game(self):
+        # RPCS3 keeps NPUA80918-DATA beside the game: this title's PARAM.SFO, and no GOWA.SELF or GOWA.elf.
+        data = Path(self.p("NPUA80918-DATA"))
+        (data / "USRDIR").mkdir(parents=True)
+        (data / "PARAM.SFO").write_bytes(sfo())
+        self.assertEqual(self.run_t("probe", str(data))[1], "none")
+
+    def test_the_search_takes_the_game_beside_its_data_folder(self):
+        # As the launcher searches, stopping at the first copy of this release: the data folder, walked first, is
+        # not one.
+        game = self.p("RPCS3", "dev_hdd0", "game", "NPUA80918")
+        make_game(game, elf=False)
+        data = Path(game + "-DATA")
+        (data / "USRDIR").mkdir(parents=True)
+        (data / "PARAM.SFO").write_bytes(sfo())
+        out = self.run_t("search_first", self.d)
+        self.assertEqual(out[1], "no_elf")
+        self.assertTrue(out[2].endswith("NPUA80918"), out)
 
     def test_the_search_goes_past_links(self):
         make_game(self.p("real", "g"))

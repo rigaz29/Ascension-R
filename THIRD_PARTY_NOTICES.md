@@ -79,6 +79,14 @@ The build used here is under the GNU Lesser General Public License, version 3, a
 A release carries a smaller build, which `gowa.py ffmpeg` makes from FFmpeg's source: only the H.264 and MPEG-2 decoders,
 under the GNU Lesser General Public License 2.1 or later.
 
+## SDL
+
+The controllers XInput does not read go through [SDL](https://www.libsdl.org) 3: the runtime loads `SDL3.dll` from the
+exe's folder when it starts (`libs/input/cellPad.c` in the fork). Neither the DLL nor SDL's headers are in this
+repository; `gowa.py build` takes them from `../sdl3` or `local.json`'s `sdl3_dir`, the official
+`SDL3-devel-3.4.20-VC.zip` of libsdl-org/SDL, and a release carries that `SDL3.dll`. SDL is under the zlib license,
+Copyright (C) 1997-2026 Sam Lantinga; see its `LICENSE.txt`.
+
 ## DirectX Shader Compiler
 
 `gowa.py build` copies `dxcompiler.dll` and `dxil.dll` beside the exe, from the Windows SDK or `local.json`'s `dxc_dir`, to

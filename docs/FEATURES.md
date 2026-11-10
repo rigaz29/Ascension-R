@@ -98,6 +98,16 @@ to 67 ms a flip, and a fight at the 30 cap loses about 0.3 frames a second on a 
 MLAA on: with MLAA the depth at the final composite is the next frame's, so FSR 3 stays off and the log says why. The
 [plan](notes/2026-11-07-fsr31-plan.md) has the measurements.
 
+## Controllers
+
+XInput reads Xbox controllers and the PC pads that work like them, as before. With `SDL3.dll` beside the exe, SDL 3
+reads the others: the DualShock 4, the DualSense, Switch controllers and the DirectInput pads SDL knows. Each goes
+through the same dead zone and stick handling. Controller API in the launcher's Controls tab (`input.api`) chooses:
+Auto, the default, takes each controller through XInput when it has it and through SDL3 when not; XInput leaves SDL3
+out; SDL3 reads every controller, Xbox ones too. The Play tab's ready check names the controller and what reads it. A
+DualShock 3 needs a driver such as DsHidMini, and with DS4Windows XInput is the setting, or the pad counts twice
+([note](notes/2026-11-10-controllers.md)).
+
 ## Cheats
 
 The launcher's Cheats tab: Damage to Kratos (half, a quarter or none), Kratos's damage (2x, 5x or one hit), Max red orbs,

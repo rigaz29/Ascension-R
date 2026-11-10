@@ -205,6 +205,11 @@ DXC_DLLS = ("dxcompiler.dll", "dxil.dll")
 VC_DLLS = ("msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll")
 FSR_DLLS = ("amd_fidelityfx_loader_dx12.dll", "amd_fidelityfx_framegeneration_dx12.dll",
             "amd_fidelityfx_upscaler_dx12.dll")
+# SDL3, for the controllers XInput does not read (cellPad): libsdl-org/SDL's SDL3-devel-<version>-VC.zip, unpacked
+# (local.json's "sdl3_dir", or ../sdl3/<version>/SDL3-<version>). The build takes its headers only; SDL3.dll goes
+# beside the exe, which loads it at run time.
+SDL3_VERSION = "3.4.20"
+SDL3_ZIP_SHA256 = "1ec3009655ee37b1f73e52b3b120acc5afd8abaf9532f3303b1bf1dfe91b5969"   # SDL3-devel-3.4.20-VC.zip
 
 # A release carries FFmpeg with only the two decoders the runtime asks for (libs/codec/vdec_ffmpeg.c) and no other library.
 FFMPEG_VERSION = "8.1.3"
@@ -309,6 +314,13 @@ def find_dxc():
         if c and all(os.path.isfile(os.path.join(c, f)) for f in DXC_DLLS):
             return c
     return None
+
+
+def find_sdl3():
+    """SDL3's unpacked development package (headers, lib/x64/SDL3.dll, LICENSE.txt), or None."""
+    d = load_local().get("sdl3_dir") or os.path.join(os.path.dirname(ROOT), "sdl3", SDL3_VERSION, "SDL3-" + SDL3_VERSION)
+    need = (os.path.join("include", "SDL3", "SDL_gamepad.h"), os.path.join("lib", "x64", "SDL3.dll"), "LICENSE.txt")
+    return d if all(os.path.isfile(os.path.join(d, n)) for n in need) else None
 
 
 def find_fsr():
@@ -1108,6 +1120,10 @@ def cmd_build(args):
     else:
         say("note: no FFmpeg build in ../ffmpeg; movies and compressed audio won't decode")
         ff_opts = ["-DPS3RECOMP_FFMPEG_RUNTIME=OFF"]
+    sdl3 = find_sdl3()
+    if not sdl3:
+        say("note: no SDL3 %s in ../sdl3; the controllers are XInput's alone" % SDL3_VERSION)
+    ff_opts.append("-DPS3RECOMP_SDL3_INCLUDE_DIR=" + (os.path.join(sdl3, "include") if sdl3 else ""))
     rc = run(["cmake", "-S", ROOT, "-B", BUILD, "-G", "Ninja",
               "-DCMAKE_BUILD_TYPE=" + args.config,
               "-DCMAKE_C_COMPILER=" + compiler, "-DCMAKE_CXX_COMPILER=" + cxx,
@@ -1127,6 +1143,7 @@ def cmd_build(args):
         write_settings(ffmpeg)
         copy_dxc()
         copy_fsr()
+        copy_sdl3(sdl3)
         copy_vc_runtime(env)
     return rc
 
@@ -1142,6 +1159,15 @@ def copy_dxc():
         to = os.path.join(BUILD, f)
         if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(os.path.join(src, f)):
             shutil.copy2(os.path.join(src, f), to)
+
+
+def copy_sdl3(sdl3):
+    """SDL3.dll beside the exe, which loads it from there alone for the controllers XInput does not read."""
+    if not sdl3:
+        return
+    src, to = os.path.join(sdl3, "lib", "x64", "SDL3.dll"), os.path.join(BUILD, "SDL3.dll")
+    if not os.path.isfile(to) or os.path.getmtime(to) != os.path.getmtime(src):
+        shutil.copy2(src, to)
 
 
 def copy_fsr():
@@ -1500,7 +1526,8 @@ def release_text(src, release, version, llvm=""):
         text = f.read()
     for key, value in KIT_TEXT.items():
         text = text.replace(key, value if release == "kit" else "")
-    for key, value in (("@VERSION@", version), ("@FFMPEG_VERSION@", FFMPEG_VERSION), ("@RELEASE@", RELEASES[release]["name"]),
+    for key, value in (("@VERSION@", version), ("@FFMPEG_VERSION@", FFMPEG_VERSION), ("@SDL3_VERSION@", SDL3_VERSION),
+                       ("@RELEASE@", RELEASES[release]["name"]),
                        ("@LICENSE@", RELEASES[release]["license"]), ("@KIT_PYTHON@", KIT_PYTHON), ("@KIT_LLVM@", llvm)):
         text = text.replace(key, value)
     return text
@@ -1538,6 +1565,9 @@ def cmd_package(args):
         die("no release FFmpeg; run `gowa.py ffmpeg`")
     if not dxc or not fsr:
         die("this takes the Windows SDK's Redist\\D3D\\x64 and an FSR SDK in ../fsr-sdk")
+    sdl3 = find_sdl3()
+    if not sdl3:
+        die("this takes SDL3 %s in ../sdl3 (libsdl-org/SDL's SDL3-devel-%s-VC.zip, unpacked)" % (SDL3_VERSION, SDL3_VERSION))
     if cmd_build(argparse.Namespace(fresh=False, config="Release", no_spu=False, spu_lines=False, jobcap=False,
                                     spu_approx=False, define=["PORT_GAME_MODULE=ON"] if kit else [], jobs=args.jobs)):
         die("the build failed")
@@ -1548,7 +1578,7 @@ def cmd_package(args):
     lic = os.path.join(stage, "licenses")
     os.makedirs(lic)
     files = [(BUILD, f) for f in ("Ascension-R.exe",) + VC_DLLS] + [(fsr, f) for f in FSR_DLLS]
-    files += [(dxc, f) for f in DXC_DLLS] + [(ff, d) for _, d in FFMPEG_DLLS]
+    files += [(dxc, f) for f in DXC_DLLS] + [(ff, d) for _, d in FFMPEG_DLLS] + [(os.path.join(sdl3, "lib", "x64"), "SDL3.dll")]
     for folder, f in files:
         shutil.copy2(os.path.join(folder, f), stage)
     sdk = os.path.dirname(os.path.dirname(os.path.dirname(fsr)))
@@ -1560,6 +1590,7 @@ def cmd_package(args):
                     (os.path.join(third, "zstd", "LICENSE"), "Zstandard.txt"),
                     (os.path.join(ROOT, "third_party", "zlib", "LICENSE"), "zlib.txt"),
                     (os.path.join(ff, "COPYING.LGPLv2.1"), "FFmpeg-LGPL-2.1.txt"),
+                    (os.path.join(sdl3, "LICENSE.txt"), "SDL3.txt"),
                     (os.path.join(ff, "FFmpeg-build.txt"), "FFmpeg-build.txt")):
         shutil.copyfile(src, os.path.join(lic, to))
     with open(os.path.join(lic, "AMD-FSR1.txt"), "w", encoding="utf-8") as f:
@@ -1622,7 +1653,8 @@ def cmd_package(args):
             "compiler  " + clang.splitlines()[0],
             "FSR SDK   " + os.path.basename(sdk),
             "DXC       " + dxc,
-            "FFmpeg    " + FFMPEG_VERSION]
+            "FFmpeg    " + FFMPEG_VERSION,
+            "SDL3      %s, SDL3-devel-%s-VC.zip SHA-256 %s" % (SDL3_VERSION, SDL3_VERSION, SDL3_ZIP_SHA256)]
     if kit:
         info += ["kit       " + kit_id,
                  "Python    %s, python.org's embeddable package, zip SHA-256 %s" % (KIT_PYTHON, KIT_PYTHON_SHA256),

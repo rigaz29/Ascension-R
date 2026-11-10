@@ -29,6 +29,13 @@ FIRST START
    the launcher builds part of them ahead.
 
 
+CONTROLLERS
+
+Xbox controllers and other XInput pads, and through SDL3 the DualShock 4, the DualSense, Switch controllers and many
+others. A DualShock 3 needs a driver such as DsHidMini. "Controller API" in the Controls tab chooses what reads them;
+with DS4Windows running, set it to XInput, or the same controller counts twice.
+
+
 @KIT@
 WHERE YOUR FILES GO
 

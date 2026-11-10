@@ -49,7 +49,8 @@ problems further in.
 - **Shaders:** a compressed cache, pipelines built before the title, and vertex shaders that can be compiled before you play.
 - **Game patches:** switch off MLAA, depth of field, motion blur, mesh trimming or dynamic shadows.
 - **Cheats:** damage to and from Kratos, max red orbs, infinite magic and items, infinite rage and double jumps.
-- **Controls:** controller or keyboard and mouse, with stick dead zone, confirm button and vibration settings.
+- **Controls:** a controller or keyboard and mouse. Xbox and other XInput pads, and through SDL3 the DualShock 4, the
+  DualSense, Switch controllers and many others; stick dead zone, confirm button, vibration and controller API settings.
 - **Saves:** backups kept before the game writes over a save.
 - **Problem reports:** one button makes a zip of the logs, with your paths hidden.
 

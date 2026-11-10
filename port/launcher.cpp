@@ -128,6 +128,9 @@ static const char* const k_dealt_n[] = { "Normal", "2x", "5x", "One hit" };
 static const char* const k_dev[] = { "auto", "pad", "keyboard" };
 static const char* const k_dev_n[] = { "Controller, else keyboard", "Controller only", "Keyboard only" };
 static const char* const k_dev_s[] = { "Auto", "Controller", "Keyboard" };
+static const char* const k_api[] = { "auto", "xinput", "sdl3" };
+static const char* const k_api_n[] = { "XInput, else SDL3", "XInput only", "SDL3 for every controller" };
+static const char* const k_api_s[] = { "Auto", "XInput", "SDL3" };
 static const char* const k_dz[] = { "0.10", "0.15", "0.20", "0.24", "0.30", "0.35", "0.40" };
 static const char* const k_dz_n[] = { "10%", "15%", "20%", "24% (XInput's)", "30%", "35%", "40%" };
 static const char* const k_enter[] = { "cross", "circle" };
@@ -188,6 +191,9 @@ static Opt s_opt[] = {
       "while you play: a moment, a few seconds after a GPU driver update." },
     { T_CONTROLS, "input", "device", "auto", "Device", 0, LIST(k_dev, k_dev_n), k_dev_s,
       "Auto takes a controller when one is there, else the keyboard and mouse." },
+    { T_CONTROLS, "input", "api", "auto", "Controller API", 0, LIST(k_api, k_api_n), k_api_s,
+      "Auto reads a controller through XInput when it has it (Xbox, most PC pads), else through SDL3 (DualShock 4, "
+      "DualSense, Switch and others). With DS4Windows, XInput, or one controller counts twice." },
     { T_CONTROLS, "input", "deadzone", "0.24", "Stick dead zone", 0, LIST(k_dz, k_dz_n), NULL,
       "How far a stick moves before it counts." },
     { T_CONTROLS, "input", "enter_button", "cross", "Confirm button", 0, LIST(k_enter, k_enter_n), k_enter_n,
@@ -516,7 +522,8 @@ static struct {
     int profiles;
     char saves[1100];
     char vfs[1100];
-    int pad;        /* an XInput controller is plugged in */
+    int pad;        /* controllers plugged in, as the Controller API reads them */
+    char pad_name[160];   /* the first one's name and what reads it */
 } s_rc;
 
 static const wchar_t* W(const char* s);
@@ -784,24 +791,14 @@ static int game_status(wchar_t* b, size_t n)
     }
 }
 
-/* XInput, as cellPad finds it: from System32, at run time. */
-static int pad_connected(void)
+extern "C" int ps3_pad_host_describe(const char* api, char* out, size_t n);   /* cellPad.c */
+
+/* The controllers as cellPad would read them with the Controller API chosen here, saved or not: how many, and the
+ * first one's name and what reads it in name. */
+static int pad_connected(char* name, size_t n)
 {
-    typedef DWORD (WINAPI *get_state_fn)(DWORD, void*);
-    static get_state_fn get_state;
-    static int tried;
-    if (!tried) {
-        tried = 1;
-        static const wchar_t* const names[] = { L"XInput1_4.dll", L"XInput1_3.dll", L"XInput9_1_0.dll" };
-        for (size_t k = 0; k < sizeof names / sizeof names[0] && !get_state; k++) {
-            HMODULE m = LoadLibraryExW(names[k], NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-            if (m) get_state = (get_state_fn)(void*)GetProcAddress(m, "XInputGetState");
-        }
-    }
-    DWORD state[4];   /* XINPUT_STATE: 16 bytes */
-    for (DWORD i = 0; get_state && i < 4; i++)
-        if (get_state(i, state) == ERROR_SUCCESS) return 1;
-    return 0;
+    const Opt* api = opt_find("input", "api");
+    return ps3_pad_host_describe(api ? api->cur : NULL, name, n);
 }
 
 /* The first hardware adapter of a preference. */
@@ -868,7 +865,7 @@ static void ready_check(void)
         }
     }
     gpu_detect();
-    s_rc.pad = pad_connected();
+    s_rc.pad = pad_connected(s_rc.pad_name, sizeof s_rc.pad_name);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1505,8 +1502,12 @@ static void draw_play(void)
         const Opt* dev = opt_find("input", "device");
         if (dev && ps3_settings_ieq(dev->cur, "keyboard"))
             check_line(x0 + 22, y, cw - 44, 2, L"Keyboard and mouse (Controls tab)");
-        else if (s_rc.pad)
-            check_line(x0 + 22, y, cw - 44, 1, L"Controller connected");
+        else if (s_rc.pad) {
+            wchar_t b[220];
+            if (s_rc.pad > 1) swprintf(b, 220, L"Controller: %ls, and %d more", W(s_rc.pad_name), s_rc.pad - 1);
+            else swprintf(b, 220, L"Controller: %ls", W(s_rc.pad_name));
+            check_line(x0 + 22, y, cw - 44, 1, b);
+        }
         else
             check_line(x0 + 22, y, cw - 44, dev && ps3_settings_ieq(dev->cur, "pad") ? 0 : 2,
                        dev && ps3_settings_ieq(dev->cur, "pad") ? L"No controller found (Controls: controller only)"
@@ -2773,8 +2774,13 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
 #endif
         static int tick;
         if (++tick % 4 == 0) {   /* every 2 s: a controller plugged in or out */
-            const int pad = pad_connected();
-            if (pad != s_rc.pad) { s_rc.pad = pad; redraw(); }
+            char name[sizeof s_rc.pad_name];
+            const int pad = pad_connected(name, sizeof name);
+            if (pad != s_rc.pad || strcmp(name, s_rc.pad_name)) {
+                s_rc.pad = pad;
+                snprintf(s_rc.pad_name, sizeof s_rc.pad_name, "%s", name);
+                redraw();
+            }
         }
         return 0;
     }
