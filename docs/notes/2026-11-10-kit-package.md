@@ -95,6 +95,13 @@ goes on to the game beside it. This was in the Prebuilt as well: every player wi
 - Decrypting and then building, on a PC whose game is not decrypted yet: this PC's RPCS3 holds a `GOWA.elf` beside
   the game's `GOWA.SELF`, so the launcher finds the game ready and the decrypting does not run here. Testers will.
 - A Windows with no Visual Studio, Python or LLVM: Windows Sandbox, once it is enabled on this PC.
-- A real package: `version.h` says 0.1.0-alpha.2, which was packaged before; the Kit's first one needs the next
-  version.
 - README.md says "Downloads: none" until the Kit is published.
+
+## The first release
+
+0.1.0-alpha.3 is the Kit's first real package (`dist/0.1.0-alpha.3/kit`), with controllers through SDL3
+(`2026-11-10-controllers.md`): a zip of 144.6 MB, 463 files and 328.6 MB unpacked, SHA-256
+`544796a08b7d11802527e484785cf5b02cd3b136f8d98a502e08828947d84eb1`. Its audit found what the test packages had, and
+its build check came out with the same DLL. Unpacked as a new player has it, it found the game, built the DLL in 7:40
+(the same SHA-256 again) and played. On GitHub it went up as a draft pre-release with `audit.txt` and FFmpeg's
+source, to be published once a controller has been tried on it.
