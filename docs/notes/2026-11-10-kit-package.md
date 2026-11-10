@@ -1,0 +1,100 @@
+# The Kit's package (2026-11-10)
+
+The fourth step of the Kit release, after the DLL split, the toolchain and the setup (`2026-11-10-game-module.md`,
+`2026-11-10-kit-toolchain.md`, `2026-11-10-kit-setup.md`):
+
+    py scripts/gowa.py package kit [--test]
+
+## What it does
+
+1. Builds the Kit's exe in `build-kit/` with `PORT_GAME_MODULE=ON`. The build's cache must hold the release settings,
+   and `PORT_GAME_MODULE` must be on for the Kit and off for the Prebuilt.
+2. Puts beside the exe the DLLs the Prebuilt has, the licenses plus `Python.txt`, `LLVM.txt`, `LLVM-clang.txt` and
+   `LLVM-lld.txt`, and `README.txt` and `THIRD-PARTY.txt` with the Kit's own lines (`KIT_TEXT`: what it needs, THE
+   GAME'S CODE, the update, IN THE KIT FOLDER). The Prebuilt's two texts come out byte for byte as before. Then
+   `kit\` (`kit-tree`).
+3. `release_problems`, now over every file: every program and library finds what it imports beside it or in
+   System32, and no file but the licenses holds a path of this PC, the Windows user name, or the git name or e-mail.
+4. `package_audit` looks at every file for the game:
+   - by name, type and folder (an ELF, SELF, PKG, PSARC, EDAT, RAP, EBOOT.BIN, PARAM.SFO, `ascension_game.dll`, a
+     map, an object; `game-code`, `recompiled`, `spu`, `analysis`, `work`), and by its first bytes;
+   - lifted code: more than 2,000 lines with `ctx->gpr[` (the hand-written routines have at most 310);
+   - PS3 keys (`check_repo`) in every file this port makes;
+   - runs of `GOWA.elf`: its windows of 64 bytes at every 32nd offset, those with more than 8 different bytes, looked
+     for at every offset of every file, and each one found grown both ways, so no run of 96 bytes or more is missed.
+     A file this port makes may hold a run of less than 256 bytes and less than 1 KB in all. The makers' binaries
+     (the Python, LLVM, the DLLs beside the exe) may hold less than 16 KB and 64 KB: they carry the tables of the
+     libraries the game uses too.
+5. `kit_build_check`: the Kit as packaged builds the DLL, as the launcher has it do, from this tree's `GOWA.elf` with
+   its own Python, into `logs/kit-check`. `kit\` must be unchanged afterwards. The DLL's map goes beside the zip:
+   the DLL is the same on every PC, so that map reads the Kit's crash stacks.
+6. The zip, the maps, the FFmpeg source, `build-info.txt` (with the Kit's id, the Python zip's SHA-256, LLVM's
+   version, commit and programs' SHA-256, and the checked DLL's SHA-256) and `audit.txt`, which says what was looked
+   for and what was found.
+
+## Calibrating the runs of GOWA.elf
+
+| File | Bytes of GOWA.elf | Longest run |
+|---|---|---|
+| The Kit's `Ascension-R.exe` (3.3 MB) | 65 in 1 run | 65, a table of the C runtime |
+| The Kit's own 71 files | 0 | |
+| The Prebuilt's `Ascension-R.exe` (85 MB) | 1,098,877 in 94 runs | 115,884 |
+| `clang-cl.exe`, `lld-link.exe` | 1,487 and 1,256 | 1,028: zlib's CRC-32 table as a big-endian machine has it |
+
+The first package stopped on LLVM's two programs: the game and LLVM both link zlib, whose table for big-endian CPUs is
+the game's own. The other runs there are the C library's `0123456789abcdef…` and its month and day names. So the makers'
+binaries got their own limits, and `audit.txt` names the longest run in them.
+
+## Four things the first packages showed
+
+- Started from PowerShell, the build's configure lost clang-cl: `msvc_env.environ()` copies the environment and adds
+  what vcvars' `set` prints, by name, and cmd spells PATH `Path` when the shell that started it does. The environment
+  then held both, and LLVM went into the one CMake did not read. `toolchain_env` now keeps one name each, upper case
+  as Python has them, the later (vcvars') value. Git Bash spells it `PATH`, which is why every build until now worked.
+  That failed configure had also made CMake take the compiler for another one and start `build-kit` over: it dropped
+  the objects, and with LLVM off its path it took mingw's `ar` and `ld` for the archiver and the linker. `build-kit`
+  was configured again from no cache and built whole.
+
+- The tools' own Pythons write `ps3recomp\tools\__pycache__` into the Kit when they run: the Kit's Python runs with
+  `-B`, but the ones it starts do not, and the `._pth` makes them ignore `PYTHONDONTWRITEBYTECODE`. On a player's PC
+  that is harmless (and skipped where the folder is read-only). The Kit's id leaves `__pycache__` out, and the package
+  removes what its build check wrote before zipping.
+- Two DLLs built from the same sources differed in two bytes: the time stamp in the PE header. The link now has
+  `/Brepro`, which makes the stamps a hash of the file; two links are byte for byte the same, and a player's DLL
+  should be the file whose SHA-256 is in `build-info.txt`. `/Brepro` also adds a small debug directory to `.rdata`, so
+  this DLL is laid out a little differently from the ones before it.
+- `package --test` empties `dist/test/<release>` first; a shell standing in it kept a folder there. It now stops
+  when the folder is not gone, rather than zip what is left.
+
+## What the zip showed as a new player has it
+
+The test zip unpacked into a new folder with `portable.txt`, and started with no settings: the launcher looks for the
+game by itself. It took `D:\...\dev_hdd0\game\NPUA80918-DATA` for the game and said "Not decrypted yet", so there was
+no Build to press. RPCS3 makes that folder beside the game for its data: a PARAM.SFO with the same title, an icon and a
+small USRDIR, and no GOWA.SELF. The search stops at the first copy that is this release (`GAME_NO_ELF` is good enough,
+`find_thread`), the folders found are walked last first, and `game_probe` called any folder with the title and no
+GOWA.elf "not decrypted yet". It now asks for GOWA.SELF too; without either file the folder is no game, and the search
+goes on to the game beside it. This was in the Prebuilt as well: every player with the game in RPCS3 has that folder.
+
+## Results (Ryzen 5 4600H, 16 GB)
+
+- `package kit --test`: a zip of 143.5 MB, 461 files and 325.8 MB unpacked, in 11 minutes, 20 with `build-kit` built
+  whole.
+- `audit.txt`: 65 bytes of `GOWA.elf` in the files this port makes, one run in the exe (a table of the C runtime);
+  3,443 bytes in 14 runs in the makers' binaries, the longest zlib's CRC-32 table (1,028 bytes); at most 310 lines with
+  `ctx->gpr[` in a file; no PS3 key in the 88 files this port makes; no trace of this PC; every import found.
+- The zip as a new player has it: unpacked into a new folder with `portable.txt`, the launcher found the game in RPCS3
+  by itself, Build built the game's code from the zip's `kit\` in 7:46, and Play went on to the game's brightness
+  screen at 60 fps with no crash. The DLL it built is byte for byte the one the package's check built: SHA-256
+  `ed41a3de87f08d4d37733ddb6f98c26658c15501dc6dd57c095f323c0e6dd27e`.
+- The Prebuilt's files pass the stricter `release_problems` (looked at in a scratch folder, with no zip made).
+- The lift's line on the Play tab no longer counts functions and files: with the time left it was cut short.
+
+## Not done
+
+- Decrypting and then building, on a PC whose game is not decrypted yet: this PC's RPCS3 holds a `GOWA.elf` beside
+  the game's `GOWA.SELF`, so the launcher finds the game ready and the decrypting does not run here. Testers will.
+- A Windows with no Visual Studio, Python or LLVM: Windows Sandbox, once it is enabled on this PC.
+- A real package: `version.h` says 0.1.0-alpha.2, which was packaged before; the Kit's first one needs the next
+  version.
+- README.md says "Downloads: none" until the Kit is published.

@@ -32,3 +32,4 @@ msvcp140.dll, vcruntime140.dll, vcruntime140_1.dll
 
 The Microsoft files are here only so that this program can run. Use them only as part of it, and do not change them or
 pass them on apart from it.
+@KIT_THIRD@

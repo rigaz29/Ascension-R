@@ -11,6 +11,7 @@ WHAT YOU NEED
 
 - Windows 10 or 11, 64-bit.
 - A CPU with AVX2 and FMA, and a GPU with Direct3D 12.
+@KIT_NEEDS@
 - Your copy of the game, the digital US release NPUA80918, updated to version 1.12. The folder of an RPCS3 install
   (dev_hdd0\game\NPUA80918) works, and so does an unpacked PKG.
 - The game's license file (.rap). If the game is installed in RPCS3, the launcher finds it.
@@ -28,6 +29,7 @@ FIRST START
    the launcher builds part of them ahead.
 
 
+@KIT@
 WHERE YOUR FILES GO
 
 Settings, saves, shaders and logs are in %LOCALAPPDATA%\Ascension-R. To keep them in this folder instead, put an empty
@@ -37,6 +39,7 @@ file named portable.txt beside Ascension-R.exe.
 TO UPDATE
 
 Unpack the new version over this folder, or into a new one. Your settings and saves stay where they are.
+@KIT_UPDATE@
 
 
 IF SOMETHING GOES WRONG

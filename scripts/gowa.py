@@ -230,10 +230,51 @@ RELEASES = {
                  "download keep their own licenses."},
     "kit": {"name": "Kit", "license":
             "The code written for this port is under the MIT License: Ascension-R.txt in this folder. No code in this download was\n"
-            "translated from the game by a tool. The setup builds that part on your PC from your copy of the game: that license\n"
+            "translated from the game by a tool. The launcher builds that part on your PC from your copy of the game: that license\n"
             "does not cover what it builds, which remains its owners' and stays on your PC. The other parts of this download keep\n"
             "their own licenses."},
 }
+# What the Kit's README.txt and THIRD-PARTY.txt say besides the Prebuilt's. Each key is a line of the template, which
+# the Prebuilt leaves out; @KIT_PYTHON@ and @KIT_LLVM@ are the versions in the Kit's folder.
+KIT_TEXT = {
+    "@KIT_NEEDS@\n":
+        "- About 1.5 GB of free disk space and ten minutes or more, once: see THE GAME'S CODE.\n",
+    "@KIT@\n":
+        "THE GAME'S CODE\n"
+        "\n"
+        "This Kit holds no code of the game. The launcher builds it on your PC from your copy, once, after the decrypting:\n"
+        "ten minutes or more, with how far it is and the time left on the Play tab. Stop ends it, and Build goes on where it\n"
+        "stopped. It runs at a low priority and needs about 1.5 GB of free disk space while it works. What it leaves is\n"
+        "game-code\\ascension_game.dll, about 80 MB, beside your settings (see WHERE YOUR FILES GO). It is made from your\n"
+        "copy of the game: keep it to yourself.\n"
+        "\n"
+        "The kit folder beside Ascension-R.exe holds what builds it: Python @KIT_PYTHON@, clang and lld @KIT_LLVM@, and the\n"
+        "scripts and sources of this port and of ps3recomp. Keep it there.\n"
+        "\n"
+        "\n",
+    "@KIT_UPDATE@\n":
+        "The launcher then builds the game's code again, for the new version.\n",
+    "@KIT_THIRD@\n":
+        "\n"
+        "\n"
+        "IN THE KIT FOLDER\n"
+        "\n"
+        "kit\\python\n"
+        "    Python @KIT_PYTHON@, python.org's embeddable package, under the PSF License Agreement; the libraries of its\n"
+        "    Windows build are under their own licenses, in the same file: Python.txt.\n"
+        "\n"
+        "kit\\llvm\n"
+        "    clang-cl.exe, lld-link.exe and clang's headers of LLVM @KIT_LLVM@, under the Apache License 2.0 with LLVM\n"
+        "    Exceptions: LLVM.txt, LLVM-clang.txt, LLVM-lld.txt.\n"
+        "\n"
+        "kit\\scripts, kit\\port, kit\\native\n"
+        "    This port's scripts and sources that build the game's code: Ascension-R.txt.\n"
+        "\n"
+        "kit\\ps3recomp\n"
+        "    ps3recomp's lifters and headers: ps3recomp.txt.\n",
+}
+# The Kit's exe is built here, with PORT_GAME_MODULE: the game's code out of it.
+KIT_BUILD_DIR = "build-kit"
 # What a release is built with: `build` keeps a bench's -D in its cache.
 RELEASE_CMAKE = {"CMAKE_BUILD_TYPE": "Release", "PS3RECOMP_NO_DECRYPT": "ON", "PS3RECOMP_FFMPEG_RUNTIME": "ON",
                  "PORT_SPU_JOBCAP": "OFF", "PORT_SPU_LINES": "OFF", "PORT_SPU_LS_DIAG": "OFF", "PORT_SPU_FLOAT_APPROX": "OFF",
@@ -291,7 +332,11 @@ def toolchain_env():
     so no admin install is needed."""
     sys.path.insert(0, TOOLS)
     from msvc_env import environ
-    env = environ()
+    # One name each, as Windows has them: started from PowerShell, cmd spells PATH "Path", and environ() then holds
+    # both, the parent's and vcvars'. The later one is vcvars'.
+    env = {}
+    for k, v in environ().items():
+        env[k.upper()] = v
     for cand in (load_local().get("llvm_bin"), os.environ.get("GOWA_LLVM_BIN"),
                  os.path.join(os.path.dirname(ROOT), "llvm", "bin")):
         if cand and os.path.isfile(os.path.join(cand, "clang-cl.exe" if os.name == "nt" else "clang")):
@@ -1195,15 +1240,17 @@ def release_tree_problems():
     return out
 
 
-def check_release_build():
-    """build/'s cache can hold a bench's -D, and the exe must have seen the headers of the FFmpeg that goes with it."""
+def check_release_build(kit=False):
+    """The build's cache can hold a bench's -D; the Kit's exe is built without the game's code and the Prebuilt's with
+    it; and the exe must have seen the headers of the FFmpeg that goes with it."""
     cache = {}
     with open(os.path.join(BUILD, "CMakeCache.txt"), encoding="utf-8", errors="replace") as f:
         for line in f:
             m = re.match(r"(\w+):\w+=(.*)$", line.rstrip("\r\n"))
             if m:
                 cache[m.group(1)] = m.group(2)
-    wrong = ["%s=%s, a release needs %s" % (k, cache.get(k), v) for k, v in RELEASE_CMAKE.items() if cache.get(k) != v]
+    want = dict(RELEASE_CMAKE, PORT_GAME_MODULE="ON" if kit else "OFF")
+    wrong = ["%s=%s, a release needs %s" % (k, cache.get(k), v) for k, v in want.items() if cache.get(k) != v]
     inc = os.path.join(find_ffmpeg() or "", "include")
     for (lib, dll), rel, name in zip(FFMPEG_DLLS, ("libavcodec/version_major.h", "libavutil/version.h"),
                                      ("LIBAVCODEC_VERSION_MAJOR", "LIBAVUTIL_VERSION_MAJOR")):
@@ -1216,7 +1263,8 @@ def check_release_build():
 
 
 def release_problems(stage, env):
-    """A DLL a player may lack, this machine's paths or the author's name in a binary."""
+    """A DLL a player may lack, this machine's paths or the author's name in a file. Every program and library must find
+    what it imports beside it or in System32; only the licenses may name the author."""
     dumpbin = shutil.which("dumpbin", path=env.get("PATH"))
     if not dumpbin:
         die("no dumpbin in the toolchain")
@@ -1229,22 +1277,212 @@ def release_problems(stage, env):
             needles[v.lower().encode()] = n
             needles[v.lower().encode("utf-16-le")] = n
     bad = []
-    for name in sorted(os.listdir(stage)):
-        path = os.path.join(stage, name)
-        if not name.lower().endswith((".exe", ".dll")):
-            continue
-        text = subprocess.run([dumpbin, "/nologo", "/dependents", path], stdout=subprocess.PIPE, text=True, check=True).stdout
-        for dep in sorted(set(re.findall(r"^\s+(\S+\.dll)\s*$", text, re.M | re.I))):
-            if os.path.isfile(os.path.join(stage, dep)) or dep.lower().startswith(("api-ms-win-", "ext-ms-")):
+    for folder, _, files in os.walk(stage):
+        for name in sorted(files):
+            path = os.path.join(folder, name)
+            rel = os.path.relpath(path, stage)
+            if name.lower().endswith((".exe", ".dll", ".pyd")):
+                text = subprocess.run([dumpbin, "/nologo", "/dependents", path], stdout=subprocess.PIPE, text=True,
+                                      check=True).stdout
+                for dep in sorted(set(re.findall(r"^\s+(\S+\.dll)\s*$", text, re.M | re.I))):
+                    if os.path.isfile(os.path.join(folder, dep)) or dep.lower().startswith(("api-ms-win-", "ext-ms-")):
+                        continue
+                    if NOT_SYSTEM.match(dep) or not os.path.isfile(os.path.join(system32, dep)):
+                        bad.append("%s needs %s, which is not beside it" % (rel, dep))
+            if rel.split(os.sep)[0] == "licenses":
                 continue
-            if NOT_SYSTEM.match(dep) or not os.path.isfile(os.path.join(system32, dep)):
-                bad.append("%s needs %s, which is not in the package" % (name, dep))
-        with open(path, "rb") as f:
-            low = f.read().lower()
-        for own in ("github.com/rigaz29".encode(), "github.com/rigaz29".encode("utf-16-le")):  # the project's public address
-            low = low.replace(own, b"")
-        bad += ["%s holds %r" % (name, n) for n in sorted(set(n for k, n in needles.items() if k in low))]
+            with open(path, "rb") as f:
+                low = f.read().lower()
+            for own in ("github.com/rigaz29".encode(), "github.com/rigaz29".encode("utf-16-le")):  # the project's public address
+                low = low.replace(own, b"")
+            bad += ["%s holds %r" % (rel, n) for n in sorted(set(n for k, n in needles.items() if k in low))]
     return bad
+
+
+# What no file of the Kit's zip may be, by name, type, folder (under kit\, the folder below it) or first bytes, and how
+# much of the game's ELF one may hold. A file this port makes: a run of 256 bytes, or 1 KB in all (the Kit's exe shares
+# 65 bytes with it, a table of the C runtime; the Prebuilt's exe 1.1 MB). The makers' binaries (the Python, LLVM, the
+# DLLs beside the exe) hold the tables of the libraries the game uses too, zlib's CRC-32 table among them: 16 KB, 64 KB.
+GAME_NAMES = {"eboot.bin", "param.sfo", "local.json", "ascension_game.dll", "ascension_game.ini", "lifted.txt"}
+GAME_TYPES = {".elf", ".self", ".sprx", ".prx", ".pkg", ".rap", ".rif", ".edat", ".sdat", ".psarc", ".iso", ".pup", ".bik",
+              ".pam", ".at3", ".dds", ".gtf", ".pad", ".map", ".obj", ".lib", ".pdb", ".exp", ".stamp"}
+GAME_FOLDERS = {"analysis", "build-module", "game-code", "gamedata", "generated_spu", "logs", "recompiled", "spu", "vfs", "work"}
+ELF_RUN_MAX, ELF_FILE_MAX = 256, 1024
+THEIR_RUN_MAX, THEIR_FILE_MAX = 16384, 65536
+
+
+def elf_runs(paths, elf):
+    """Runs of the game's ELF in files: [(path, offset, length)]. The ELF's windows of 64 bytes at every 32nd offset, those
+    with more than 8 different bytes (no padding), are looked for at every offset of a file, and one found is grown both
+    ways. A run of 96 bytes or more cannot be missed."""
+    with open(elf, "rb") as f:
+        data = f.read()
+    w, step = 64, 32
+    index = {}
+    for i in range(0, len(data) - w, step):
+        win = data[i:i + w]
+        if len(set(win)) > 8:
+            index.setdefault(win, i)
+    runs = []
+    for p in paths:
+        with open(p, "rb") as f:
+            b = f.read()
+        i, n = 0, len(b)
+        while i <= n - w:
+            j = index.get(b[i:i + w])
+            if j is None:
+                i += 1
+                continue
+            s, t = i, j
+            while s > 0 and t > 0 and b[s - 1] == data[t - 1]:
+                s, t = s - 1, t - 1
+            e, u = i + w, j + w
+            while e < n and u < len(data) and b[e] == data[u]:
+                e, u = e + 1, u + 1
+            runs.append((p, s, e - s))
+            i = e
+    return runs
+
+
+def package_audit(stage):
+    """Every file of the Kit's zip, looked at for the game: a file of it or made from it, its bytes, lifted code, a PS3
+    key. Returns (what was found, for audit.txt; problems)."""
+    import check_repo  # noqa: E402  (scripts/check_repo.py)
+    files = sorted(os.path.join(d, f) for d, _, fs in os.walk(stage) for f in fs)
+    folders = (os.path.join(stage, "kit", "python") + os.sep, os.path.join(stage, "kit", "llvm") + os.sep)
+
+    def theirs(p):   # the makers' own binaries: the Python, LLVM, the DLLs beside the exe, as they ship them
+        return p.startswith(folders) or (os.path.dirname(p) == stage and p.lower().endswith(".dll"))
+    bad, marks, keyed = [], 0, 0
+    say("looking at every file of the package for the game")
+    for p in files:
+        rel = os.path.relpath(p, stage)
+        parts = rel.split(os.sep)
+        top = parts[1] if parts[0] == "kit" and len(parts) > 2 else parts[0] if len(parts) > 1 else ""
+        name = parts[-1].lower()
+        if top.lower() in GAME_FOLDERS or name in GAME_NAMES or os.path.splitext(name)[1] in GAME_TYPES:
+            bad.append("%s: by its name, a file of the game or made from it" % rel)
+        with open(p, "rb") as f:
+            data = f.read()
+        for magic, what in check_repo.MAGIC:
+            if data.startswith(magic):
+                bad.append("%s: %s, by its first bytes" % (rel, what))
+        n = data.count(check_repo.LIFTED_MARK)
+        marks = max(marks, n)
+        if n > check_repo.LIFTED_MAX:
+            bad.append("%s: looks like lifted code" % rel)
+        if not theirs(p):
+            keyed += 1
+            if check_repo.has_key(data):
+                bad.append("%s: holds a PS3 key" % rel)
+    elf = need_elf()
+    say("looking for runs of GOWA.elf in every file")
+    runs = elf_runs(files, elf)
+    per = {}
+    for p, s, ln in runs:
+        per[p] = per.get(p, 0) + ln
+        if ln >= (THEIR_RUN_MAX if theirs(p) else ELF_RUN_MAX):
+            bad.append("%s: %d bytes of GOWA.elf in a row at 0x%X" % (os.path.relpath(p, stage), ln, s))
+    bad += ["%s: %d bytes of GOWA.elf in all" % (os.path.relpath(p, stage), n) for p, n in per.items()
+            if n >= (THEIR_FILE_MAX if theirs(p) else ELF_FILE_MAX)]
+    # zlib's CRC-32 table as a big-endian machine has it: the game's, and LLVM's, which links zlib.
+    tab = []
+    for i in range(256):
+        c = i
+        for _ in range(8):
+            c = (c >> 1) ^ 0xEDB88320 if c & 1 else c >> 1
+        tab.append(struct.pack(">I", c))
+    crc = b"".join(tab)
+
+    def summary(group):
+        if not group:
+            return (0, 0, None)
+        p, s, ln = max(group, key=lambda r: r[2])
+        with open(p, "rb") as f:
+            f.seek(s)
+            what = "zlib's CRC-32 table" if crc in f.read(ln) else ""
+        return (sum(r[2] for r in group), len(group), (os.path.relpath(p, stage), ln, what))
+    return {"files": len(files), "bytes": sum(os.path.getsize(p) for p in files), "marks": marks, "keyed": keyed,
+            "elf_sha": sha256(elf), "ours": summary([r for r in runs if not theirs(r[0])]),
+            "theirs": summary([r for r in runs if theirs(r[0])])}, bad
+
+
+def audit_text(version, test, found, kit_id, secs, dll_sha):
+    """audit.txt: what package_audit and kit_build_check looked for and found, in lines of at most 116 characters."""
+    import textwrap
+    import check_repo  # noqa: E402  (scripts/check_repo.py)
+
+    def runs(s):
+        n, k, lon = s
+        if not lon:
+            return "none"
+        return "%d bytes in %d run%s, the longest %d bytes in %s%s" % (n, k, "" if k == 1 else "s", lon[1], lon[0],
+                                                                      " (%s)" % lon[2] if lon[2] else "")
+    points = [
+        "No file is the game's or made from it, by its name, type or folder (an ELF, SELF, PKG, PSARC, EDAT, RAP, "
+        "EBOOT.BIN, PARAM.SFO, ascension_game.dll, a map, an object; game-code, recompiled, spu, analysis, work), or by "
+        "its first bytes.",
+        "GOWA.elf, SHA-256 %s: its windows of 64 bytes at every 32nd offset, those with more than 8 different bytes, "
+        "were looked for at every offset of every file. In the files this port made (the exe, the Kit's own files, "
+        "README, licenses): %s; a run of %d bytes, or %d bytes in one file, would have stopped the package. In the "
+        "makers' binaries (the Python, LLVM, the DLLs beside the exe): %s. Those are tables and strings of libraries the "
+        "game uses too; their limits are a run of %d bytes or %d bytes in one file."
+        % (found["elf_sha"], runs(found["ours"]), ELF_RUN_MAX, ELF_FILE_MAX, runs(found["theirs"]), THEIR_RUN_MAX,
+           THEIR_FILE_MAX),
+        "Lifted code: at most %d lines with \"ctx->gpr[\" in a file. Lifted code has thousands; the limit is %d."
+        % (found["marks"], check_repo.LIFTED_MAX),
+        "PS3 keys: none in the %d files this port made. The Python, LLVM and the DLLs beside the exe are their makers' "
+        "files as they ship them." % found["keyed"],
+        "This PC: no path of it, Windows user name, git name or e-mail in any file but the licenses.",
+        "Imports: every program and library finds what it imports beside it or in System32.",
+        "kit\\ is the Kit its kit-id.txt names, %s, before and after the build below." % kit_id,
+        "The Kit builds: its own Python ran kit-build on this tree's GOWA.elf in %.0f s. ascension_game.dll has SHA-256 "
+        "%s; no path or time goes into it, so a player's build of it should be this same file." % (secs, dll_sha)]
+    lines = ["Ascension-R %s Kit: what was looked at before it was zipped (gowa.py package kit)%s"
+             % (version, ", a TEST PACKAGE" if test else ""), "",
+             "%d files, %.1f MB unpacked." % (found["files"], found["bytes"] / 1048576.0), ""]
+    for p in points:
+        lines += textwrap.wrap(p, 116, initial_indent="- ", subsequent_indent="  ", break_long_words=False,
+                               break_on_hyphens=False)
+    return "\n".join(lines) + "\n"
+
+
+def kit_build_check(kit):
+    """The Kit as it is packaged, run as the launcher runs it: its own Python, kit-build, this tree's GOWA.elf, into
+    logs/kit-check. Returns (seconds, the DLL, its map); the map, the same on every PC, reads the Kit's crash reports."""
+    import time
+    root = os.path.join(ROOT, "logs", "kit-check")
+    shutil.rmtree(root, ignore_errors=True)
+    out = os.path.join(root, "game-code")
+    env = {k: v for k, v in os.environ.items() if not k.upper().startswith(("GOWA_", "PYTHON"))}
+    env.update(GOWA_WORK=os.path.join(out, "work"), GOWA_ELF=need_elf())
+    cmd = [os.path.join(kit, "python", "python.exe"), "-E", "-s", "-B", "-X", "utf8", os.path.join(kit, "scripts", "gowa.py"),
+           "kit-build", "--out", out, "--keep-work"]
+    say("the Kit as packaged builds the game's DLL, as the launcher has it do (about ten minutes)")
+    t0 = time.monotonic()
+    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
+                         env=env, cwd=kit, creationflags=getattr(subprocess, "BELOW_NORMAL_PRIORITY_CLASS", 0))
+    err, done, shown, last = "", False, -1, ""
+    for line in p.stdout:
+        if line.startswith("@progress"):
+            f = line.split(None, 3)
+            if int(f[1]) // 100 > shown:
+                shown = int(f[1]) // 100
+                say("  %3d%%  %s" % (int(f[1]) // 10, f[3].strip() if len(f) > 3 else ""))
+        elif line.startswith("@error "):
+            err = line[7:].strip()
+        elif line.startswith("@done"):
+            done = True
+        elif line.strip():
+            last = line.strip()
+    p.wait()
+    if not done:
+        die("the Kit does not build the game's DLL: %s (%s)" % (err or "it stopped (%d): %s" % (p.returncode, last),
+                                                                  os.path.join(out, "build.log")))
+    mapf = os.path.join(out, "ascension_game.map")
+    shutil.copyfile(os.path.join(out, "work", "build-module", "ascension_game.map"), mapf)
+    shutil.rmtree(os.path.join(out, "work"), ignore_errors=True)
+    return time.monotonic() - t0, os.path.join(out, MODULE_DLL), mapf
 
 
 def fsr1_license():
@@ -1255,28 +1493,38 @@ def fsr1_license():
     return "\n".join(l.lstrip("/ ").rstrip() for l in lines[a:b + 1]) + "\n"
 
 
-def release_text(src, release, version):
-    """A file of packaging/ with what depends on the release and the version filled in."""
+def release_text(src, release, version, llvm=""):
+    """A file of packaging/ with what depends on the release and the version filled in. The Kit's own lines (KIT_TEXT)
+    go in for the Kit and out for the Prebuilt; llvm is the Kit's LLVM version."""
     with open(os.path.join(ROOT, "packaging", src), encoding="utf-8") as f:
         text = f.read()
+    for key, value in KIT_TEXT.items():
+        text = text.replace(key, value if release == "kit" else "")
     for key, value in (("@VERSION@", version), ("@FFMPEG_VERSION@", FFMPEG_VERSION), ("@RELEASE@", RELEASES[release]["name"]),
-                       ("@LICENSE@", RELEASES[release]["license"])):
+                       ("@LICENSE@", RELEASES[release]["license"]), ("@KIT_PYTHON@", KIT_PYTHON), ("@KIT_LLVM@", llvm)):
         text = text.replace(key, value)
     return text
 
 
 def cmd_package(args):
-    """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded."""
+    """One zip for players, and beside it what reading their crash reports will take. Nothing is uploaded.
+
+    The Kit's exe is build-kit's (PORT_GAME_MODULE: the game's code out of it), with kit\\ beside it (kit-tree). Every
+    file of it is looked at for the game (package_audit), and the Kit as packaged builds the game's DLL from this tree's
+    GOWA.elf (kit_build_check) before it is zipped; audit.txt beside the zip says what was looked for and found."""
     import check_repo  # noqa: E402  (scripts/check_repo.py)
-    if args.release == "kit":
-        die("the Kit is not packaged yet: `kit-tree` makes its folder and the launcher builds the game's DLL from it, but the "
-            "zip, its audit and the licenses of LLVM and Python come next")
+    global BUILD
+    kit = args.release == "kit"
+    if kit:
+        BUILD = os.path.join(ROOT, KIT_BUILD_DIR)
     with open(os.path.join(ROOT, "port", "version.h"), encoding="utf-8") as f:
         version = re.search(r'#define\s+AR_VERSION\s+"([^"]+)"', f.read()).group(1)
     version_dir = os.path.join(DIST, version)
     out = os.path.join(DIST, "test", args.release) if args.test else os.path.join(version_dir, args.release)
     if args.test:
         shutil.rmtree(out, ignore_errors=True)
+        if os.path.exists(out):   # a file in it open, or a shell in it: what is left would go into the zip
+            die("%s could not be emptied: is something in it open?" % out)
     else:
         # Before the releases had names, a version's zip sat right in its folder.
         if os.path.exists(out) or (os.path.isdir(version_dir) and any(f.endswith("-win64.zip") for f in os.listdir(version_dir))):
@@ -1291,9 +1539,9 @@ def cmd_package(args):
     if not dxc or not fsr:
         die("this takes the Windows SDK's Redist\\D3D\\x64 and an FSR SDK in ../fsr-sdk")
     if cmd_build(argparse.Namespace(fresh=False, config="Release", no_spu=False, spu_lines=False, jobcap=False,
-                                    spu_approx=False, define=[], jobs=args.jobs)):
+                                    spu_approx=False, define=["PORT_GAME_MODULE=ON"] if kit else [], jobs=args.jobs)):
         die("the build failed")
-    check_release_build()
+    check_release_build(kit)
 
     name = "Ascension-R-%s-%s" % (version, args.release)
     stage = os.path.join(out, name)
@@ -1316,18 +1564,44 @@ def cmd_package(args):
         shutil.copyfile(src, os.path.join(lic, to))
     with open(os.path.join(lic, "AMD-FSR1.txt"), "w", encoding="utf-8") as f:
         f.write(fsr1_license())
+    llvm = ("", "")
+    if kit:
+        kit_dir = os.path.join(stage, "kit")
+        cmd_kit_tree(argparse.Namespace(out=kit_dir, replace=False))
+        shutil.copyfile(os.path.join(kit_dir, "python", "LICENSE.txt"), os.path.join(lic, "Python.txt"))
+        for part in KIT_LLVM_LICENSES:
+            src = os.path.join(kit_dir, "llvm", "LICENSE-%s.TXT" % part)
+            if not os.path.isfile(src):
+                die("the Kit has no license text of %s: kit-tree says where it goes" % part)
+            shutil.copyfile(src, os.path.join(lic, "LLVM.txt" if part == "llvm" else "LLVM-%s.txt" % part))
+        llvm = llvm_version(os.path.join(kit_dir, "llvm", "bin"))
     for src, to in (("README.txt", stage), ("THIRD-PARTY.txt", lic)):
         with open(os.path.join(to, src), "w", encoding="utf-8") as f:
-            f.write(release_text(src, args.release, version))
+            f.write(release_text(src, args.release, version, llvm[0]))
 
     env = toolchain_env()
+    say("looking at what the programs import and for this PC in the files")
     problems = release_problems(stage, env)
-    say("looking for PS3 keys in the exe")
-    with open(os.path.join(stage, "Ascension-R.exe"), "rb") as f:
-        if check_repo.has_key(f.read()):
-            problems.append("Ascension-R.exe holds a PS3 key")
+    if kit:
+        found, more = package_audit(stage)
+        problems += more
+    else:
+        say("looking for PS3 keys in the exe")
+        with open(os.path.join(stage, "Ascension-R.exe"), "rb") as f:
+            if check_repo.has_key(f.read()):
+                problems.append("Ascension-R.exe holds a PS3 key")
     if problems:
         die("not packaged:\n  " + "\n  ".join(problems))
+    if kit:
+        kit_id = open(os.path.join(kit_dir, KIT_ID), encoding="ascii").read().strip()
+        secs, dll, dll_map = kit_build_check(kit_dir)
+        for folder, dirs, _ in os.walk(kit_dir):   # what the check's tools wrote; a player's are written on the first build
+            if "__pycache__" in dirs:
+                shutil.rmtree(os.path.join(folder, "__pycache__"))
+                dirs.remove("__pycache__")
+        if kit_digest(kit_dir) != kit_id:
+            die("kit\\ changed while it built the game's DLL")
+        theirs = [os.path.join(kit_dir, "llvm", "bin", t) for t in ("clang-cl.exe", "lld-link.exe")]
 
     zip_path = os.path.join(out, name + "-win64.zip")
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as z:
@@ -1336,6 +1610,8 @@ def cmd_package(args):
                 p = os.path.join(folder, f)
                 z.write(p, os.path.relpath(p, out).replace("\\", "/"))
     shutil.copy2(os.path.join(BUILD, "Ascension-R.map"), out)
+    if kit:
+        shutil.copy2(dll_map, out)
     shutil.copy2(os.path.join(FFMPEG_HOME, FFMPEG_TARBALL), out)
     clang = subprocess.run([shutil.which("clang-cl", path=env.get("PATH")), "--version"], stdout=subprocess.PIPE, text=True).stdout
     info = ["Ascension-R %s %s" % (version, RELEASES[args.release]["name"]) + ("  TEST PACKAGE, not for release" if args.test else ""),
@@ -1347,8 +1623,17 @@ def cmd_package(args):
             "FSR SDK   " + os.path.basename(sdk),
             "DXC       " + dxc,
             "FFmpeg    " + FFMPEG_VERSION]
+    if kit:
+        info += ["kit       " + kit_id,
+                 "Python    %s, python.org's embeddable package, zip SHA-256 %s" % (KIT_PYTHON, KIT_PYTHON_SHA256),
+                 "LLVM      %s (llvm-project %s)" % llvm,
+                 "          clang-cl.exe SHA-256 %s, lld-link.exe SHA-256 %s" % tuple(sha256(t) for t in theirs),
+                 "kit-build %.0f s here; ascension_game.dll SHA-256 %s, ascension_game.map beside this file" % (secs, sha256(dll))]
     with open(os.path.join(out, "build-info.txt"), "w", encoding="utf-8") as f:
         f.write("\n".join(info) + "\n")
+    if kit:
+        with open(os.path.join(out, "audit.txt"), "w", encoding="utf-8") as f:
+            f.write(audit_text(version, args.test, found, kit_id, secs, sha256(dll)))
     unpacked = sum(os.path.getsize(os.path.join(d, f)) for d, _, ns in os.walk(stage) for f in ns)
     shutil.rmtree(stage)
     say("%s: %.1f MB, %.1f MB unpacked" % (zip_path, os.path.getsize(zip_path) / 1048576.0, unpacked / 1048576.0))
@@ -1576,8 +1861,10 @@ def cmd_module(args):
         f.write("\n".join('"%s"' % w[2] for w in work) + "\n")
     dll = os.path.join(out, MODULE_DLL)
     say("[module] linking")
+    # /Brepro: the time stamps are a hash of the DLL, so the same sources give the same file on every PC.
     step("lld-link", [os.path.join(llvm, "lld-link.exe"), "/nologo", "/dll", "/NODEFAULTLIB", "/NOENTRY", "/MANIFEST:NO", "/machine:x64",
-                      "/INCREMENTAL:NO", "/MAP:" + os.path.join(out, "ascension_game.map"), "/OUT:" + dll, "@" + rsp, lib], clean)
+                      "/INCREMENTAL:NO", "/Brepro", "/MAP:" + os.path.join(out, "ascension_game.map"), "/OUT:" + dll, "@" + rsp, lib],
+         clean)
     el = time.monotonic() - t0
     if stats:
         cpu = sum(s[2] for s in stats)
@@ -1599,6 +1886,7 @@ def cmd_module(args):
 # The Kit's Python: python.org's embeddable package of this version, unpacked (local.json's "kit_python", or
 # ../python-embed/<version>). Its ._pth makes it ignore any other Python and the environment.
 KIT_PYTHON = "3.14.3"
+KIT_PYTHON_SHA256 = "ad4961a479dedbeb7c7d113253f8db1b1935586b73c27488712beec4f2c894e6"   # python-3.14.3-embed-amd64.zip
 KIT_PYTHON_PTH = "python314._pth"
 # The ps3recomp tools the Kit's build starts. With what they import and start, they are the tools in the Kit.
 KIT_TOOLS = ("ppu_loader.py", "extract_spu_images.py", "wrap_spu_elf.py", "spu_lifter.py", "lift_jobmods.py",
@@ -1692,12 +1980,12 @@ class KitProgress(NoProgress):
         m = self.LIFTED.search(line)
         if m:   # the lifting is about a quarter of the phase, the writing the rest
             n, total = int(m.group(1)), int(m.group(2))
-            self.part(n, 4 * total, "Translating the game's code: {:,} of {:,} functions".format(n, total))
+            self.part(n, 4 * total)   # the line keeps its words: with counts and the time left it is too long
             return
         m = self.WROTE.search(line)
         if m:
             k = int(m.group(1)) + 1
-            self.part(self.chunks + 3 * k, 4 * self.chunks, "Translating the game's code: %d of %d files written" % (k, self.chunks))
+            self.part(self.chunks + 3 * k, 4 * self.chunks)
 
     def emit(self, force):
         import time
@@ -1937,8 +2225,7 @@ def cmd_kit_tree(args):
     os.makedirs(os.path.join(out, "llvm", "bin"))
     for t in ("clang-cl.exe", "lld-link.exe"):
         shutil.copyfile(os.path.join(llvm, t), os.path.join(out, "llvm", "bin", t))
-    ver = re.search(r"clang version (\S+)", subprocess.run([os.path.join(llvm, "clang-cl.exe"), "--version"],
-                                                          stdout=subprocess.PIPE, text=True).stdout).group(1)
+    ver = llvm_version(llvm)[0]
     lic = load_local().get("llvm_license") or os.path.join(os.path.dirname(ROOT), "llvm-license", "llvmorg-" + ver)
     have = [n for n in KIT_LLVM_LICENSES if os.path.isfile(os.path.join(lic, n, "LICENSE.TXT"))]
     if "llvm" not in have:
@@ -1953,16 +2240,30 @@ def cmd_kit_tree(args):
         die("not one clang resource folder: %s" % inc)
     shutil.copytree(inc[0], os.path.join(out, "llvm", os.path.relpath(inc[0], os.path.dirname(llvm))))
 
-    h = hashlib.sha256()
-    files = sorted(os.path.relpath(os.path.join(d, f), out) for d, _, fs in os.walk(out) for f in fs)
-    for r in files:
-        h.update(("%s %s\n" % (r.replace(os.sep, "/"), sha256(os.path.join(out, r)))).encode())
+    digest = kit_digest(out)
     with open(os.path.join(out, KIT_ID), "w", encoding="ascii") as f:
-        f.write(h.hexdigest() + "\n")
-    size = sum(os.path.getsize(os.path.join(out, r)) for r in files)
-    say("%s: %d files from this tree, %d in all, %.0f MB; kit %s" % (out, len(rel), len(files) + 1, size / 1048576.0,
-                                                                    h.hexdigest()[:16]))
+        f.write(digest + "\n")
+    files = [os.path.join(d, f) for d, _, fs in os.walk(out) for f in fs]
+    say("%s: %d files from this tree, %d in all, %.0f MB; kit %s" % (out, len(rel), len(files),
+                                                                    sum(os.path.getsize(p) for p in files) / 1048576.0, digest[:16]))
     return 0
+
+
+def kit_digest(kit):
+    """The Kit's id: the SHA-256 of the path and SHA-256 of every file in its folder but kit-id.txt, and but the
+    __pycache__ the tools' own Pythons write there when they run (the Kit's runs with -B, the ones it starts do not)."""
+    h = hashlib.sha256()
+    for r in sorted(os.path.relpath(os.path.join(d, f), kit) for d, _, fs in os.walk(kit) for f in fs):
+        if r != KIT_ID and "__pycache__" not in r.split(os.sep):
+            h.update(("%s %s\n" % (r.replace(os.sep, "/"), sha256(os.path.join(kit, r)))).encode())
+    return h.hexdigest()
+
+
+def llvm_version(llvm):
+    """(version, commit) of the clang-cl in this folder, as its --version names them."""
+    text = subprocess.run([os.path.join(llvm, "clang-cl.exe"), "--version"], stdout=subprocess.PIPE, text=True).stdout
+    m = re.search(r"clang version (\S+)(?: \(\S+ ([0-9a-f]{40})\))?", text)
+    return m.group(1), m.group(2) or "?"
 
 
 def ini_set(lines, section, key, value, keep=False):
