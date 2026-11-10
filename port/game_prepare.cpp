@@ -200,6 +200,15 @@ int game_prepare(const wchar_t* game_dir, const wchar_t* rpcs3_exe, const wchar_
     wchar_t work[P], input[P], config[P], exdata[P], from[P], self[P], to_rap[P], made[P], final_elf[P];
     swprintf(from, P, L"%ls\\USRDIR\\GOWA.SELF", game_dir);
     if (!is_file(from)) return fail(err, n, L"No USRDIR\\GOWA.SELF in the game's folder");
+    {
+        /* GOWA.SELF and a license alone are not the game: nothing is decrypted for a folder that lacks its files. */
+        GameInfo g;
+        if (game_probe(game_dir, &g) == GAME_INCOMPLETE) {
+            wchar_t why[320];
+            game_files_text(&g, why, sizeof why / sizeof why[0]);
+            return fail(err, n, why);
+        }
+    }
     if (!is_file(rpcs3_exe)) return fail(err, n, L"rpcs3.exe is not there");
     if (!is_file(rap)) return fail(err, n, L"The game's license file (.rap) is not there");
     work_folder(data, work, P);

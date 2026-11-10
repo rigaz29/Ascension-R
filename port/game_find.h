@@ -13,6 +13,7 @@ enum { GAME_PATH_MAX = 1024 };
 enum GameState {
     GAME_NONE,          /* no PARAM.SFO, or no GOWA.SELF or GOWA.elf under it (the game's data folder) */
     GAME_OTHER_TITLE,   /* another title, or another release of this one */
+    GAME_INCOMPLETE,    /* this release, but some of the game's files are not in its folder, or not as 1.12 has them */
     GAME_NO_ELF,        /* this release, GOWA.SELF not decrypted to GOWA.elf yet */
     GAME_OTHER_BUILD,   /* this title, but another version, or another GOWA.elf */
     GAME_OK             /* what this port was lifted from */
@@ -22,7 +23,20 @@ struct GameInfo {
     wchar_t dir[GAME_PATH_MAX];   /* the folder holding PARAM.SFO and USRDIR */
     char title[128], title_id[16], app_ver[16];
     GameState state;
+    int other_version;            /* GAME_OTHER_BUILD: PARAM.SFO says another version than 1.12 */
+    /* The game's files (game_files.inc), looked at when the folder is this release: how many there are, how many of
+     * them are not in the folder and their bytes, how many are there but not as 1.12 has them, and the first of each. */
+    int files, files_missing, files_wrong;
+    unsigned long long bytes_missing;
+    char first_missing[64], first_wrong[64];
 };
+
+/* What GAME_INCOMPLETE is about, in a line for the player. */
+void game_files_text(const GameInfo* g, wchar_t* out, size_t n);
+
+/* Whether a file of the game's folder ("USRDIR/GAME.PSARC", either slash, any case) is one the game cannot start
+ * without (game_files.inc). */
+int game_file_needed(const char* path);
 
 /* Whether a file is the GOWA.elf this port was made from. */
 int game_elf_ok(const wchar_t* path);

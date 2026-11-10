@@ -3,7 +3,8 @@
 
 Builds a small driver with clang-cl and runs it on folders under a temporary directory. No game
 file is used: a PARAM.SFO is written here, and a GOWA.elf of the right hash cannot be, so the
-best a made-up copy reaches is GAME_OTHER_BUILD.
+best a made-up copy reaches is GAME_OTHER_BUILD. The game's files are three made-up ones, in a
+list of the test's own (GAME_FILES_INC) worked out by gowa.py's ends_sha256, as `game-files` does.
 
 Usage:
     python tests/test_game_find.py
@@ -27,7 +28,7 @@ DRIVER = r'''
 #include <windows.h>
 static const char* name(GameState s)
 {
-    static const char* const n[] = { "none", "other_title", "no_elf", "other_build", "ok" };
+    static const char* const n[] = { "none", "other_title", "incomplete", "no_elf", "other_build", "ok" };
     return n[s];
 }
 static void out(const wchar_t* tag, const GameInfo& g, int copies)
@@ -40,6 +41,18 @@ int wmain(int argc, wchar_t** argv)
     GameInfo g;
     wchar_t err[2048] = L"", t[2048] = L"";
     if (!wcscmp(argv[1], L"probe")) { game_probe(argv[2], &g); out(L"probe", g, 0); }
+    else if (!wcscmp(argv[1], L"files")) {
+        game_probe(argv[2], &g);
+        wchar_t text[300] = L"-";
+        if (g.state == GAME_INCOMPLETE) game_files_text(&g, text, 300);
+        printf("files %s %d %d %d %llu %s %s %d\n%ls\n", name(g.state), g.files, g.files_missing, g.files_wrong,
+               g.bytes_missing, g.first_missing[0] ? g.first_missing : "-", g.first_wrong[0] ? g.first_wrong : "-",
+               g.other_version, text);
+    } else if (!wcscmp(argv[1], L"needed")) {
+        char p[512];
+        WideCharToMultiByte(CP_UTF8, 0, argv[2], -1, p, sizeof p, NULL, NULL);
+        printf("needed %d\n", game_file_needed(p));
+    }
     else if (!wcscmp(argv[1], L"locate")) { game_locate(argv[2], &g); out(L"locate", g, 0); }
     else if (!wcscmp(argv[1], L"search") || !wcscmp(argv[1], L"search_first")) {
         /* search_first: as the launcher looks, the first copy that is this release will do */
@@ -75,13 +88,28 @@ def sfo(title_id="NPUA80918", app_ver="01.12", title="God of War: Ascension"):
     return struct.pack("<4sIIII", b"\0PSF", 0x101, key_tab, data_tab, len(items)) + table + keys + data
 
 
-def make_game(path, elf=True, **kw):
+# The game's files of the test's list: one smaller than an end (64 KiB), one with ends that overlap, one larger.
+TEST_FILES = (("USRDIR/GAME.PSARC", 200000), ("USRDIR/ENGLISH.PSARC", 70000), ("USRDIR/ARCHIVES", 40))
+
+
+def file_bytes(rel, size):
+    seed = sum(rel.encode())
+    return bytes((i * 31 + (i >> 9) + seed) & 0xFF for i in range(size))
+
+
+TEST_DATA = {rel: file_bytes(rel, size) for rel, size in TEST_FILES}
+
+
+def make_game(path, elf=True, files=True, **kw):
     usr = Path(path) / "USRDIR"
     usr.mkdir(parents=True)
     (Path(path) / "PARAM.SFO").write_bytes(sfo(**kw))
     (usr / "GOWA.SELF").write_bytes(b"self")
     if elf:
         (usr / "GOWA.elf").write_bytes(b"not the real one")
+    if files:
+        for rel, data in TEST_DATA.items():
+            Path(path, *rel.split("/")).write_bytes(data)
 
 
 @unittest.skipUnless(os.name == "nt", "Windows only")
@@ -95,11 +123,21 @@ class GameFind(unittest.TestCase):
             f.write(DRIVER)
         sys.path.insert(0, str(ROOT / "scripts"))
         import gowa
+        cls.gowa = gowa
+        # The test's list of the game's files, worked out from files on disk as `gowa.py game-files` does.
+        rows = []
+        for rel, data in TEST_DATA.items():
+            f = os.path.join(cls.tmp, "file.bin")
+            Path(f).write_bytes(data)
+            rows.append('{ "%s", %dull, "%s" },' % (rel, len(data), gowa.ends_sha256(f)))
+        cls.inc = os.path.join(cls.tmp, "test_files.inc")
+        Path(cls.inc).write_text("\n".join(rows) + "\n")
         env = gowa.toolchain_env()
         clang = shutil.which("clang-cl", path=env.get("PATH"))
         if not clang:
             raise unittest.SkipTest("no clang-cl")
-        cmd = [clang, "/nologo", "/O1", "/EHsc", "/std:c++17", "/I" + str(ROOT / "port"), src, str(ROOT / "port" / "game_find.cpp"),
+        cmd = [clang, "/nologo", "/O1", "/EHsc", "/std:c++17", "/I" + str(ROOT / "port"), "/I" + cls.tmp,
+               '/DGAME_FILES_INC="test_files.inc"', src, str(ROOT / "port" / "game_find.cpp"),
                "/Fe" + cls.exe, "/Fo" + cls.tmp + "\\"]
         r = subprocess.run(cmd, capture_output=True, text=True, env=env, cwd=cls.tmp)
         if r.returncode:
@@ -115,6 +153,9 @@ class GameFind(unittest.TestCase):
     def run_t(self, *a):
         r = subprocess.run([self.exe, *a], capture_output=True, text=True)
         self.assertEqual(r.returncode, 0, r.stderr)
+        if a[0] in ("files", "needed"):
+            first, _, text = r.stdout.strip().partition("\n")
+            return first.split() + ([text] if text else [])
         return r.stdout.strip().split(" ", 5) if a[0] != "link" and a[0] != "target" else r.stdout.strip().split(" ", 2)
 
     def p(self, *parts):
@@ -180,6 +221,89 @@ class GameFind(unittest.TestCase):
         out = self.run_t("search_first", self.d)
         self.assertEqual(out[1], "no_elf")
         self.assertTrue(out[2].endswith("NPUA80918"), out)
+
+    def test_the_three_files_alone_are_not_the_game(self):
+        # PARAM.SFO and GOWA.SELF, as a license would decrypt: nothing to decrypt or build from.
+        make_game(self.p("g"), elf=False, files=False)
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:5], ["incomplete", "3", "3", "0"])
+        self.assertEqual(out[5], str(sum(size for _, size in TEST_FILES)))
+        self.assertEqual(out[6], "USRDIR/GAME.PSARC")
+        self.assertEqual(out[9], "Not the whole game: 3 of its 3 files are not in its folder (270040 bytes), "
+                                 "GAME.PSARC first")
+
+    def test_a_decrypted_elf_does_not_make_up_for_them(self):
+        make_game(self.p("g"), files=False)
+        self.assertEqual(self.run_t("files", self.p("g"))[1], "incomplete")
+
+    def test_one_file_missing(self):
+        make_game(self.p("g"))
+        os.remove(self.p("g", "USRDIR", "ARCHIVES"))
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:6], ["incomplete", "3", "1", "0", "40"])
+        self.assertEqual(out[6], "USRDIR/ARCHIVES")
+
+    def test_a_file_cut_short(self):
+        make_game(self.p("g"))
+        f = Path(self.p("g", "USRDIR", "ENGLISH.PSARC"))
+        f.write_bytes(f.read_bytes()[:-1])
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1:5], ["incomplete", "3", "0", "1"])
+        self.assertEqual(out[7], "USRDIR/ENGLISH.PSARC")
+        self.assertEqual(out[9], "1 of the game's files is not as version 1.12 has them, ENGLISH.PSARC first")
+
+    def test_a_file_of_its_size_with_other_bytes(self):
+        for rel, size in TEST_FILES:
+            with self.subTest(rel):
+                g = self.p(rel.replace("/", "_"))
+                make_game(g)
+                Path(g, *rel.split("/")).write_bytes(bytes(size))
+                out = self.run_t("files", g)
+                self.assertEqual(out[1:5], ["incomplete", "3", "0", "1"])
+                self.assertEqual(out[7], rel)
+
+    def test_its_last_byte_counts(self):
+        make_game(self.p("g"))
+        f = Path(self.p("g", "USRDIR", "GAME.PSARC"))
+        b = bytearray(f.read_bytes())
+        b[-1] ^= 1
+        f.write_bytes(bytes(b))
+        self.assertEqual(self.run_t("files", self.p("g"))[1], "incomplete")
+
+    def test_whole_and_not_decrypted(self):
+        make_game(self.p("g"), elf=False)
+        self.assertEqual(self.run_t("files", self.p("g"))[1:5], ["no_elf", "3", "0", "0"])
+
+    def test_another_version_is_said_before_its_files(self):
+        make_game(self.p("g"), elf=False, files=False, app_ver="01.00")
+        out = self.run_t("files", self.p("g"))
+        self.assertEqual(out[1], "other_build")
+        self.assertEqual(out[8], "1")
+
+    def test_the_search_takes_a_whole_copy_over_one_that_is_not(self):
+        # Walked first, the copy with the three files alone would have ended the search before.
+        make_game(self.p("a", "NPUA80918"), elf=False, files=False)
+        make_game(self.p("b", "NPUA80918"), elf=False)
+        out = self.run_t("search_first", self.d)
+        self.assertEqual(out[1], "no_elf")
+        self.assertTrue(out[2].endswith(os.path.join("b", "NPUA80918")), out)
+        self.assertEqual(out[5], "2")
+
+    def test_what_the_game_cannot_start_without(self):
+        for path, want in (("USRDIR/GAME.PSARC", "1"), ("usrdir\\game.psarc", "1"), ("USRDIR/ARCHIVES", "1"),
+                           ("USRDIR/TPPS1-ENGLISH.PSARC", "0"), ("USRDIR/GAME.PSARC.PATCH", "0"), ("USRDIR", "0"),
+                           ("", "0")):
+            with self.subTest(path):
+                self.assertEqual(self.run_t("needed", path)[1], want)
+
+    def test_the_list_reads_back(self):
+        self.assertEqual(self.gowa.read_game_files_inc(self.inc),
+                         [(rel, len(data), self.gowa.ends_sha256(self.p_file(rel, data))) for rel, data in TEST_DATA.items()])
+
+    def p_file(self, rel, data):
+        f = self.p(rel.replace("/", "_") + ".bin")
+        Path(f).write_bytes(data)
+        return f
 
     def test_the_search_goes_past_links(self):
         make_game(self.p("real", "g"))

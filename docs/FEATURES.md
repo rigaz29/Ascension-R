@@ -14,6 +14,13 @@ RPCS3 of yours. `Ascension-R --prepare-game <folder> [--rpcs3 <rpcs3.exe>] [--ra
 The launcher shows the game's folder in its System tab. Browse picks another one, and Auto detect looks for the game
 on every disk; it starts by itself when the game is not where the settings say.
 
+Before it decrypts or builds anything, the launcher checks that the folder holds the whole game: USRDIR's 48 archives
+and the two lists that name them, each by its size and the SHA-256 of its first and last 64 KiB, as version 1.12 has
+them (`port/game_files.inc`, made by `gowa.py game-files`). A folder that lacks some, or has one of another size or
+content, is not taken, whatever was decrypted from it before: the System tab says how many files are missing and which
+first, and Build and Play wait. A game started without the launcher that cannot open one of them says which and stops,
+rather than stop a few seconds in with a black window ([note](notes/2026-11-10-game-files-check.md)).
+
 `build` copies `dxcompiler.dll` and `dxil.dll` from the Windows SDK next to the exe, and guest shaders compile with
 them. Without the two files they compile with D3DCompile, about 2.4 times slower. `graphics.shader_compiler = fxc`
 asks for that too. The two compilers keep their caches apart, so a first run on either compiles everything once.

@@ -896,7 +896,16 @@ int gowa_report_create(int with_saves, char* out, size_t n)
     const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);
     if (vfs && *vfs) {
         const GameState gs = game_probe((wide(vfs) + L"\\PS3_GAME").c_str(), &g);
-        note += strf("GOWA.elf: %s\n", gs == GAME_OK ? "the one this port is lifted from" : gs == GAME_NO_ELF ? "not there" : "not the one this port is lifted from");
+        if (gs == GAME_INCOMPLETE) {
+            wchar_t t[320];
+            game_files_text(&g, t, sizeof t / sizeof t[0]);
+            note += "Game files: " + narrow(t) + "\n";
+        } else if (g.files) {
+            note += strf("Game files: all %d as 1.12 has them\n", g.files);
+        }
+        note += strf("GOWA.elf: %s\n", gs == GAME_OK ? "the one this port is lifted from" : gs == GAME_NO_ELF ? "not there"
+                                       : gs == GAME_INCOMPLETE ? "not looked at, the game's files come first"
+                                                               : "not the one this port is lifted from");
     }
     note += "\nSessions:\n";
 

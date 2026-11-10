@@ -67,6 +67,10 @@ TITLE_ID = "NPUA80918"
 APP_VER = "01.12"
 GAME_ELF = "GOWA.elf"
 GAME_ELF_SHA256 = "4bf75c897b82d1beb25514cbadaff3d03e1b0c7bf849fa5d289be4f9183462b5"
+# The game's files the launcher checks before it decrypts or builds anything (port/game_files.inc, `game-files`):
+# USRDIR's archives and the two lists that name them, each by its size and the SHA-256 of its first and last 64 KiB.
+GAME_FILES_INC = os.path.join(ROOT, "port", "game_files.inc")
+GAME_FILES_ENDS = 64 * 1024
 
 
 # ---------------------------------------------------------------------------
@@ -138,6 +142,60 @@ def parse_sfo(path):
         out[key] = (struct.unpack("<I", raw)[0] if fmt == 0x0404
                     else raw.rstrip(b"\0").decode("utf-8", "replace"))
     return out
+
+
+def ends_sha256(path, size=None):
+    """The SHA-256 of a file's first and last 64 KiB, one after the other: the whole file twice when it is smaller.
+    game_find.cpp works it out the same way."""
+    if size is None:
+        size = os.path.getsize(path)
+    part = min(size, GAME_FILES_ENDS)
+    with open(path, "rb") as f:
+        head = f.read(part)
+        f.seek(size - part)
+        tail = f.read(part)
+    if len(head) != part or len(tail) != part:
+        raise OSError("%s is shorter than %d bytes" % (path, size))
+    return hashlib.sha256(head + tail).hexdigest()
+
+
+def archive_list(path):
+    """The archives one of USRDIR's two lists names: a count on the first line, then a name a line."""
+    with open(path, encoding="ascii", errors="replace") as f:
+        lines = [line.strip() for line in f.read().splitlines()]
+    return [line for line in lines[1:] if line]
+
+
+def game_file_names(game):
+    """The files the launcher checks, in the order the game opens them: the archives ARCHIVES names, those
+    LOCALIZED_ARCHIVES names, the other archives at USRDIR's top (the updates' TPPS ones), then the two lists."""
+    usr = os.path.join(game, "USRDIR")
+    on_disk = sorted(n for n in os.listdir(usr)
+                     if n.upper().endswith(".PSARC") and os.path.isfile(os.path.join(usr, n)))
+    order = []
+    for lst in ("ARCHIVES", "LOCALIZED_ARCHIVES"):
+        order += [n for n in archive_list(os.path.join(usr, lst)) if n in on_disk and n not in order]
+    order += [n for n in on_disk if n not in order]
+    return ["USRDIR/" + n for n in order] + ["USRDIR/ARCHIVES", "USRDIR/LOCALIZED_ARCHIVES"]
+
+
+def read_game_files_inc(path=GAME_FILES_INC):
+    """port/game_files.inc as (path, size, hash) tuples."""
+    rx = re.compile(r'\{\s*"([^"]+)",\s*(\d+)ull,\s*"([0-9a-f]{64})"\s*\}')
+    with open(path, encoding="utf-8") as f:
+        return [(m.group(1), int(m.group(2)), m.group(3)) for m in rx.finditer(f.read())]
+
+
+def game_files_check(game, files=None):
+    """What of the listed files is not in a game's folder, and what is there but not as 1.12 has it: two lists."""
+    missing, wrong = [], []
+    for rel, size, want in (files if files is not None else read_game_files_inc()):
+        p = os.path.join(game, *rel.split("/"))
+        if not os.path.isfile(p):
+            missing.append(rel)
+        elif os.path.getsize(p) != size or ends_sha256(p, size) != want:
+            wrong.append(rel)
+    return missing, wrong
 
 
 def code_end(elf):
@@ -408,6 +466,13 @@ def cmd_doctor(args):
         check("title", s.get("TITLE_ID") == TITLE_ID, "%s %s" % (s.get("TITLE_ID"), s.get("TITLE")))
         check("version", s.get("APP_VER") == APP_VER, "APP_VER %s (port targets %s)"
               % (s.get("APP_VER"), APP_VER))
+        if s.get("APP_VER") == APP_VER:
+            files = read_game_files_inc()
+            missing, wrong = game_files_check(VFS_GAME, files)
+            check("game files", not missing and not wrong,
+                  "all %d as %s has them" % (len(files), APP_VER) if not missing and not wrong else
+                  "%d not there, %d not as %s has them: %s first" % (len(missing), len(wrong), APP_VER,
+                                                                     (missing + wrong)[0]))
     else:
         check("vfs/PS3_GAME", False, "run `setup --game-dir ...`")
     elf = game_elf()
@@ -424,6 +489,36 @@ def cmd_doctor(args):
     check("free disk", free > 20, "%.0f GB free on the repo drive (lift + build want ~20 GB)" % free)
     say("\n" + ("all good" if ok else "fix the [!!] lines above"))
     return 0 if ok else 1
+
+
+def cmd_game_files(args):
+    """port/game_files.inc, from a copy of the game that is NPUA80918 1.12 and whole. Names, sizes and hashes only."""
+    game = os.path.abspath(args.game_dir or VFS_GAME)
+    sfo = os.path.join(game, "PARAM.SFO")
+    if not os.path.isfile(sfo):
+        die("no PARAM.SFO in %s" % game)
+    s = parse_sfo(sfo)
+    if s.get("TITLE_ID") != TITLE_ID or s.get("APP_VER") != APP_VER:
+        die("%s is %s %s; the list is made from %s %s" % (game, s.get("TITLE_ID"), s.get("APP_VER"), TITLE_ID, APP_VER))
+    usr = os.path.join(game, "USRDIR")
+    for lst in ("ARCHIVES", "LOCALIZED_ARCHIVES"):
+        gone = [n for n in archive_list(os.path.join(usr, lst)) if not os.path.isfile(os.path.join(usr, n))]
+        if gone:
+            die("%s names %s, which %s not in %s: the list is made from a whole copy"
+                % (lst, ", ".join(gone), "is" if len(gone) == 1 else "are", usr))
+    rows, total = [], 0
+    for rel in game_file_names(game):
+        p = os.path.join(game, *rel.split("/"))
+        size = os.path.getsize(p)
+        rows.append('{ "%s", %dull, "%s" },' % (rel, size, ends_sha256(p, size)))
+        total += size
+    text = ("/* NPUA80918 %s: USRDIR's archives and the two lists that name them, in the order the game opens them, each\n"
+            " * with its size and the SHA-256 of its first and last 64 KiB (game_find.cpp). Made by `gowa.py game-files`\n"
+            " * from a whole copy; names, sizes and hashes only. */\n" % APP_VER) + "\n".join(rows) + "\n"
+    with open(args.out, "w", encoding="utf-8", newline="\n") as f:
+        f.write(text)
+    say("%s: %d files, %.1f GB" % (os.path.relpath(args.out, ROOT), len(rows), total / 1e9))
+    return 0
 
 
 def cmd_setup(args):
@@ -2635,6 +2730,9 @@ def main():
     sub.add_parser("doctor", help="check tools, submodule and game files")
     p = sub.add_parser("setup", help="link the installed game into vfs/ and gamedata/")
     p.add_argument("--game-dir", help="installed game folder (holds PARAM.SFO and USRDIR/)")
+    p = sub.add_parser("game-files", help="port/game_files.inc: the game's files the launcher checks, from a whole copy")
+    p.add_argument("--game-dir", help="the game's folder, NPUA80918 1.12 (default vfs/PS3_GAME)")
+    p.add_argument("--out", default=GAME_FILES_INC, help="where it goes (default port/game_files.inc)")
     sub.add_parser("analyze", help="loader, SPU images, HLE coverage -> analysis/")
     sub.add_parser("patches", help="list the switchable title patches and check them against the ELF")
     p = sub.add_parser("lift", help="PPU -> C++ in recompiled/")
@@ -2738,7 +2836,7 @@ def main():
     p.add_argument("--jobs", default="3", help="parallel compile jobs (default 3 for 16 GB RAM)")
     p.add_argument("--test", action="store_true", help="from the tree as it is, into dist/test/<release>/, which is replaced each time")
     args = ap.parse_args()
-    return {"doctor": cmd_doctor, "setup": cmd_setup, "analyze": cmd_analyze,
+    return {"doctor": cmd_doctor, "setup": cmd_setup, "game-files": cmd_game_files, "analyze": cmd_analyze,
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
             "bench": bench.main, "frames": frames.main, "replay": cmd_replay,

@@ -5,9 +5,10 @@
  * <hdd0>\game\NPUA80918, as `gowa.py setup` makes them. The launcher reads the first to show where
  * the game is, and sets both when the player picks another folder or Auto detect finds one.
  *
- * What a folder holds comes from its PARAM.SFO and its GOWA.elf: the port is lifted from one
- * release, so another version or another GOWA.elf is told apart (scripts/gowa.py has the same three
- * values, for `doctor`). The search only reads. No game file is copied or changed.
+ * What a folder holds comes from its PARAM.SFO, the game's files and its GOWA.elf: the port is lifted
+ * from one release, so another version or another GOWA.elf is told apart (scripts/gowa.py has the same
+ * three values, for `doctor`), and so is a folder that lacks some of that release's files
+ * (game_files.inc). The search only reads. No game file is copied or changed.
  */
 #include "game_find.h"
 
@@ -33,6 +34,22 @@ static const char k_title_id[] = "NPUA80918";
 static const char k_app_ver[] = "01.12";
 static const char k_elf_sha256[] = "4bf75c897b82d1beb25514cbadaff3d03e1b0c7bf849fa5d289be4f9183462b5";
 static const wchar_t k_title_dir[] = L"NPUA80918";
+
+/* The game's files: USRDIR's archives and the two lists that name them, each with its size and the SHA-256 of its
+ * first and last 64 KiB (game_files.inc, made by `gowa.py game-files` from a whole copy of 1.12). The game opens
+ * them at its start; without one it stopped a few seconds in, with a black window and nothing said. A folder that
+ * lacks any, or has one of another size or other ends, is not the game: nothing is decrypted, built or played from
+ * it. tests/test_game_find.py builds this file with a list of its own (GAME_FILES_INC). */
+struct GameFile { const char* path; unsigned long long size; const char* ends; };
+static const GameFile k_files[] = {
+#ifdef GAME_FILES_INC
+#include GAME_FILES_INC
+#else
+#include "game_files.inc"
+#endif
+};
+enum { N_FILES = (int)(sizeof k_files / sizeof k_files[0]) };
+static const DWORD k_ends = 64 * 1024;
 
 static uint32_t rd16(const unsigned char* p) { return (uint32_t)p[0] | (uint32_t)p[1] << 8; }
 static uint32_t rd32(const unsigned char* p) { return rd16(p) | rd16(p + 2) << 16; }
@@ -123,22 +140,156 @@ static void folder_copy(wchar_t* out, size_t n, const wchar_t* in)
     while (k > 3 && (out[k - 1] == L'\\' || out[k - 1] == L'/')) out[--k] = 0;
 }
 
+/* --- the game's files ----------------------------------------------------------- */
+static int sha256_hex(const unsigned char* b, size_t n, char hex[65])
+{
+    BCRYPT_ALG_HANDLE alg = NULL;
+    BCRYPT_HASH_HANDLE hash = NULL;
+    unsigned char sum[32];
+    const int done = BCryptOpenAlgorithmProvider(&alg, BCRYPT_SHA256_ALGORITHM, NULL, 0) == 0 &&
+                     BCryptCreateHash(alg, &hash, NULL, 0, NULL, 0, 0) == 0 &&
+                     BCryptHashData(hash, (PUCHAR)b, (ULONG)n, 0) == 0 &&
+                     BCryptFinishHash(hash, sum, sizeof sum, 0) == 0;
+    if (done)
+        for (int i = 0; i < 32; i++) snprintf(hex + i * 2, 3, "%02x", sum[i]);
+    if (hash) BCryptDestroyHash(hash);
+    if (alg) BCryptCloseAlgorithmProvider(alg, 0);
+    return done;
+}
+
+/* The SHA-256 of a file's first and last 64 KiB, one after the other: the whole file twice when it is smaller
+ * (gowa.py's ends_sha256). Reading 128 KiB of a file is what tells a copy of it from another file of its size. */
+static int ends_sha256(const wchar_t* path, unsigned long long size, char hex[65])
+{
+    HANDLE f = CreateFileW(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) return 0;
+    const DWORD part = size < k_ends ? (DWORD)size : k_ends;
+    unsigned char* b = (unsigned char*)malloc(2 * (size_t)part + 1);
+    LARGE_INTEGER at;
+    at.QuadPart = (LONGLONG)(size - part);
+    DWORD head = 0, tail = 0;
+    int ok = b && ReadFile(f, b, part, &head, NULL) && head == part && SetFilePointerEx(f, at, NULL, FILE_BEGIN) &&
+             ReadFile(f, b + part, part, &tail, NULL) && tail == part;
+    CloseHandle(f);
+    ok = ok && sha256_hex(b, 2 * (size_t)part, hex);
+    free(b);
+    return ok;
+}
+
+/* A file of the game's folder by its path in game_files.inc. */
+static void file_path(wchar_t* out, size_t n, const wchar_t* dir, const char* rel)
+{
+    swprintf(out, n, L"%ls\\%hs", dir, rel);
+    for (wchar_t* c = out; *c; c++)
+        if (*c == L'/') *c = L'\\';
+}
+
+static void first_of(char* out, size_t n, const char* path)
+{
+    if (!out[0]) snprintf(out, n, "%s", path);
+}
+
+/* Whether dir has the game's files as 1.12 has them, and what it lacks in g. Their sizes first, and the ends only when
+ * every one is there at its size: a folder that lacks some is told so without a byte of it read. */
+static int files_check(const wchar_t* dir, GameInfo* g)
+{
+    g->files = N_FILES;
+    wchar_t p[GAME_PATH_MAX + 96];
+    for (int i = 0; i < N_FILES; i++) {
+        file_path(p, sizeof p / sizeof p[0], dir, k_files[i].path);
+        WIN32_FILE_ATTRIBUTE_DATA a;
+        if (!GetFileAttributesExW(p, GetFileExInfoStandard, &a) || (a.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) {
+            g->files_missing++;
+            g->bytes_missing += k_files[i].size;
+            first_of(g->first_missing, sizeof g->first_missing, k_files[i].path);
+        } else if (((unsigned long long)a.nFileSizeHigh << 32 | a.nFileSizeLow) != k_files[i].size) {
+            g->files_wrong++;
+            first_of(g->first_wrong, sizeof g->first_wrong, k_files[i].path);
+        }
+    }
+    if (g->files_missing || g->files_wrong) return 0;
+    for (int i = 0; i < N_FILES; i++) {
+        file_path(p, sizeof p / sizeof p[0], dir, k_files[i].path);
+        char hex[65];
+        if (!ends_sha256(p, k_files[i].size, hex) || strcmp(hex, k_files[i].ends)) {
+            g->files_wrong++;
+            first_of(g->first_wrong, sizeof g->first_wrong, k_files[i].path);
+        }
+    }
+    return !g->files_wrong;
+}
+
+/* A file's name without USRDIR/, as a player would look for it. */
+static const char* name_shown(const char* path)
+{
+    const char* s = strrchr(path, '/');
+    return s ? s + 1 : path;
+}
+
+static void bytes_text(unsigned long long b, wchar_t* out, size_t n)
+{
+    if (b >= 1000000000ull) swprintf(out, n, L"%.1f GB", (double)b / 1e9);
+    else if (b >= 1000000ull) swprintf(out, n, L"%.0f MB", (double)b / 1e6);
+    else swprintf(out, n, L"%llu bytes", b);
+}
+
+void game_files_text(const GameInfo* g, wchar_t* out, size_t n)
+{
+    if (g->files_missing) {
+        wchar_t size[32];
+        bytes_text(g->bytes_missing, size, sizeof size / sizeof size[0]);
+        swprintf(out, n, L"Not the whole game: %d of its %d files are not in its folder (%ls), %hs first", g->files_missing,
+                 g->files, size, name_shown(g->first_missing));
+    } else {
+        swprintf(out, n, L"%d of the game's files %ls not as version 1.12 has them, %hs first", g->files_wrong,
+                 g->files_wrong == 1 ? L"is" : L"are", name_shown(g->first_wrong));
+    }
+}
+
+static int same_char(char a, char b)
+{
+    if (a == '\\') a = '/';
+    if (b == '\\') b = '/';
+    if (a >= 'a' && a <= 'z') a = (char)(a - 'a' + 'A');
+    if (b >= 'a' && b <= 'z') b = (char)(b - 'a' + 'A');
+    return a == b;
+}
+
+int game_file_needed(const char* path)
+{
+    for (int i = 0; i < N_FILES; i++) {
+        const char* a = k_files[i].path;
+        const char* b = path;
+        while (*a && *b && same_char(*a, *b)) { a++; b++; }
+        if (!*a && !*b) return 1;
+    }
+    return 0;
+}
+
 GameState game_probe(const wchar_t* dir, GameInfo* g)
 {
     memset(g, 0, sizeof *g);
     folder_copy(g->dir, GAME_PATH_MAX, dir);
-    wchar_t p[GAME_PATH_MAX + 32];
+    wchar_t p[GAME_PATH_MAX + 32], elf[GAME_PATH_MAX + 32];
     swprintf(p, sizeof p / sizeof p[0], L"%ls\\PARAM.SFO", g->dir);
     if (!sfo_read(p, g)) return g->state = GAME_NONE;
     if (strcmp(g->title_id, k_title_id)) return g->state = GAME_OTHER_TITLE;
-    swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.elf", g->dir);
-    if (!is_file(p)) {
-        /* Not decrypted yet if GOWA.SELF is there to decrypt. The game's data folder, NPUA80918-DATA beside the game in
-         * RPCS3, has this title in its PARAM.SFO and neither file: it is not the game, and the search goes on past it. */
-        swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.SELF", g->dir);
-        return g->state = is_file(p) ? GAME_NO_ELF : GAME_NONE;
+    /* The game's data folder, NPUA80918-DATA beside the game in RPCS3, has this title in its PARAM.SFO and neither
+     * GOWA.elf nor GOWA.SELF: it is not the game, and the search goes on past it. */
+    swprintf(elf, sizeof elf / sizeof elf[0], L"%ls\\USRDIR\\GOWA.elf", g->dir);
+    swprintf(p, sizeof p / sizeof p[0], L"%ls\\USRDIR\\GOWA.SELF", g->dir);
+    const int has_elf = is_file(elf);
+    if (!has_elf && !is_file(p)) return g->state = GAME_NONE;
+    /* Another version first: its files are another version's too, and the version is what to tell. */
+    if (strcmp(g->app_ver, k_app_ver)) {
+        g->other_version = 1;
+        return g->state = GAME_OTHER_BUILD;
     }
-    return g->state = strcmp(g->app_ver, k_app_ver) || !game_elf_ok(p) ? GAME_OTHER_BUILD : GAME_OK;
+    /* Then the whole game, before there is anything to decrypt: GOWA.SELF and a license alone are not it. */
+    if (!files_check(g->dir, g)) return g->state = GAME_INCOMPLETE;
+    if (!has_elf) return g->state = GAME_NO_ELF;
+    return g->state = game_elf_ok(elf) ? GAME_OK : GAME_OTHER_BUILD;
 }
 
 int game_read_info(const wchar_t* dir, GameInfo* g)

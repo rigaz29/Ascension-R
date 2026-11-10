@@ -742,9 +742,18 @@ static void game_refresh(void)
     }
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
     s_rc.elf_ok = elf && *elf && GetFileAttributesA(elf) != INVALID_FILE_ATTRIBUTES;
+    /* Not the whole game: nothing is built or played from it, whatever was decrypted before (game_status says what
+     * the folder lacks). */
+    if (s_game.g.state == GAME_INCOMPLETE) s_rc.elf_ok = 0;
 #ifdef PORT_GAME_MODULE
     kit_refresh();
 #endif
+}
+
+/* What to tell a player who pressed something that needs the game. */
+static const char* game_needed_toast(void)
+{
+    return s_game.g.state == GAME_INCOMPLETE ? "Not the whole game: see the System tab" : "Set the game's folder first";
 }
 
 static const wchar_t* game_path_shown(void)
@@ -772,9 +781,17 @@ static int game_status(wchar_t* b, size_t n)
         swprintf(b, n, L"God of War: Ascension \x00B7 %ls \x00B7 %ls", W(g.title_id), game_version());
         return 1;
     case GAME_OTHER_BUILD:
+        if (g.other_version) {
+            swprintf(b, n, L"That is %ls %ls. This port runs version 1.12: install the game's update first",
+                     W(g.title_id), game_version());
+            return -1;
+        }
         swprintf(b, n, L"%ls %ls, but not the GOWA.elf this port was made from: it may not run", W(g.title_id),
                  game_version());
         return 0;
+    case GAME_INCOMPLETE:
+        game_files_text(&g, b, n);
+        return -1;
     case GAME_NO_ELF:
         if (s_prep.thread) return prep_line(b, n, NULL);
         if (s_prep.err[0]) swprintf(b, n, L"%ls", s_prep.err);
@@ -1466,11 +1483,16 @@ static void draw_play(void)
         }
 #endif
     } else if (!s_rc.elf_ok) {
-        check_line(x0 + 22, y, cw - 150, -1, s_game.g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
-                                                                           : L"Game not found");
+        const GameInfo& g = s_game.g;
+        check_line(x0 + 22, y, cw - 150, -1, g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
+                                             : g.state == GAME_INCOMPLETE ? (g.files_missing ? L"Game files missing (System tab)"
+                                                                                             : L"Wrong game files (System tab)")
+                                             : g.state == GAME_OTHER_BUILD && g.other_version ? L"Not version 1.12 (System tab)"
+                                             : L"Game not found");
         w_button(L"Find game", R(x0 + cw - 118, y - 2, 96, 30), H_GAME_AUTO, 0);
     } else if (s_game.g.state == GAME_OTHER_BUILD) {
-        check_line(x0 + 22, y, cw - 44, 0, L"Game found, but another GOWA.elf");
+        check_line(x0 + 22, y, cw - 44, 0, s_game.g.other_version ? L"Game found, but not version 1.12"
+                                                                  : L"Game found, but another GOWA.elf");
     } else {
         wchar_t b[100];
         swprintf(b, 100, L"Game found: %ls %ls", s_game.g.title_id[0] ? W(s_game.g.title_id) : L"GOWA.elf", game_version());
@@ -1966,6 +1988,10 @@ static void find_done(void)
     } else if (b.state == GAME_OTHER_TITLE) {
         swprintf(s_game.note, n, L"Found %ls in %ls. This port runs NPUA80918 1.12", W(b.title_id), b.dir);
         toast_bad("Another release of the game");
+    } else if (b.state == GAME_INCOMPLETE && (picked || s_game.g.state < GAME_NO_ELF)) {
+        /* Set, so the System tab says what the folder lacks: with the rest copied in, it is the game. */
+        if (game_use(b.dir)) toast_bad(b.files_missing ? "Found the game, but not all of it" : "Found the game, but not 1.12's files");
+        else toast_bad("The game's folder could not be set");
     } else if (picked) {
         swprintf(s_game.note, n, L"No game in %ls", s_find.under);
         toast_bad("No game in that folder");
@@ -2092,7 +2118,7 @@ static void pc_start(void)
     if (s_pc.running) return;
     if (!s_rc.elf_ok) {
         s_tab = T_SYSTEM;
-        toast_bad("Set the game's folder first");
+        toast_bad(game_needed_toast());
         return;
     }
     const char* sc = ps3_settings_str("graphics", "shader_cache", "D3D12_SHADER_CACHE", NULL);
@@ -2225,7 +2251,7 @@ static void kit_start(void)
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
     if (!s_rc.elf_ok || !elf) {
         s_tab = T_SYSTEM;
-        toast_bad("Set the game's folder first");
+        toast_bad(game_needed_toast());
         return;
     }
     game_module_built(out, GAME_PATH_MAX, L"");
@@ -2531,7 +2557,7 @@ static void act(int id)
         case H_PLAY:
             if (!s_rc.elf_ok) {
                 s_tab = T_SYSTEM;
-                toast_bad("Set the game's folder first");
+                toast_bad(game_needed_toast());
                 break;
             }
 #ifdef PORT_GAME_MODULE

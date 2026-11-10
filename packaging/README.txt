@@ -13,7 +13,8 @@ WHAT YOU NEED
 - A CPU with AVX2 and FMA, and a GPU with Direct3D 12.
 @KIT_NEEDS@
 - Your copy of the game, the digital US release NPUA80918, updated to version 1.12. The folder of an RPCS3 install
-  (dev_hdd0\game\NPUA80918) works, and so does an unpacked PKG.
+  (dev_hdd0\game\NPUA80918) works, and so does an unpacked PKG. It has to be the whole folder: the launcher checks
+  the game's files before it decrypts or builds anything, and says which are missing.
 - The game's license file (.rap). If the game is installed in RPCS3, the launcher finds it.
 - RPCS3, once, to decrypt your copy of the game. If you do not have it, the launcher offers to download the official
   build and removes it afterwards. RPCS3 needs the Microsoft Visual C++ Redistributable (x64).

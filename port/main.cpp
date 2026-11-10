@@ -40,6 +40,7 @@
 #include "ps3emu/thread_name.h"   /* ps3_thread_name: per-thread CPU tables and debuggers */
 #include "ps3emu/ps3_ftrace.h"    /* ps3_ft_dump: write a PS3_FTRACE trace on quitting */
 #include "report.h"               /* what a session leaves behind */
+#include "game_find.h"            /* game_file_needed: the files the game cannot start without */
 #include "ps3emu/ps3_settings.h"  /* ascension-r.ini: the player's settings and this machine's paths */
 
 #include <stdint.h>
@@ -1479,6 +1480,48 @@ static DWORD WINAPI pgo_writer(void*)
 }
 #endif
 
+#ifdef _WIN32
+/* ---------------------------------------------------------------------------
+ * A file the game cannot start without, and it could not be opened
+ *
+ * The title opens USRDIR's two lists of archives and the archives at its
+ * start (game_files.inc). Without one it went on and stopped by itself a few
+ * seconds later, a black window and nothing said. The launcher does not start
+ * a game whose folder lacks them (game_probe), but a script, the launcher
+ * turned off, or a file gone or locked since can still get here: the log, and
+ * a message unless a script started the game, say which file, and it stops.
+ * -----------------------------------------------------------------------*/
+extern "C" void (*g_ps3_open_failed_hook)(const char* guest_path, const char* host_path);   /* ppu_fs.cpp */
+static int s_open_failed_says;
+
+static void game_open_failed(const char* gpath, const char* hpath)
+{
+    static const char root[] = "/dev_hdd0/game/NPUA80918/";
+    const size_t k = sizeof root - 1;
+    if (_strnicmp(gpath, root, k) || !game_file_needed(gpath + k)) return;
+    static volatile LONG once = 0;
+    if (InterlockedExchange(&once, 1)) Sleep(INFINITE);   /* another thread says it, and ends the game */
+    char host[1100];
+    snprintf(host, sizeof host, "%s", hpath);
+    for (char* c = host; *c; c++)
+        if (*c == '/') *c = '\\';
+    fprintf(stderr, "[quit] the game's folder has no %s, or it could not be read: %s\n", gpath + k, host);
+    fflush(stdout);
+    fflush(stderr);
+    if (s_open_failed_says) {
+        wchar_t m[1600];
+        swprintf(m, sizeof m / sizeof m[0],
+                 L"The game cannot start: its folder has no %hs, or it could not be read.\n\n%hs\n\n"
+                 L"It needs the whole game, as RPCS3 or the game's PKG installs it. Pick that folder in the launcher's "
+                 L"System tab.",
+                 gpath + k, host);
+        MessageBoxW(NULL, m, L"Ascension-R", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
+    }
+    /* Terminated, as when the window closes: guest threads are still running and may hold locks an exit needs. */
+    TerminateProcess(GetCurrentProcess(), 3);
+}
+#endif
+
 int main(int argc, char** argv)
 {
     /* gowa [--settings <file>] [--set <section.key=value>]... [--no-launcher] [<PPU ELF>]
@@ -1549,6 +1592,10 @@ int main(int argc, char** argv)
         title_environment();   /* the environment the game runs in: the same shader cache keys */
         return gowa_precompile();
     }
+#ifdef _WIN32
+    s_open_failed_says = !no_launcher;
+    g_ps3_open_failed_hook = game_open_failed;
+#endif
     /* The settings window, unless a script asked for none, or the player
      * turned it off and is not holding Shift. */
     int launcher = !no_launcher && ps3_settings_bool("launcher", "show", NULL, 1);
