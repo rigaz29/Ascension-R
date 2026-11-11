@@ -1318,7 +1318,7 @@ int gowa_edge_out_9080(spu_context* ctx)
             const u128 line = LD(0x10C00);
             const uint32_t ea0 = W(LD(W(local))), st = W(eo_d118(ctx, c));
             kept = !edge_gpul_defer_test() && ea0 >= line._u32[0] && ea0 < line._u32[2] &&
-                   (st == 12 || edge_gpul_can_publish(ctx, st));
+                   (st == 12 || edge_memo_vel_kept(st) || edge_gpul_can_publish(ctx, st));
             if (!kept) edge_memo_ring(ctx);
         }
         if (eo_put(ctx, 0, c, icount, local, spu_ai(sp, 96), spu_ai(sp, -144), kept, &late)) goto done;

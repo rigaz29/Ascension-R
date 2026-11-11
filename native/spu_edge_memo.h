@@ -36,6 +36,10 @@ void edge_memo_revoke(spu_context* ctx);
 void edge_memo_revoke_lit(spu_context* ctx);
 /* 0xBBC8's entry in an unskinned job (GOWA_EDGE_RIGID): 1 = left out, its arguments kept */
 int edge_memo_rigid_bbc8(spu_context* ctx);
+/* a velocity job the memo follows (GOWA_EDGE_VEL); the output stage: its block at this stride can stay
+ * out of the ring */
+int edge_memo_vel(void);
+int edge_memo_vel_kept(uint32_t stride);
 /* 0xF538's constant vectors for the matrix at mat (spu_edge_xform.c) */
 void edge_xf_consts(const uint8_t* ls, uint32_t mat, float c[4][4]);
 

@@ -28,9 +28,9 @@ static inline uint32_t ej_be32(const uint8_t* p)
 }
 
 /* The pieces seen at the gate and elsewhere, as small numbers for the counts. */
-static const uint32_t ej_out_pieces[] = { 0x765B70, 0x755B80, 0x762470, 0x756DE0 };
+static const uint32_t ej_out_pieces[] = { 0x765B70, 0x755B80, 0x75F580, 0x762470, 0x756DE0 };
 static const uint32_t ej_in_pieces[] = { 0x764D10, 0x75EB40, 0x75BD10, 0x758590, 0x764520, 0x75E180, 0x75AA50 };
-static const uint32_t ej_meth_pieces[] = { 0x7661C0, 0x75FE80, 0x765170, 0x7613D0 };
+static const uint32_t ej_meth_pieces[] = { 0x7661C0, 0x75FE80, 0x763980, 0x765170, 0x7613D0 };
 #define EJ_NOUT (int)(sizeof ej_out_pieces / sizeof ej_out_pieces[0] + 1)
 #define EJ_NIN (int)(sizeof ej_in_pieces / sizeof ej_in_pieces[0] + 1)
 #define EJ_NMETH (int)(sizeof ej_meth_pieces / sizeof ej_meth_pieces[0] + 1)
@@ -81,6 +81,7 @@ int ej_read(const spu_context* ctx, ej_view* v, uint32_t base)
     v->nidx = (uint16_t)(h[10] << 8 | h[11]);
     if (v->out_piece == 0x765B70) v->kind = v->skinned ? EJ_POS_SKIN : EJ_POS;
     else if (v->out_piece == 0x755B80) v->kind = v->skinned ? EJ_LIT_SKIN : EJ_LIT;
+    else if (v->out_piece == 0x75F580) v->kind = v->skinned ? EJ_VEL_SKIN : EJ_VEL;
     else v->kind = EJ_OTHER;
     return 0;
 }
@@ -92,7 +93,8 @@ static volatile long long s_combo[EJ_NOUT][EJ_NIN][EJ_NMETH][2];
 
 static void ej_stats(void)
 {
-    static const char* const kn[EJ_KINDS] = { "position only", "position only, skinned", "lit", "lit, skinned", "other" };
+    static const char* const kn[EJ_KINDS] = { "position only", "position only, skinned", "lit", "lit, skinned", "other",
+                                              "velocity", "velocity, skinned" };
     fprintf(stderr, "[edge-job] %lld jobs: %lld not read (layout)", s_jobs, s_bad);
     for (int k = 0; k < EJ_KINDS; k++) fprintf(stderr, ", %s %lld", kn[k], s_kind[k]);
     fprintf(stderr, "\n");

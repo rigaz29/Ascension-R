@@ -202,6 +202,17 @@ void er_vertex_lit(const er_rec* r, const uint8_t* in, uint8_t* out)
     ek_pack_lit(out, P, N, T);
 }
 
+/* A velocity job's 36 bytes (the output piece 0x75F580): a lit vertex's first 24, then the previous
+ * frame's position, 0xF538 with the previous matrix on the same position */
+void er_vertex_vel(const er_rec* r, const uint8_t* in, uint8_t* out)
+{
+    er_vertex_lit(r, in, out);
+    float p[4], Q[4];
+    memcpy(p, in, 16);
+    er_xf(r->c[ER_PREV], p, Q);
+    for (int l = 0; l < 3; l++) ek_wr32(out + 24 + 4 * l, ek_u(Q[l]));
+}
+
 /* cflts's conversion: toward zero, and a value past the top saturates (x86's gives 0x80000000 there,
  * as for the bottom). A normalized component just above 1.0, from 0xBBC8's estimate, reaches it. */
 static inline uint32_t ek_cflts(float x) { return x >= 2147483648.0f ? 0x7FFFFFFFu : (uint32_t)(int32_t)x; }

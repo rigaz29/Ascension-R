@@ -108,6 +108,7 @@ static SPU_THREAD_LOCAL struct {
     int lit;
     int skin;                   /* a skinned job's (spu_edge_gpuskin.c) */
     int rigid;                  /* an unskinned job's, its transforms left to the pass (GOWA_EDGE_RIGID) */
+    int vel;                    /* a velocity job's: lit arrays and the previous position (GOWA_EDGE_VEL) */
     int ring;                   /* a result that goes out whole after all */
     uint32_t nverts, nidx;      /* the segment's exact counts */
     uint64_t k0, k1;
@@ -201,6 +202,39 @@ static int memo_rigid_mode(void)
     int v = m;
     if (v >= 0) return v;
     const char* e = getenv("GOWA_EDGE_RIGID");
+    v = e ? atoi(e) : 1;
+    if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
+    if (v == 1 && memo_resident_mode() != 1) v = 0;
+    m = v;
+    return v;
+}
+
+/* GOWA_EDGE_VEL: 1 on (the default), 0 off, 2 the check.
+ *
+ * A velocity job (output piece 0x75F580, method piece 0x763980) is a lit job of a mesh the title's
+ * velocity draws read: its vertexes are 36 bytes, a lit vertex's first 24 (the position, the normal,
+ * the tangent) and the previous frame's position. Slot 18 holds this frame's matrix, slot 19 the
+ * previous one's; 0xF538 is called four times: the previous position out of the position array into
+ * its own (linking back to 0x5C84, the matrix at 0x104C0), then the position in place (0x5850, the
+ * matrix at 0x10480), the normal and the tangent (0x5A18, 0x5A50). They were never kept: the job reader
+ * did not know the piece, and both matrices change every frame for a moving object. Without them, in the
+ * fight 99.9% of these jobs' inputs were seen before, and they took 24% of EDGE's job time at 61 us a
+ * job (docs/notes/2026-11-11-edge-velocity.md). So they go GOWA_EDGE_RIGID's way, with a fourth array
+ * of constants (ER_PREV) and the 36-byte packing in the vertex pass (ER_VEL):
+ *  - the key leaves out slots 18, 19 and 4, and a word keeps these results apart;
+ *  - a result keeps what 0xF538 reads, the previous position's call reading the same array as the
+ *    position's, before that one changes it;
+ *  - with a result the output piece does not run, and the ring gets the result's first 16 bytes
+ *    (gowa_edge_vel_75f580, spu_edge_cmp.c);
+ *  - the job has no lighting stage, so no lit record: its part goes out as a position block's.
+ * A skinned velocity job stays on the SPU. The check: every velocity job's 36 bytes worked out on the
+ * CPU from what 0xF538 read, against what the piece packs. */
+static int memo_vel_mode(void)
+{
+    static volatile int m = -1;
+    int v = m;
+    if (v >= 0) return v;
+    const char* e = getenv("GOWA_EDGE_VEL");
     v = e ? atoi(e) : 1;
     if (v < 0 || v > 2 || memo_mode() != 1) v = 0;
     if (v == 1 && memo_resident_mode() != 1) v = 0;
@@ -404,11 +438,14 @@ static void ek_fill(const rsx_kept* k, const void* skin, uint8_t* ring, uint32_t
 static SPU_THREAD_LOCAL struct {
     er_rec* rec;                /* this job's constants */
     uint8_t* in;                /* a job keeping its result: what 0xF538 read, host order */
-    uint32_t got[3];            /* the vertexes taken of each array */
-    uint32_t addr[3];           /* each array's place, where 0xF538 and 0xBBC8 work */
+    uint32_t got[4];            /* the vertexes taken of each array */
+    uint32_t addr[4];           /* each array's place, where 0xF538 and 0xBBC8 work (the previous
+                                   position's: where it goes) */
+    uint32_t prev_src;          /* a velocity job's: the array its previous position comes from */
 } t_r;
 static volatile long long s_r_jobs, s_r_hits, s_r_declined, s_r_kept, s_r_revoked;
 static volatile long long s_rc_jobs, s_rc_vtx, s_rc_pos, s_rc_nt, s_rc_in, s_rc_in_jobs;
+static volatile long long s_v_jobs, s_v_hits, s_v_kept, s_v_declined, s_v_revoked, s_vc_jobs, s_vc_vtx, s_vc_pos, s_vc_nt;
 static void er_report(void)
 {
     fprintf(stderr, "[edge-rigid] %lld unskinned jobs looked up, %lld with a result, %lld kept, %lld declined, "
@@ -416,6 +453,10 @@ static void er_report(void)
             "bytes differing %lld; kept inputs not the job's %lld words in %lld jobs\n",
             s_r_jobs, s_r_hits, s_r_kept, s_r_declined, s_r_revoked, s_rc_jobs, s_rc_vtx, s_rc_pos, s_rc_nt,
             s_rc_in, s_rc_in_jobs);
+    fprintf(stderr, "[edge-vel] %lld velocity jobs looked up, %lld with a result, %lld kept, %lld declined, %lld given up; "
+            "the check: %lld jobs, %lld vertexes, position words differing %lld (this frame's and the previous), "
+            "normal and tangent bytes differing %lld\n",
+            s_v_jobs, s_v_hits, s_v_kept, s_v_declined, s_v_revoked, s_vc_jobs, s_vc_vtx, s_vc_pos, s_vc_nt);
 }
 
 /* the local store's quadword as host words */
@@ -425,7 +466,7 @@ static inline __m128i er_q(const uint8_t* p)
                             _mm_setr_epi8(3, 2, 1, 0, 7, 6, 5, 4, 11, 10, 9, 8, 15, 14, 13, 12));
 }
 
-static inline uint32_t er_need(void) { return t_m.lit ? 7u : 1u; }
+static inline uint32_t er_need(void) { return t_m.vel ? 15u : t_m.lit ? 7u : 1u; }
 
 static int er_bufs(void)
 {
@@ -437,7 +478,7 @@ static int er_bufs(void)
 /* not this way after all: the transforms left out so far run (edge_memo_revoke), the rest on the SPU */
 static void er_decline(spu_context* ctx)
 {
-    __atomic_add_fetch(&s_r_declined, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(t_m.vel ? &s_v_declined : &s_r_declined, 1, __ATOMIC_RELAXED);
     if (t_m.state == 2) edge_memo_revoke(ctx);
     t_m.rigid = 0;
     t_m.state = 0;
@@ -445,14 +486,34 @@ static void er_decline(spu_context* ctx)
 
 /* 0xF538's entry in an unskinned job: which array, the constants for its matrix, and in a job
  * without a result what it reads (it works in place: after it the array holds its output). The
- * function transforms (count + 7) & ~7 vertexes, eight a pass. 0: the job was given up. */
+ * function transforms (count + 7) & ~7 vertexes, eight a pass. 0: the job was given up.
+ * A velocity job's first call makes the previous position out of the position array into another
+ * (r5): it reads what the position's call will, so nothing more is kept for it. */
 static int er_note(spu_context* ctx)
 {
     const uint32_t link = ctx->gpr[0]._u32[0];
-    const int a = link == 0x5850 ? ER_POS : link == 0x5A18 ? ER_NRM : link == 0x5A50 ? ER_TAN : -1;
+    const int a = link == 0x5850 ? ER_POS : link == 0x5A18 ? ER_NRM : link == 0x5A50 ? ER_TAN
+                : link == 0x5C84 && t_m.vel ? ER_PREV : -1;
     const uint32_t count = ctx->gpr[3]._u32[0], src = ctx->gpr[4]._u32[0], n8 = (count + 7u) & ~7u;
     if (a < 0 || (!t_m.lit && a != ER_POS) || !count || n8 > ER_MAX_VTX || (src & 15) ||
         src + 16u * n8 > SPU_LS_SIZE || !er_bufs()) {
+        er_decline(ctx);
+        return 0;
+    }
+    if (a == ER_PREV) {
+        const uint32_t dst = ctx->gpr[5]._u32[0];
+        if ((dst & 15) || dst + 16u * n8 > SPU_LS_SIZE || (t_r.rec->arrays & (1u << ER_POS))) {
+            er_decline(ctx);
+            return 0;
+        }
+        edge_xf_consts(ctx->ls, ctx->gpr[6]._u32[0], t_r.rec->c[ER_PREV]);
+        t_r.rec->arrays |= 1u << ER_PREV;
+        t_r.addr[ER_PREV] = dst;
+        t_r.prev_src = src;
+        t_r.got[ER_PREV] = n8;
+        return 1;
+    }
+    if (t_m.vel && a == ER_POS && (!(t_r.rec->arrays & (1u << ER_PREV)) || src != t_r.prev_src)) {
         er_decline(ctx);
         return 0;
     }
@@ -516,9 +577,13 @@ static void er_check(const uint8_t* src, uint32_t n, uint32_t stride)
     if (t_m.state == 1) for (int a = 0; a < 3; a++) if (((er_need() >> a) & 1u) && t_r.got[a] < m) m = t_r.got[a];
     long long pos = 0, nt = 0;
     for (uint32_t v = 0; v < m; v++) {
-        uint8_t o[24];
+        uint8_t o[ER_VEL_STRIDE];
         const uint8_t* s = src + (size_t)v * stride;
-        if (t_m.lit) {
+        if (t_m.vel) {
+            er_vertex_vel(t_r.rec, in + (size_t)v * is, o);
+            for (int b = 12; b < 24; b++) nt += o[b] != s[b];
+            for (int l = 6; l < 9; l++) pos += memcmp(o + 4 * l, s + 4 * l, 4) != 0;
+        } else if (t_m.lit) {
             er_vertex_lit(t_r.rec, in + (size_t)v * is, o);
             for (int b = 12; b < 24; b++) nt += o[b] != s[b];
         } else {
@@ -526,10 +591,10 @@ static void er_check(const uint8_t* src, uint32_t n, uint32_t stride)
         }
         for (int l = 0; l < 3; l++) pos += memcmp(o + 4 * l, s + 4 * l, 4) != 0;
     }
-    __atomic_add_fetch(&s_rc_jobs, 1, __ATOMIC_RELAXED);
-    __atomic_add_fetch(&s_rc_vtx, (long long)m, __ATOMIC_RELAXED);
-    if (pos) __atomic_add_fetch(&s_rc_pos, pos, __ATOMIC_RELAXED);
-    if (nt) __atomic_add_fetch(&s_rc_nt, nt, __ATOMIC_RELAXED);
+    __atomic_add_fetch(t_m.vel ? &s_vc_jobs : &s_rc_jobs, 1, __ATOMIC_RELAXED);
+    __atomic_add_fetch(t_m.vel ? &s_vc_vtx : &s_rc_vtx, (long long)m, __ATOMIC_RELAXED);
+    if (pos) __atomic_add_fetch(t_m.vel ? &s_vc_pos : &s_rc_pos, pos, __ATOMIC_RELAXED);
+    if (nt) __atomic_add_fetch(t_m.vel ? &s_vc_nt : &s_rc_nt, nt, __ATOMIC_RELAXED);
 }
 
 /* the backend's way when a draw does not go through the pass; on its own thread, so under the SPU's
@@ -539,8 +604,10 @@ static void er_fill(const rsx_kept* k, const void* part, uint8_t* ring, uint32_t
     const unsigned csr = _mm_getcsr();
     _mm_setcsr(csr | 0xE040u);
     const uint8_t* in = (const uint8_t*)k->verts;
+    const int vel = (((const er_rec*)part)->flags & ER_VEL) != 0;
     for (uint32_t v = 0; v < n; v++, in += k->rec) {
-        if (k->rec == ER_IN_LIT) er_vertex_lit((const er_rec*)part, in, ring + (size_t)v * k->stride);
+        if (vel) er_vertex_vel((const er_rec*)part, in, ring + (size_t)v * k->stride);
+        else if (k->rec == ER_IN_LIT) er_vertex_lit((const er_rec*)part, in, ring + (size_t)v * k->stride);
         else er_vertex_pos((const er_rec*)part, in, ring + (size_t)v * k->stride);
     }
     _mm_setcsr(csr);
@@ -655,8 +722,10 @@ void edge_memo_job(void)
     t_m.state = 0;
     t_m.skin = 0;
     t_m.rigid = 0;
+    t_m.vel = 0;
     if (t_r.rec) t_r.rec->arrays = t_r.rec->flags = 0;
-    t_r.got[0] = t_r.got[1] = t_r.got[2] = 0;
+    t_r.got[0] = t_r.got[1] = t_r.got[2] = t_r.got[3] = 0;
+    t_r.prev_src = 0;
     t_m.ring = 0;
     t_k.taken = 0;
     t_m.ncalls = 0;
@@ -674,23 +743,27 @@ void gowa_edge_memo_9a40(spu_context* ctx)
     if (ej_read(ctx, &v, ej_be32_at(ctx->ls + 0x106B0)) || (v.skinned && !memo_skin_mode())) return;
     if (v.kind == EJ_LIT || v.kind == EJ_LIT_SKIN) {
         if (!edge_gpul_lean_on() || !edge_cull_left_out()) return;
+    } else if (v.kind == EJ_VEL) {
+        if (!memo_vel_mode() || !edge_cull_left_out()) return;
     } else if (v.kind != EJ_POS && v.kind != EJ_POS_SKIN) {
         return;
     }
-    t_m.lit = v.kind == EJ_LIT || v.kind == EJ_LIT_SKIN;
+    t_m.vel = v.kind == EJ_VEL;
+    t_m.lit = v.kind == EJ_LIT || v.kind == EJ_LIT_SKIN || t_m.vel;
     t_m.skin = v.skinned;
     t_m.nverts = v.nverts;
     t_m.nidx = v.nidx;
-    /* more lights than the stage's record takes: it will run on the SPU */
-    if (t_m.lit && ej_be32_at(ctx->ls + v.slot_lsa[0] + 0x20) > 32) return;
+    /* more lights than the stage's record takes: it will run on the SPU (a velocity job lights nothing) */
+    if (t_m.lit && !t_m.vel && ej_be32_at(ctx->ls + v.slot_lsa[0] + 0x20) > 32) return;
     const uint8_t* ls = ctx->ls;
     /* a skinned job: the weights too, not the matrix, which goes with the palette. An unskinned one
      * with its transforms left to the pass: neither (GOWA_EDGE_RIGID), and a word that keeps its
      * results apart from the others' */
     static const int slots_plain[7] = { 4, 5, 11, 13, 14, 16, 18 }, slots_skin[7] = { 4, 5, 11, 13, 14, 16, 10 };
     static const int slots_rigid[5] = { 5, 11, 13, 14, 16 };
-    const int rmode = v.skinned ? 0 : memo_rigid_mode();
+    const int rmode = v.skinned ? 0 : t_m.vel ? memo_vel_mode() : memo_rigid_mode();
     t_m.rigid = rmode && edge_cull_left_out();
+    if (t_m.vel && !t_m.rigid) { t_m.vel = t_m.lit = 0; return; }
     const int* const slots = t_m.rigid ? slots_rigid : v.skinned ? slots_skin : slots_plain;
     const unsigned nslots = t_m.rigid ? 5u : 7u;
     static const uint8_t words[] = { 14, 18, 19, 24, 25, 26, 27, 32, 33, 35, 36, 37, 38 };
@@ -703,7 +776,7 @@ void gowa_edge_memo_9a40(spu_context* ctx)
         w[n++] = v.desc[34] >> 16;
         w[n++] = v.out_piece; w[n++] = v.in_piece; w[n++] = v.meth_piece;
         for (unsigned i = 0; i < nslots; i++) w[n++] = v.slot_size[slots[i]];
-        if (t_m.rigid) w[n++] = 0x52494744u;
+        if (t_m.rigid) w[n++] = t_m.vel ? 0x56454C4Fu : 0x52494744u;
         memo_h_bytes(&h, (const uint8_t*)w, (uint32_t)n * 4u);
     }
     for (unsigned i = 0; i < nslots; i++)
@@ -720,8 +793,8 @@ void gowa_edge_memo_9a40(spu_context* ctx)
     if (t_m.rigid) {
         static int rstats = -1;
         if (rstats < 0) { rstats = stats; if (rstats) atexit(er_report); }
-        const long long rj = __atomic_add_fetch(&s_r_jobs, 1, __ATOMIC_RELAXED);
-        if (t_m.e) __atomic_add_fetch(&s_r_hits, 1, __ATOMIC_RELAXED);
+        const long long rj = __atomic_add_fetch(t_m.vel ? &s_v_jobs : &s_r_jobs, 1, __ATOMIC_RELAXED);
+        if (t_m.e) __atomic_add_fetch(t_m.vel ? &s_v_hits : &s_r_hits, 1, __ATOMIC_RELAXED);
         if (rstats && !(rj & 0xFFFF)) er_report();
     }
     if (stats && !(s_jobs & 0xFFFF)) memo_report();
@@ -822,7 +895,7 @@ int edge_memo_skip_decode(void) { return t_m.state == 2 && t_m.skin; }
 const void* edge_memo_skin_part(uint32_t* bytes)
 {
     if (t_m.state == 2 && t_m.rigid && t_r.rec && (t_r.rec->arrays & er_need()) == er_need()) {
-        t_r.rec->flags |= ER_RIGID;
+        t_r.rec->flags |= ER_RIGID | (t_m.vel ? ER_VEL : 0u);
         *bytes = ER_REC_BYTES;
         return t_r.rec;
     }
@@ -837,7 +910,8 @@ void edge_memo_publish(uint32_t vio, uint32_t nverts)
     if (!memo_resident_mode()) return;
     const int kept = edge_memo_resident();
     if (kept) ((rsx_kept*)&t_m.e->kb)->put_verts = nverts;
-    if (kept && (t_m.skin || t_m.rigid) && !t_m.lit) {   /* a position's record: no lights, the palette or the transform */
+    /* a position's or a velocity job's record: no lights, the palette or the transforms */
+    if (kept && (t_m.skin || t_m.rigid) && (!t_m.lit || t_m.vel)) {
         static const uint8_t none[32];
         uint32_t pb = 0;
         const void* part = edge_memo_skin_part(&pb);
@@ -849,7 +923,8 @@ void edge_memo_publish(uint32_t vio, uint32_t nverts)
 void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_t rec)
 {
     if (t_m.skin && memo_skin_mode() == 2) { ek_check(src, n, stride); t_m.state = 0; return; }
-    if (t_m.rigid && (t_m.state == 1 || t_m.state == 3) && memo_rigid_mode() == 2) er_check(src, n, stride);
+    if (t_m.rigid && (t_m.state == 1 || t_m.state == 3) && (t_m.vel ? memo_vel_mode() : memo_rigid_mode()) == 2)
+        er_check(src, n, stride);
     if (t_m.rigid && t_m.state == 3) { t_m.state = 0; return; }
     if (t_m.state == 3) {
         const uint8_t* d = memo_records(t_m.e);
@@ -887,8 +962,9 @@ void edge_memo_vtx_note(const uint8_t* src, uint32_t n, uint32_t stride, uint32_
         int ok = t_r.rec && (t_r.rec->arrays & need) == need;
         for (int a = 0; ok && a < 3; a++) if (((need >> a) & 1u) && t_r.got[a] < n) ok = 0;
         if (ok) {
-            memo_keep(t_m.k0, t_m.k1, t_m.idx, t_m.idx_bytes, t_r.in, n, in, in, NULL, 0, src, stride, ER_RIGID);
-            __atomic_add_fetch(&s_r_kept, 1, __ATOMIC_RELAXED);
+            memo_keep(t_m.k0, t_m.k1, t_m.idx, t_m.idx_bytes, t_r.in, n, in, in, NULL, 0, src, stride,
+                      ER_RIGID | (t_m.vel ? ER_VEL : 0u));
+            __atomic_add_fetch(t_m.vel ? &s_v_kept : &s_r_kept, 1, __ATOMIC_RELAXED);
         }
         return;
     }
@@ -913,7 +989,7 @@ void edge_memo_revoke(spu_context* ctx)
      * still what it reads, and the calls left out run below */
     const int rigid = t_m.rigid;
     t_m.rigid = 0;
-    if (rigid) __atomic_add_fetch(&s_r_revoked, 1, __ATOMIC_RELAXED);
+    if (rigid) __atomic_add_fetch(t_m.vel ? &s_v_revoked : &s_r_revoked, 1, __ATOMIC_RELAXED);
     if (skin && t_k.taken && t_k.pa && (!t_m.lit || (t_k.na && t_k.ta))) {   /* the arrays as the input piece left them */
         const uint8_t* in = memo_records(t_m.e);
         uint8_t* const ls = ctx->ls;
@@ -974,6 +1050,13 @@ void edge_memo_revoke_lit(spu_context* ctx)
     if (t_m.lit) edge_memo_revoke(ctx);
 }
 
+/* A velocity job the memo follows: it has no lighting stage, and its packing's bytes but the first 16
+ * stay out of the ring when it has a result. */
+int edge_memo_vel(void) { return t_m.vel && t_m.rigid; }
+
+/* the output stage: a velocity job's block can stay out of the ring */
+int edge_memo_vel_kept(uint32_t stride) { return t_m.vel && t_m.rigid && stride == ER_VEL_STRIDE; }
+
 #else
 void edge_memo_job(void) { }
 void gowa_edge_memo_9a40(spu_context* ctx) { (void)ctx; }
@@ -995,4 +1078,6 @@ const void* edge_memo_skin_part(uint32_t* bytes) { (void)bytes; return NULL; }
 int edge_memo_skin_e550(spu_context* ctx) { (void)ctx; return 0; }
 void edge_memo_skin_bbc8(spu_context* ctx) { (void)ctx; }
 int edge_memo_rigid_bbc8(spu_context* ctx) { (void)ctx; return 0; }
+int edge_memo_vel(void) { return 0; }
+int edge_memo_vel_kept(uint32_t stride) { (void)stride; return 0; }
 #endif

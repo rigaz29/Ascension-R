@@ -2149,6 +2149,23 @@ FSR's motion):
   - The gate: 40.1 -> 44.3 flips/s (+10%). The fight: within its spread.
 - **Next.** Rigid hits without unpacking (~4% of EDGE), slot 4 out of K's key, then A, the velocity jobs.
 
+### 2.39 Update, 2026-11-11: A, the velocity jobs kept
+
+[The note](2026-11-11-edge-velocity.md):
+- **What.** `GOWA_EDGE_VEL`, on by default. A velocity job is a lit one that also makes the previous frame's position,
+  from slot 19's matrix, into 36-byte vertexes. An unskinned one now goes B's way:
+  - its key leaves out both matrices;
+  - the vertex pass does its four transforms and the packing;
+  - the output piece is left out of a kept one.
+- **Exact.** The CPU's version against the SPU's: 393 million vertexes the same. The GPU's against the CPU's: the
+  positions bit for bit; normals within 6 units, tangents within 1.
+- **Results.**
+  - 95-96% of velocity jobs kept.
+  - A velocity job 63.5 -> 46.2 µs.
+  - The fight: 26.7 -> 30.5 flips/s and EDGE 120 -> 95 ms a flip, from runs not ordered against each other.
+- **Next.** The skinned velocity jobs (8% of EDGE's job time), kept jobs without unpacking, a velocity job's
+  binormals.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |

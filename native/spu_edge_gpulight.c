@@ -214,10 +214,14 @@ static void eg_binorm_late(spu_context* ctx)
     memcpy(ctx->gpr, regs, sizeof regs);
 }
 
-/* the output stage native, before the packing: a job with no stage skipped has its binormals */
+/* the output stage native, before the packing: a job with no stage skipped has its binormals. A
+ * velocity job has no stage: its result needs none of it (edge_memo_vel). */
 void edge_gpul_binorm_now(spu_context* ctx)
 {
-    if (t_eg.state != 2) { edge_memo_revoke_lit(ctx); eg_binorm_late(ctx); }
+    if (t_eg.state != 2) {
+        if (!edge_memo_vel()) edge_memo_revoke_lit(ctx);
+        eg_binorm_late(ctx);
+    }
 }
 
 /* spu_edge_memo.c: the stage is skipped in this run, and the bytes it leaves are the pass's */
@@ -688,7 +692,9 @@ static const char s_eg_hlsl[] =
     /* An unskinned block's (GOWA_EDGE_RIGID, er_xf in spu_edge_gpuskin.c): 0xF538, lane l of the
      * result fma(v[l+3], c3[l], fma(v[l+2], c2[l], fma(v[l+1], c1[l], v[l] * c0[l]))), the lanes mod
      * 4, with array k's four constant vectors at the part's 16 + 64 k. The position the SPU's way;
-     * the normal and the tangent with the GPU's own rounding, as a skinned block's. */
+     * the normal and the tangent with the GPU's own rounding, as a skinned block's. A velocity job's
+     * (ER_VEL, 0x200, a position block's path): 36 bytes a vertex, a lit vertex's first 24 and the
+     * previous frame's position from array 3 (er_vertex_vel). */
     "float3 rigid_pos(float4 p, uint rk) {\n"
     "    uint pv[4] = { asuint(p.x), asuint(p.y), asuint(p.z), asuint(p.w) };\n"
     "    uint o[3] = { 0u, 0u, 0u };\n"
@@ -748,7 +754,23 @@ static const char s_eg_hlsl[] =
     "    }\n"
     "    if ((sk & 1u) != 0u) {\n"
     "        sk &= ~1u;\n"
-    "        bool rg = (vtab.Load(sk) & 0x100u) != 0u;\n"
+    "        uint fv = vtab.Load(sk);\n"
+    "        if ((fv & 0x200u) != 0u) {\n"
+    "            for (uint v = ti; v < nv; v += 64u) {\n"
+    "                uint w[27]; uint k;\n"
+    "                [unroll] for (k = 0u; k < 27u; k++) w[k] = 0u;\n"
+    "                uint a = sv + v * 48u;\n"
+    "                rigid_vertex(w, 0u, a, sk, fv);\n"
+    "                float3 Q = rigid_pos(asfloat(vsrc.Load4(a)), sk + 192u);\n"
+    "                wr32(w, 24u, asuint(Q.x)); wr32(w, 28u, asuint(Q.y)); wr32(w, 32u, asuint(Q.z));\n"
+    "                uint b = dh + data + v * 36u;\n"
+    "                vdst.Store4(b, uint4(w[0], w[1], w[2], w[3]));\n"
+    "                vdst.Store4(b + 16u, uint4(w[4], w[5], w[6], w[7]));\n"
+    "                vdst.Store(b + 32u, w[8]);\n"
+    "            }\n"
+    "            return;\n"
+    "        }\n"
+    "        bool rg = (fv & 0x100u) != 0u;\n"
     "        for (uint v = ti; v < nv; v += 64u) {\n"
     "            float3 P;\n"
     "            if (rg) {\n"

@@ -421,7 +421,66 @@ int gowa_edge_pos_765b70(spu_context* ctx)
     return 0;
 }
 
+/*
+ * The velocity output (GOWA_EDGE_VEL, spu_edge_memo.c): the piece of EA 0x75F580 (lifted as
+ * pic_0075F580, entry 0x30; called from 0xD1E0 as the others), r4 the vertex count, r5 the output, 36
+ * bytes a vertex: a lit vertex's first 24 and the previous frame's position. In a job the memo
+ * follows:
+ *  - with a result its arrays were not made (0xF538 left out), and nothing it would pack is read: it
+ *    does not run, the ring gets the result's first 16 bytes, the block's tag, and the vertex pass the
+ *    rest. The lifted piece stores to its output alone (the whole local store compared around 1 in 500
+ *    of the calls: docs/notes/2026-11-11-edge-velocity.md), touches no register above r79 nor the
+ *    stack, and returns r3 = 0;
+ *  - else it runs lifted, the arrays made first if a result was given up here, and what it packs is
+ *    noted.
+ */
+#include "spu_edge_gpuskin.h"
+extern void pic_0075F580_spu_func_00030030(spu_context* ctx);
+static SPU_THREAD_LOCAL spu_context* t_c9_guard;
+static volatile long long s_c9_calls, s_c9_kept;
+
+static void c9_stats(void)
+{
+    fprintf(stderr, "[edge-native] velocity output 75F580: %lld calls, %lld of them a kept result's\n", s_c9_calls, s_c9_kept);
+}
+
+int gowa_edge_vel_75f580(spu_context* ctx)
+{
+    if (t_c9_guard == ctx || !edge_memo_vel()) return 0;
+    static int stats = -1;
+    if (stats < 0) { stats = getenv("GOWA_EDGE_NATIVE_STATS") != NULL; if (stats) atexit(c9_stats); }
+    uint8_t* ls = ctx->ls;
+    const uint32_t n = ctx->gpr[4]._u32[0], out = ctx->gpr[5]._u32[0];
+    if (!n || n > 0x4000 || (out & 15) || out + ER_VEL_STRIDE * n + 16u > SPU_LS_SIZE) {
+        edge_memo_revoke(ctx);
+        return 0;
+    }
+    const uint8_t* kept = edge_memo_vtx(n, ER_VEL_STRIDE);
+    if (kept && !edge_memo_resident()) kept = NULL;
+    if (kept) {
+        /* nothing it would pack is read: the ring gets the tag, the vertex pass the vertexes. The piece
+         * stores to its output alone, touches no register above r79 nor the stack, and returns r3 = 0 */
+        memcpy(ls + out, kept, 16);
+        for (int k = 0; k < 4; k++) ctx->gpr[3]._u32[k] = 0;
+        __atomic_add_fetch(&s_c9_calls, 1, __ATOMIC_RELAXED);
+        __atomic_add_fetch(&s_c9_kept, 1, __ATOMIC_RELAXED);
+        return 1;
+    }
+    edge_memo_revoke(ctx);
+    const uint32_t link = ctx->gpr[0]._u32[0];
+    t_c9_guard = ctx;
+    ctx->host_depth++;
+    pic_0075F580_spu_func_00030030(ctx);
+    spu_drain_call(ctx, link);
+    ctx->host_depth--;
+    t_c9_guard = NULL;
+    __atomic_add_fetch(&s_c9_calls, 1, __ATOMIC_RELAXED);
+    edge_memo_vtx_note(ls + out, n, ER_VEL_STRIDE, ER_VEL_STRIDE);
+    return 1;
+}
+
 #else
 int gowa_edge_cmp_755b80(spu_context* ctx) { (void)ctx; return 0; }
 int gowa_edge_pos_765b70(spu_context* ctx) { (void)ctx; return 0; }
+int gowa_edge_vel_75f580(spu_context* ctx) { (void)ctx; return 0; }
 #endif
