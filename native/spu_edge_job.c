@@ -135,3 +135,17 @@ int gowa_edge_job_ad98(spu_context* ctx)
     if (stats && !(n & 0xFFFF)) ej_stats();
     return 0;    /* not yet: the lifted job runs */
 }
+
+/* The other build of EDGE's geometry job (job module 9b03908f93a9, entry 0xB7C8), which the Grotto
+ * runs: it calls the same position-independent pieces, whose native code takes and gives the memo's
+ * state (spu_edge_memo.c), but none of the hooks above is in it, so a job of it started with what the
+ * last e6D98 job on its thread had left there. A kept result's calls left out then ran inside it,
+ * e6D98's code on this job's local store, and the piece returned to e6D98's address: callee-saved
+ * registers back from the vertex piece's frame, and the job's branch to nowhere or its broken
+ * command buffer (issue #7, docs/notes/2026-11-12-grotto-freeze.md). It starts with none, as the
+ * other build's jobs do. */
+void gowa_edge_job_b7c8(spu_context* ctx)
+{
+    (void)ctx;
+    edge_memo_job();
+}

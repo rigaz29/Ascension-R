@@ -978,9 +978,29 @@ extern void edge_vtx_unpack_late(spu_context* ctx, const uint8_t* stream, const 
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000F538(spu_context* ctx);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000E550(spu_context* ctx);
 extern void jobmod_e8f44fbc6dbf_e6D98_spu_func_0000BBC8(spu_context* ctx);
+/* The job module at LS 0x4000, by its header's entry offset at 0x4010: e6D98's is 0x6D98 (the Grotto's
+ * other build of the job, e77C8, has 0x77C8). */
+static uint32_t memo_job_entry(const spu_context* ctx)
+{
+    const uint8_t* h = ctx->ls + 0x4010;
+    return (uint32_t)h[0] << 24 | (uint32_t)h[1] << 16 | (uint32_t)h[2] << 8 | h[3];
+}
+
 void edge_memo_revoke(spu_context* ctx)
 {
     if (t_m.state != 2) return;
+    /* The calls left out are e6D98's, and run below by name: never in a job of another module, whose
+     * local store they would write as e6D98's and whose return they would take (issue #7). e77C8's
+     * jobs start with no state now (gowa_edge_job_b7c8); a job that still finds some drops it. */
+    const uint32_t entry = memo_job_entry(ctx);
+    if (entry != 0x6D98u) {
+        static volatile long s_n;
+        if (__atomic_add_fetch(&s_n, 1, __ATOMIC_RELAXED) <= 4)
+            fprintf(stderr, "[edge-memo] a job of the module with entry 0x%X had a kept result's state: dropped, "
+                    "its calls left out not run\n", entry);
+        edge_memo_job();
+        return;
+    }
     t_m.state = 0;
     __atomic_add_fetch(&s_revoked, 1, __ATOMIC_RELAXED);
     const int skin = t_m.skin;
