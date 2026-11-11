@@ -150,3 +150,7 @@ status table. README.md points at the releases page now.
   that is not there.
 - **Not done:** the zip unpacked and played as a player has it. Its DLL is the one alpha.4's run of that played; its
   exe is new.
+- **Published** the same day as `v0.1.0-alpha.5`, a pre-release, the tag at the version's commit (`800226d`): alpha.4's
+  draft renamed, its zip and audit.txt replaced (FFmpeg's source is the same file), its notes alpha.4's with the
+  freeze's fix, the controller lines, one pad tried in the status table and issue #7 under Known issues. GitHub's
+  SHA-256 of the zip and of audit.txt are the ones here. Issue #6 got the link.
