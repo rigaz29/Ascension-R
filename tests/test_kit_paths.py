@@ -39,6 +39,12 @@ class Shown(unittest.TestCase):
         for name in work + ["elf", "WORK", "ANALYSIS", "RECOMPILED"]:
             self.assertNotIn("os.path.relpath(%s, ROOT)" % name, src, name)
 
+    def test_the_bench_names_an_exe_on_another_drive(self):
+        """bench.py records the exe it ran: one unpacked on D: stopped it too."""
+        src = (ROOT / "scripts" / "bench.py").read_text(encoding="utf-8")
+        self.assertNotIn("os.path.relpath(exe, ROOT)", src)
+        self.assertNotIn("os.path.relpath(out, ROOT)", src)
+
 
 if __name__ == "__main__":
     unittest.main()

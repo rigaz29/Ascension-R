@@ -66,6 +66,14 @@ import time
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BUILD = os.path.join(ROOT, "build")
 
+
+def rel(path):
+    """path relative to the tree, or as it is on another drive, where os.path.relpath raises (an exe run from D:)."""
+    try:
+        return os.path.relpath(path, ROOT)
+    except ValueError:
+        return path
+
 CROSS, SQUARE, DOWN = 0x4000, 0x8000, 0x0040
 MENU = (6, 12, 18)                  # Cross: Single Player, Profile 1, Continue Game (s after the movie)
 LOADING = b"SaveDataUtil::LoadFileSaveProfile"   # the thread Continue Game starts
@@ -228,7 +236,7 @@ TABLE_RE = re.compile(r"^\[threads\]\s+([\d.]+)%\s+(.+?)\s+x(\d+)\s*$")
 
 def run_once(exe, env_extra, a, out, tag):
     """Start exe, drive it to the level, measure, stop. Returns the run's record."""
-    rec = {"tag": tag, "exe": os.path.relpath(exe, ROOT), "env": env_extra}
+    rec = {"tag": tag, "exe": rel(exe), "env": env_extra}
     image = os.path.basename(exe)
     for _ in range(600):
         if not running(image):
@@ -545,7 +553,7 @@ def main(a):
               "anchor": "movie" if a.route and not a.replay else "load",
               "from": a.win_from, "until": a.until, "runs": []}
     for name, exe, env in variants:
-        result.setdefault("exes", {})[name] = {"path": os.path.relpath(exe, ROOT), "sha256": sha12(exe)}
+        result.setdefault("exes", {})[name] = {"path": rel(exe), "sha256": sha12(exe)}
     for i in range(a.runs):
         # ABBA: every second round in reverse, so neither a variant's place in a
         # round nor a slow drift of the machine (heat, background work) favours one.
@@ -607,5 +615,5 @@ def main(a):
             result["baseline"] = {"file": a.baseline, "median": m0}
     with open(os.path.join(out, "result.json"), "w") as f:
         json.dump(result, f, indent=1)
-    print("results: " + os.path.relpath(out, ROOT))
+    print("results: " + rel(out))
     return 0
