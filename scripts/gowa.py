@@ -14,6 +14,7 @@
     python scripts/gowa.py kit-build --out DIR     the Kit's build on a player's PC (the launcher runs it)
     python scripts/gowa.py run                     start the port, log to logs/
     python scripts/gowa.py run --trace             the same, with an ftrace of the session (stutter)
+    python scripts/gowa.py text export|build       the game's text for a translator; a translation -> build/mods/
 
 The program that is ported is USRDIR/GOWA.SELF. The title's EBOOT.BIN is a
 launcher of a few KB that starts GOWA.SELF; the port starts GOWA.SELF itself.
@@ -44,6 +45,7 @@ import zipfile
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import bench  # noqa: E402  (scripts/bench.py)
 import frames  # noqa: E402  (scripts/frames.py)
+import gametext  # noqa: E402  (scripts/gametext.py)
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PS3RECOMP = os.path.join(ROOT, "ps3recomp")
@@ -2038,9 +2040,10 @@ KIT_PYTHON_PTH = "python314._pth"
 # The ps3recomp tools the Kit's build starts. With what they import and start, they are the tools in the Kit.
 KIT_TOOLS = ("ppu_loader.py", "extract_spu_images.py", "wrap_spu_elf.py", "spu_lifter.py", "lift_jobmods.py",
              "lift_spu_pic.py", "ppu_lifter.py", "build_spu_workloads.py")
-# What of scripts/ the build reads: this script, its two modules, the routines' writer and the lists of the lift.
-KIT_SCRIPTS = ("gowa.py", "bench.py", "frames.py", "spu_to_native.py", "jobmods_extra.json", "ppu_hooks.json",
-               "spu_g6_routines.json", "spu_native_hooks.json", "spu_pic_pieces.json", "title_patches.json")
+# What of scripts/ the build reads: this script, its three modules, the routines' writer and the lists of the lift.
+KIT_SCRIPTS = ("gowa.py", "bench.py", "frames.py", "gametext.py", "spu_to_native.py", "jobmods_extra.json",
+               "ppu_hooks.json", "spu_g6_routines.json", "spu_native_hooks.json", "spu_pic_pieces.json",
+               "title_patches.json")
 # Never in the Kit, whatever names them: what decrypts.
 KIT_NEVER = {"sdata_decrypt.h", "edat.c", "edat.h", "pkg_extract.py", "extract_jobmods.py", "check_repo.py"}
 KIT_ID = "kit-id.txt"
@@ -2837,6 +2840,9 @@ def main():
                         "0x3E000-0x3F780, the frames below the job's main frame)")
     p = sub.add_parser("frames", help="frame report of a PS3_FTRACE trace (workloads, waits, the RSX, a grid)")
     frames.add_args(p)
+    p = sub.add_parser("text", help="the game's text: export it for a translator, build a translation into a mod "
+                                    "folder")
+    gametext.add_args(p)
     p = sub.add_parser("module", help="the game's DLL with clang-cl and lld-link alone, as the Kit builds it")
     p.add_argument("--out", help="where (default build-module/ in the work folder)")
     p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
@@ -2859,7 +2865,7 @@ def main():
     return {"doctor": cmd_doctor, "setup": cmd_setup, "game-files": cmd_game_files, "analyze": cmd_analyze,
             "lift": cmd_lift, "patches": cmd_patches, "build": cmd_build,
             "run": cmd_run, "jobmods-entries": cmd_jobmods_entries, "missed": cmd_missed, "symbolize": cmd_symbolize,
-            "bench": bench.main, "frames": frames.main, "replay": cmd_replay,
+            "bench": bench.main, "frames": frames.main, "text": gametext.main, "replay": cmd_replay,
             "ffmpeg": cmd_ffmpeg, "package": cmd_package, "module": cmd_module, "kit-tree": cmd_kit_tree,
             "kit-build": cmd_kit_build}[args.cmd](args)
 

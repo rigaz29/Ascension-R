@@ -130,4 +130,6 @@ damage, its meters and its jump ([note](notes/2026-11-07-cheats.md)).
 place of the game's, or added where the game has none, and the game's folder is left as it is. Empty, the default, means no
 mod folder. The log names each file taken from it (`[fs] mod`). The game's text, subtitles included, is plain UTF-8 inside its
 archives, so a translation can go in as a seventh update: `TPPS6.PSARC` with the text patches, and `PATCHES`
-holding `6` ([note](notes/2026-11-11-game-text.md)).
+holding `6` ([note](notes/2026-11-11-game-text.md)). From a build tree, `gowa.py text export [--part story]` writes the
+English text into `build\text\`, a line for each line of text, and `gowa.py text build <translation files>` checks a
+translation and writes that update into `build\mods\`, for `paths.mods`. The game's folder is only read.
