@@ -81,8 +81,30 @@ and RPCS3 then showed 1.12, but the folder still had no `PATCHES` and no TPPS1 t
   8,643.5 KiB.
 
 So 1.12's PKG is its EBOOT alone. The archives and `PATCHES` come with the updates before it, each with files of its
-own, and every one has to be installed, in order. Which update brings which archive was not checked: the PS3's update
-list could not be read from here.
+own, and every one has to be installed, in order.
+
+**Which update brings what.** The PS3's list for NPUA80918 has nine updates, 1.04 to 1.12: 3,145,826,976 bytes in all,
+2.93 GiB. Their sizes are from the server's headers, and nothing was downloaded. "The EBOOT" is EBOOT.BIN, GOWA.SELF,
+PARAM.SFO, ICON0.PNG and PS3LOGO.DAT, 8,850,941 bytes here. The files are matched by when the update was installed
+here.
+
+| update | package, bytes | its files here | the rest |
+|---|---|---|---|
+| 1.04 | 235,061,456 | `TPPS.PSARC`, the four `TPPS-*.PSARC`, `TLOUCOUNTDOWN.SELF`, `TROPDIR/NPWR00802_00/TROPHY.TRP` | the EBOOT + 1,013 |
+| 1.05 | 8,851,344 | | the EBOOT + 403 |
+| 1.06 | 653,674,688 | `TPPS1.PSARC` | the EBOOT + 661 |
+| 1.07 | 8,851,472 | | the EBOOT + 531 |
+| 1.08 | 654,462,928 | `TPPS2.PSARC` and the four `TPPS2-*` | 8,721,068 |
+| 1.09 | 950,015,600 | `TPPS3.PSARC` and the four `TPPS3-*` | the EBOOT + 1,236 |
+| 1.10 | 331,612,128 | `TPPS4.PSARC` and the four `TPPS4-*` | the EBOOT + 1,218 |
+| 1.11 | 294,445,616 | `TPPS5.PSARC`; `PATCHES` too, going by its `5` | the EBOOT + 941 |
+| 1.12 | 8,851,744 | | the EBOOT + 803 |
+
+- **"The rest"** is a package's size less its files here.
+- **What a package takes beyond its files** is about a kilobyte: its header and file table.
+- **1.08's rest** is 130 KB smaller than the EBOOT. What it holds was not looked at, since the package's file table is
+  encrypted.
+- **Every package brings an EBOOT and a PARAM.SFO**, so the last one installed sets the version the folder has.
 
 ## Verification
 

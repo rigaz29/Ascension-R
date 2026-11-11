@@ -1515,8 +1515,8 @@ static void game_open_failed(const char* gpath, const char* hpath)
                  L"The game cannot start: its folder has no %hs, or it could not be read.\n\n%hs\n\n%ls",
                  gpath + k, host,
                  game_file_update(gpath + k)
-                     ? L"That file comes with one of the game's updates, and 1.12's own is the EBOOT alone. Install "
-                       L"every update up to 1.12 in RPCS3, in order, and pick the game's folder in the launcher's "
+                     ? L"That file comes with one of the game's updates. Install the updates 1.04 to 1.12 in RPCS3, "
+                       L"in that order (1.12's own is the EBOOT alone), and pick the game's folder in the launcher's "
                        L"System tab."
                      : L"It needs the whole game, as RPCS3 or the game's PKG installs it. Pick that folder in the "
                        L"launcher's System tab.");

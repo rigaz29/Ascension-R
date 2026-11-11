@@ -33,7 +33,7 @@ is drawn with Direct3D 12, so no emulator runs while you play.
 It boots, plays the cinematics and goes through the menus into the levels. It has not been played from start to finish, so expect
 problems further in.
 
-- **Game:** God of War: Ascension, digital US release, NPUA80918, version 1.12.
+- **Game:** God of War: Ascension, digital US release, NPUA80918, version 1.12: the game and its updates 1.04 to 1.12.
 - **Platform:** Windows 10 or 11, 64-bit. Tested on Windows 11.
 - **Speed:** above 30 frames a second in the two scenes measured, a fight of the first level and the gate, on a Ryzen 5 4600H with
   a GTX 1650 Ti and the Smooth preset.
@@ -64,13 +64,17 @@ The [releases page](https://github.com/rigaz29/Ascension-R/releases) has the Kit
 Its launcher finds your copy of the game, decrypts it with RPCS3 and builds the game's code on your PC, once, in about ten minutes.
 There is nothing else to install: the Kit brings its own Python and LLVM. Each release's notes have the steps.
 
+Your copy needs all nine of the game's updates, 1.04 to 1.12, installed in RPCS3 in that order. Each brings its own files:
+1.12's is the EBOOT alone, and the archives come with the ones before it. With 1.12 alone the game stops on its first
+loading screen.
+
 ## What you need
 
 To build it from source:
 
 - Windows 10 or 11, 64-bit.
 - A CPU with AVX2 and FMA, and a GPU with Direct3D 12.
-- The game, installed in RPCS3 with its license.
+- The game, installed in RPCS3 with its license, and its updates 1.04 to 1.12, installed in that order.
 - Python 3.10 or later, Git, CMake, Ninja, Visual Studio with "C++ Clang Compiler for Windows", a Windows SDK, and about 20 GB free.
 - For the game's movies: an LGPL shared build of FFmpeg with its headers, unpacked under `..\ffmpeg`, for example
   `win64-lgpl-shared` from [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds/releases).

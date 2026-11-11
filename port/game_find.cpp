@@ -238,17 +238,17 @@ static void bytes_text(unsigned long long b, wchar_t* out, size_t n)
     else swprintf(out, n, L"%llu bytes", b);
 }
 
-/* What to install: every update, in order, when only the updates' files are at fault, else the game again. 1.12's
- * own PKG is its EBOOT alone: installing it again brings no archive (issue #2). A line of the System tab holds about a
- * hundred characters. */
+/* What to install: the updates 1.04 to 1.12, in that order, when only their files are at fault, else the game again.
+ * Each brings its own files and 1.12's is the EBOOT alone: installing it again brings no archive (issue #2). A line of
+ * the System tab holds about a hundred characters. */
 void game_files_text(const GameInfo* g, wchar_t* out, size_t n)
 {
     const int one = (g->files_missing ? g->files_missing : g->files_wrong) == 1;
     if (!g->base_bad && g->files_missing) {
-        swprintf(out, n, L"Not every update is installed: %d %ls missing, %hs first. Install them all, in order, up to 1.12",
+        swprintf(out, n, L"Not every update is installed: %d %ls missing, %hs first. Install 1.04 to 1.12, in order",
                  g->files_missing, one ? L"file" : L"files", name_shown(g->first_missing));
     } else if (!g->base_bad) {
-        swprintf(out, n, L"Not every update is installed: %d %ls, %hs first. Install them all, in order, up to 1.12",
+        swprintf(out, n, L"Not every update is installed: %d %ls, %hs first. Install 1.04 to 1.12, in order",
                  g->files_wrong, one ? L"file differs" : L"files differ", name_shown(g->first_wrong));
     } else if (g->files_missing) {
         wchar_t size[32];

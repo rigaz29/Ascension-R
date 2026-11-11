@@ -36,8 +36,8 @@ struct GameInfo {
 void game_files_text(const GameInfo* g, wchar_t* out, size_t n);
 
 /* Whether a file of the game's list ("USRDIR/TPPS1.PSARC", either slash, any case) comes with one of the game's
- * updates: the TPPS archives and PATCHES, which names TPPS1 to TPPS5. Each update brings its own files and 1.12's is
- * the EBOOT alone, so they come with the updates before it. */
+ * updates, 1.04 to 1.12: the TPPS archives and PATCHES, which names TPPS1 to TPPS5. Each update brings its own files
+ * and 1.12's is the EBOOT alone, so they come with the updates before it. */
 int game_file_update(const char* path);
 
 /* Whether a file of the game's folder ("USRDIR/GAME.PSARC", either slash, any case) is one the game cannot start
