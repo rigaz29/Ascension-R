@@ -1486,7 +1486,7 @@ static DWORD WINAPI pgo_writer(void*)
  *
  * The title opens USRDIR's three lists of archives and the archives at its
  * start (game_files.inc). Without one it went on and stopped by itself a few
- * seconds later, a black window and nothing said, or, without update 1.12's,
+ * seconds later, a black window and nothing said, or, without the updates',
  * waited on its first loading screen (issue #2). The launcher does not start
  * a game whose folder lacks them (game_probe), but a script, the launcher
  * turned off, or a file gone or locked since can still get here: the log, and
@@ -1515,8 +1515,9 @@ static void game_open_failed(const char* gpath, const char* hpath)
                  L"The game cannot start: its folder has no %hs, or it could not be read.\n\n%hs\n\n%ls",
                  gpath + k, host,
                  game_file_update(gpath + k)
-                     ? L"That file comes with update 1.12. Install the update's PKG again in RPCS3, into the game's "
-                       L"folder, and pick that folder in the launcher's System tab."
+                     ? L"That file comes with one of the game's updates, and 1.12's own is the EBOOT alone. Install "
+                       L"every update up to 1.12 in RPCS3, in order, and pick the game's folder in the launcher's "
+                       L"System tab."
                      : L"It needs the whole game, as RPCS3 or the game's PKG installs it. Pick that folder in the "
                        L"launcher's System tab.");
         MessageBoxW(NULL, m, L"Ascension-R", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);

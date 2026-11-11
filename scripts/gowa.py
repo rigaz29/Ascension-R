@@ -174,7 +174,8 @@ def patch_count(path):
 
 
 def game_file_update(rel):
-    """Whether a file of the list comes with update 1.12 (its TPPS archives and PATCHES), as game_find.cpp tells."""
+    """Whether a file of the list comes with one of the game's updates (the TPPS archives and PATCHES), as
+    game_find.cpp tells. Each update brings its own files; 1.12's is the EBOOT alone."""
     rel = rel.replace("\\", "/").upper()
     return rel.startswith("USRDIR/TPPS") or rel == "USRDIR/PATCHES"
 
@@ -482,8 +483,8 @@ def cmd_doctor(args):
         if s.get("APP_VER") == APP_VER:
             files = read_game_files_inc()
             missing, wrong = game_files_check(VFS_GAME, files)
-            fix = ("install update %s again in RPCS3" % APP_VER if all(map(game_file_update, missing + wrong))
-                   else "install the game again")
+            fix = ("install every update up to %s in RPCS3, in order" % APP_VER
+                   if all(map(game_file_update, missing + wrong)) else "install the game again")
             check("game files", not missing and not wrong,
                   "all %d as %s has them" % (len(files), APP_VER) if not missing and not wrong else
                   "%d not there, %d not as %s has them, %s first: %s" % (len(missing), len(wrong), APP_VER,

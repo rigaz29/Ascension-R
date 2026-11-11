@@ -238,17 +238,18 @@ static void bytes_text(unsigned long long b, wchar_t* out, size_t n)
     else swprintf(out, n, L"%llu bytes", b);
 }
 
-/* What to install again: update 1.12 when only its files are at fault, else the game. A line of the System tab holds
- * about a hundred characters. */
+/* What to install: every update, in order, when only the updates' files are at fault, else the game again. 1.12's
+ * own PKG is its EBOOT alone: installing it again brings no archive (issue #2). A line of the System tab holds about a
+ * hundred characters. */
 void game_files_text(const GameInfo* g, wchar_t* out, size_t n)
 {
     const int one = (g->files_missing ? g->files_missing : g->files_wrong) == 1;
     if (!g->base_bad && g->files_missing) {
-        swprintf(out, n, L"Update 1.12 is incomplete: %d %ls missing, %hs first. Install it again in RPCS3", g->files_missing,
-                 one ? L"file" : L"files", name_shown(g->first_missing));
+        swprintf(out, n, L"Not every update is installed: %d %ls missing, %hs first. Install them all, in order, up to 1.12",
+                 g->files_missing, one ? L"file" : L"files", name_shown(g->first_missing));
     } else if (!g->base_bad) {
-        swprintf(out, n, L"Update 1.12 is incomplete: %d %ls not as 1.12 has %ls, %hs first. Install it again in RPCS3",
-                 g->files_wrong, one ? L"file is" : L"files are", one ? L"it" : L"them", name_shown(g->first_wrong));
+        swprintf(out, n, L"Not every update is installed: %d %ls, %hs first. Install them all, in order, up to 1.12",
+                 g->files_wrong, one ? L"file differs" : L"files differ", name_shown(g->first_wrong));
     } else if (g->files_missing) {
         wchar_t size[32];
         bytes_text(g->bytes_missing, size, sizeof size / sizeof size[0]);

@@ -263,7 +263,8 @@ class GameFind(unittest.TestCase):
         out = self.run_t("files", self.p("g"))
         self.assertEqual(out[1:5], ["incomplete", "5", "2", "0"])
         self.assertEqual(out[6], "USRDIR/TPPS1.PSARC")
-        self.assertEqual(out[9], "Update 1.12 is incomplete: 2 files missing, TPPS1.PSARC first. Install it again in RPCS3")
+        self.assertEqual(out[9], "Not every update is installed: 2 files missing, TPPS1.PSARC first. "
+                                 "Install them all, in order, up to 1.12")
 
     def test_an_update_file_of_another_version(self):
         # The base game's own TPPS archive is another, much smaller one.
@@ -271,8 +272,8 @@ class GameFind(unittest.TestCase):
         Path(self.p("g", "USRDIR", "TPPS1.PSARC")).write_bytes(b"PSAR" + bytes(108))
         out = self.run_t("files", self.p("g"))
         self.assertEqual(out[1:5], ["incomplete", "5", "0", "1"])
-        self.assertEqual(out[9], "Update 1.12 is incomplete: 1 file is not as 1.12 has it, TPPS1.PSARC first. "
-                                 "Install it again in RPCS3")
+        self.assertEqual(out[9], "Not every update is installed: 1 file differs, TPPS1.PSARC first. "
+                                 "Install them all, in order, up to 1.12")
 
     def test_the_game_again_when_one_of_its_own_is_missing_too(self):
         make_game(self.p("g"))

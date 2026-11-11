@@ -49,8 +49,8 @@ points are ours. Its data is the base game's:
   - `WAD/PS3_BE/R_MULTIPLAYER.WAD.PATCH`
   - `WAD/PS3_BE/R_UI.WAD.PATCH`
 
-In the game folder here, update 1.12's files were written last: every `TPPS*.PSARC`, `PATCHES`, EBOOT.BIN, GOWA.SELF
-and PARAM.SFO.
+In the game folder here, the updates' files were written last, after the base game's: every `TPPS*.PSARC`,
+`PATCHES`, EBOOT.BIN, GOWA.SELF and PARAM.SFO.
 
 The base game's `TPPS.PSARC` was not at hand. That 1.12's code waits on the base game's data is drawn from the above,
 not seen.
@@ -62,23 +62,36 @@ The check in the launcher (since `49d1ed6`) would have refused their folder. It 
 
 - **`game_files.inc`** has `USRDIR/PATCHES`, 51 files now. `gowa.py game-files` checks its count against
   `TPPS1.PSARC` to `TPPS5.PSARC`.
-- **The launcher's line** says what to install again:
-  - update 1.12, in RPCS3, when only its files are missing or other (`TPPS*.PSARC`, `PATCHES`: `game_file_update`);
-  - the game otherwise.
+- **The launcher's line** says what to install:
+  - every update up to 1.12, in order, when only the updates' files are missing or other (`TPPS*.PSARC`, `PATCHES`:
+    `game_file_update`);
+  - the game again otherwise.
 
   The line holds about a hundred characters.
 - **The message** when the game stops on a missing file says the same. A missing `PATCHES` now stops the game there.
 - **`gowa.py doctor`** says the same.
 
-The player was told on the issue to install the 1.12 update again.
+## The updates are not cumulative
+
+The player was first told to install the 1.12 update again, and the first version of the fix said so too. They did,
+and RPCS3 then showed 1.12, but the folder still had no `PATCHES` and no TPPS1 to TPPS5.
+
+- **1.12's patch is 8644 KB**, by PlayStation Lifestyle's article on it.
+- **The files written last here** are EBOOT.BIN, GOWA.SELF, ICON0.PNG, PARAM.SFO and PS3LOGO.DAT: 8,850,941 bytes,
+  8,643.5 KiB.
+
+So 1.12's PKG is its EBOOT alone. The archives and `PATCHES` come with the updates before it, each with files of its
+own, and every one has to be installed, in order. Which update brings which archive was not checked: the PS3's update
+list could not be read from here.
 
 ## Verification
 
-- `tests/test_game_find.py`: 30 tests. The list has two of the update's files now. The cases:
-  - the update's files missing;
+- `tests/test_game_find.py`: 30 tests. The list has two of the updates' files now. The cases:
+  - the updates' files missing;
   - one of them of another version;
   - one of the base game's missing as well.
-- The player's folder after installing the update again: not reported yet.
+- After installing 1.12 again: still no `PATCHES` and no TPPS1 to TPPS5 (the player's reply).
+- After installing every update in order: not reported yet.
 
 ## Issue #3: the same TPPS.PSARC
 
@@ -105,5 +118,5 @@ in the game's code. Their report holds three sessions.
     theirs). They were not named.
 - **The Kit's build on their PC:** 4:13, no error.
 
-In the game folder here, the 1.12 `TPPS.PSARC` was written with the update's other files, within two minutes and with
-no gap. Where the two players' base `TPPS.PSARC` came from is not known.
+An update that brings `TPPS.PSARC` is missing from theirs, or the base game's copy went over it while the folder was
+put together. Which of the two is not known.
