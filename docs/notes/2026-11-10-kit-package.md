@@ -107,7 +107,7 @@ source, and was published the same day as `v0.1.0-alpha.3` (the tag at the versi
 controller had been tried on it. Its notes have the install steps, EDGE on the GPU, the speed against RPCS3 and a
 status table. README.md points at the releases page now.
 
-## The second release, 0.1.0-alpha.4 (2026-11-11)
+## The package 0.1.0-alpha.4 (2026-11-11), not released
 
 - **The first package stopped at the DLL's link:** `calloc` and `atol` undefined, from `native/spu_edge_memo.c` since
   the unskinned jobs' transforms went to the vertex pass. One exe takes them from the C runtime, so no build of this
@@ -127,3 +127,26 @@ status table. README.md points at the releases page now.
     played the first fight at 34.3 fps, the sound clean.
 - **The bench stopped on the D: exe** too, as it named the exe relative to the tree (`e52b4a6`).
 - **Not done:** the launcher's window, a fresh decrypt, a controller.
+
+## The package 0.1.0-alpha.5 (2026-11-11)
+
+- **Why not alpha.4:** alpha.4 was packaged from `bf591d4` and went into a draft that was never published. The fix of
+  frame generation's freeze at the start (`e91872b`, and `0420b4d6` in the fork) came after it, and a version is
+  packaged once. alpha.4's maps stay in `dist/0.1.0-alpha.4/`, for the Prebuilt made from it.
+- **The review before it**, alpha.3 to `e91872b` and the fork's five commits, changed two things (`1c96a31`):
+  - the launcher offered frame generation off after any freeze with it on, in place of the report, so a freeze of the
+    game's own with it on (issue #7) would never have been reported. It now needs the freeze watch's line that the
+    GPU stopped behind frame generation's swap chain, which every frozen start of the runs had;
+  - a game that cannot start for a file of its folder ended itself, the way that set off the freeze; another process
+    ends it now, as when the window closes.
+- **The package:** a zip of 144.6 MB, 464 files and 328.7 MB unpacked, SHA-256
+  `8dd27aa98c08ed6dc9218bd21002a6af9d93f5eafbe3b7ea6b6d8470a0b2a77b`. Its audit found what alpha.4's had. Its build
+  check made the DLL in 470 s, the same file as alpha.4's (`44ee25b2c2f426dfb4844c0c3a1680e34817e2486ba9a7ea894cdd3f30087525`):
+  nothing it is built from changed since.
+- **Tried on it:** the tree's own build, from the launcher with frame generation on, closed by its window after 40 s:
+  no stuck fence, no freeze, 1493 flips; the five SPU pieces it ran interpreted are the ones every start has had. The
+  Kit's exe, the zip's (SHA-256 `3a3181d1991b6a1791c0a071c13ecad826a1f33a51ac71ef4edc0c91d87851c4`), with
+  `--end-process` on a ping started for it: it ended the ping with the code it was given, and gave 1 for a process
+  that is not there.
+- **Not done:** the zip unpacked and played as a player has it. Its DLL is the one alpha.4's run of that played; its
+  exe is new.
