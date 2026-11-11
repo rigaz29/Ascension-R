@@ -92,6 +92,16 @@ def die(msg):
     sys.exit(1)
 
 
+def shown(path, start=None):
+    """path relative to start (the tree's root), for a message, or as it is when the two are on different drives,
+    where os.path.relpath raises. On a player's PC the Kit is beside the exe and GOWA_WORK in the data folder: the Kit
+    on E: and the data on C: stopped the Kit's build on its first message (issue #1)."""
+    try:
+        return os.path.relpath(path, start or ROOT)
+    except ValueError:
+        return path
+
+
 class NoProgress:
     """Where the steps say how far they are: nowhere, unless kit-build listens (KitProgress)."""
     listens = False
@@ -254,7 +264,7 @@ def need_elf():
     if not os.path.exists(elf):
         die("%s not found. Run `setup --game-dir ...` first, and decrypt "
             "USRDIR/GOWA.SELF to GOWA.elf with RPCS3 (Utilities > Decrypt PS3 "
-            "Binaries)." % os.path.relpath(elf, ROOT))
+            "Binaries)." % shown(elf))
     return elf
 
 
@@ -668,7 +678,7 @@ def lift_wws_pm(elf):
                 "}\n" % (WWS_JOB_CODE_LS, entry, WWS_PM_IMAGE_ID, WWS_PM_FNV, entry,
                          WWS_PM_IMAGE_ID, regions))
     say("Wws_Job policy module lifted to %s (%d job modules registered as code regions)"
-        % (os.path.relpath(WWS_PM_DIR, ROOT), len(jobs)))
+        % (shown(WWS_PM_DIR), len(jobs)))
 
 
 # Where the Wws_Job policy module streams job code. Job modules embedded in the
@@ -789,7 +799,7 @@ def lift_jobmods(elf):
             "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local"] + extra + loop_locals_args()):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
-    say("%d WWS job modules lifted to %s" % (n, os.path.relpath(JOBMODS_DIR, ROOT)))
+    say("%d WWS job modules lifted to %s" % (n, shown(JOBMODS_DIR)))
     native_hooks(JOBMODS_DIR)
 
 
@@ -891,7 +901,7 @@ def lift_pic(elf):
             "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC)] + loop_locals_args()):
         die("lift_spu_pic failed")
     n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
-    say("%d position-independent SPU pieces lifted to %s" % (n, os.path.relpath(PIC_DIR, ROOT)))
+    say("%d position-independent SPU pieces lifted to %s" % (n, shown(PIC_DIR)))
     native_hooks(PIC_DIR, pic=True)
 
 
