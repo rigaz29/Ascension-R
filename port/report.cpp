@@ -811,17 +811,26 @@ static void deflate_fixed(const std::string& d, std::vector<uint8_t>& out)
 }
 
 namespace {
-struct ZipEntry { std::string name; uint32_t crc, csize, usize, offset; uint16_t method; };
+struct ZipEntry { std::string name; uint32_t crc, csize, usize, offset; uint16_t method, time, date; };
 struct Zip { FILE* f; std::vector<ZipEntry> e; uint16_t time, date; uint32_t at; int bad; };
 }
 
 static void put16(std::string& b, unsigned v) { b.push_back((char)v); b.push_back((char)(v >> 8)); }
 static void put32(std::string& b, uint32_t v) { put16(b, v & 0xFFFF); put16(b, v >> 16); }
 
-static void zip_add(Zip& z, const std::string& name, const std::string& data)
+/* An entry has the report's time, or with when the time of a file (its local time, to two seconds). */
+static void zip_add(Zip& z, const std::string& name, const std::string& data, const FILETIME* when = NULL)
 {
     ZipEntry e;
     e.name = name;
+    e.time = z.time;
+    e.date = z.date;
+    FILETIME local;
+    WORD dd, dt;
+    if (when && FileTimeToLocalFileTime(when, &local) && FileTimeToDosDateTime(&local, &dd, &dt)) {
+        e.time = dt;
+        e.date = dd;
+    }
     e.usize = (uint32_t)data.size();
     e.crc = crc_of(data);
     e.offset = z.at;
@@ -832,7 +841,7 @@ static void zip_add(Zip& z, const std::string& name, const std::string& data)
     e.csize = store ? e.usize : (uint32_t)c.size();
     std::string h;
     put32(h, 0x04034B50u); put16(h, 20); put16(h, 0x0800); put16(h, e.method);
-    put16(h, z.time); put16(h, z.date); put32(h, e.crc); put32(h, e.csize); put32(h, e.usize);
+    put16(h, e.time); put16(h, e.date); put32(h, e.crc); put32(h, e.csize); put32(h, e.usize);
     put16(h, (unsigned)name.size()); put16(h, 0);
     h += name;
     if (fwrite(h.data(), 1, h.size(), z.f) != h.size()) z.bad = 1;
@@ -847,7 +856,7 @@ static int zip_end(Zip& z)
     std::string cd;
     for (const ZipEntry& e : z.e) {
         put32(cd, 0x02014B50u); put16(cd, 20); put16(cd, 20); put16(cd, 0x0800); put16(cd, e.method);
-        put16(cd, z.time); put16(cd, z.date); put32(cd, e.crc); put32(cd, e.csize); put32(cd, e.usize);
+        put16(cd, e.time); put16(cd, e.date); put32(cd, e.crc); put32(cd, e.csize); put32(cd, e.usize);
         put16(cd, (unsigned)e.name.size()); put16(cd, 0); put16(cd, 0); put16(cd, 0); put16(cd, 0); put32(cd, 0);
         put32(cd, e.offset);
         cd += e.name;
@@ -861,7 +870,11 @@ static int zip_end(Zip& z)
 }
 
 /* --- the report ------------------------------------------------------------------- */
-/* The player's own progress, without the images and sounds the game puts beside it. */
+/* The player's own progress, as the game checks it when it loads it: its icon and the time of each file go too. A
+ * report's saves were refused without them ("The preferences save data failed to load", issue #7): the icon had
+ * been left out, and every file had the report's time, where a profile's DATFEST holds the time it was written. The
+ * time of each file goes into its entry, and to the second into save/times.txt ("<folder>/<file> <Unix time>").
+ * The game's other images and its sounds stay out. */
 static void add_saves(Zip& z, std::string& note)
 {
     enum : unsigned long long { MOST = 96ull << 20 };
@@ -874,6 +887,7 @@ static void add_saves(Zip& z, std::string& note)
     if (hd == INVALID_HANDLE_VALUE) { note += "Saves: none\n"; return; }
     unsigned long long total = 0;
     int files = 0;
+    std::string times;
     do {
         if (!(d.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || d.cFileName[0] == '.') continue;
         const std::string sub = root + "\\" + d.cFileName;
@@ -882,17 +896,23 @@ static void add_saves(Zip& z, std::string& note)
         do {
             if (f.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
             const char* ext = strrchr(f.cFileName, '.');
-            if (ext && (!_stricmp(ext, ".png") || !_stricmp(ext, ".pam") || !_stricmp(ext, ".at3"))) continue;
+            if (ext && _stricmp(f.cFileName, "ICON0.PNG") &&
+                (!_stricmp(ext, ".png") || !_stricmp(ext, ".pam") || !_stricmp(ext, ".at3")))
+                continue;
             if (total + f.nFileSizeLow > MOST) continue;
             std::string data;
             if (!read_capped(sub + "\\" + f.cFileName, data, MOST, 0)) continue;
-            zip_add(z, std::string("save/") + d.cFileName + "/" + f.cFileName, data);
+            zip_add(z, std::string("save/") + d.cFileName + "/" + f.cFileName, data, &f.ftLastWriteTime);
+            const unsigned long long ft = (unsigned long long)f.ftLastWriteTime.dwHighDateTime << 32 |
+                                          f.ftLastWriteTime.dwLowDateTime;
+            times += strf("%s/%s %llu\n", d.cFileName, f.cFileName, (ft - 116444736000000000ull) / 10000000ull);
             total += data.size();
             files++;
         } while (FindNextFileA(hf, &f));
         FindClose(hf);
     } while (FindNextFileA(hd, &d));
     FindClose(hd);
+    if (files) zip_add(z, "save/times.txt", times);
     note += strf("Saves: %d files, %llu bytes\n", files, total);
 }
 

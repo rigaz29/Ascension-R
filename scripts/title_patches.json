@@ -49,7 +49,7 @@
      "note": "and $4,$5,$25 -> il $4,0"},
     {"module": "jobmod_9b03908f93a9_e77C8", "ls": "0x0000E524", "orig": "0x18264284", "new": "0x40800004",
      "optional": true,
-     "note": "the same in the other EDGE module, a second build of it the level does not run. Its lift ends at 0xB90C (no entry found reaches the function, 0xE35C, the same code as the first module's 0xD92C), so this is applied once that code is lifted (gowa.py jobmods-entries); until then the lift reports it"}
+     "note": "the same in the other EDGE module, a second build of it the first levels do not run and the Grotto does. Only a pointer reaches the function, 0xE35C (the same code as the first module's 0xD92C): its lift ended at 0xB90C until the entries of issue #7's missed code moved it out to 0xF1C4 (2026-11-12), and the Grotto's jobs ran it interpreted, unpatched. Optional: a lift that does not reach it reports it"}
    ]
   },
   {
