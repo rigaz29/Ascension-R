@@ -154,3 +154,17 @@ status table. README.md points at the releases page now.
   draft renamed, its zip and audit.txt replaced (FFmpeg's source is the same file), its notes alpha.4's with the
   freeze's fix, the controller lines, one pad tried in the status table and issue #7 under Known issues. GitHub's
   SHA-256 of the zip and of audit.txt are the ones here. Issue #6 got the link.
+
+## The release 0.1.0-alpha.6 (2026-11-12)
+
+- **What it is for:** issue #7, the Grotto freeze (`5b17005`: e77C8's jobs start with no EDGE memo state, and the memo
+  never runs e6D98's calls in another module's job), with the lift of e77C8 past 0xB90C and a report's saves that
+  load (`27f7cae`, fork `ab764f6f`). docs/notes/2026-11-12-grotto-freeze.md has the cause and the runs.
+- **The package**, from `383a2f1` and fork `ab764f6f`: a zip of 144.6 MB, 464 files and 328.7 MB unpacked, SHA-256
+  `82b7c382b5b9d46ac93464305f3ad94bec43e23626b954d7c53e62708312d326`. Its audit found what alpha.5's had. Its build
+  check made the DLL in 460 s, SHA-256 `4c9166c75b2340ff18f98e2859784638366b7766b2fe4ad829af04cc8f4c4a2d`; its map
+  has `gowa_edge_job_b7c8` and e77C8's functions past 0xB90C (0xDB88, 0xE35C). The Prebuilt, 88.9 MB, stays here.
+- **Published** the same day as `v0.1.0-alpha.6`, a pre-release, the tag at the version's commit, from a draft whose
+  three files GitHub gave the SHA-256 of the ones here. Issue #7 got the link, and the reporter the Grotto to try again.
+- **Not done:** the zip unpacked and played as a player has it; the tree's own build played the Grotto (three replays
+  of the reporter's session) and the first fight.
