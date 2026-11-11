@@ -60,6 +60,7 @@ extern "C" unsigned cellGcm_flip_request_count(void);
 extern "C" const char* g_hle_inflight[64];
 extern "C" void ppu_report_guest_lrs(void);
 extern "C" int rsx_d3d12_backend_generating(void);   /* rsx_d3d12_backend.c: frame generation runs */
+extern "C" int rsx_d3d12_backend_gpu_stuck(void);    /* and the GPU's queue has stopped */
 
 static std::string s_session_log;   /* this session's, "" when a script took the output */
 
@@ -314,9 +315,13 @@ static void freeze_report(ULONGLONG idle, unsigned frames)
     Sleep(1000);
     const int nb = threads_read(b, MAX_THREADS);
     fprintf(stderr, "[freeze] no new frame for %llu s, %u frames so far\n", idle, frames);
-    if (rsx_d3d12_backend_generating())
-        fprintf(stderr, "[freeze] frame generation is on: its swap chain has stopped the GPU at the start of a session on "
-                        "some PCs. If this repeats, turn it off in the launcher's Graphics tab\n");
+    /* Only a GPU that stopped is frame generation's doing: a long load with it on (a 17 s shader build, 2026-11-11)
+     * was blamed on it too. */
+    if (rsx_d3d12_backend_gpu_stuck())
+        fprintf(stderr, rsx_d3d12_backend_generating()
+                            ? "[freeze] the GPU has stopped, behind frame generation's swap chain (AMD FSR 3.1). If this repeats, "
+                              "turn frame generation off in the launcher's Graphics tab\n"
+                            : "[freeze] the GPU has stopped: a wait for its frames ran out, and none has finished since\n");
     for (unsigned t = 0; t < 64; t++)
         if (g_hle_inflight[t]) fprintf(stderr, "[freeze] guest thread %u is inside %s\n", t, g_hle_inflight[t]);
     ppu_report_guest_lrs();

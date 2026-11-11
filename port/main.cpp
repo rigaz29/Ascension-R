@@ -168,6 +168,46 @@ extern "C" int  rsx_null_backend_pump_messages(void);
 #define WINDOW_WIDTH  1280
 #define WINDOW_HEIGHT 720
 
+#ifdef _WIN32
+/* The game ended by another process when the player closes it, not by itself. On a laptop whose display hangs off
+ * the other GPU, a session with frame generation on that ended itself (TerminateProcess on its own process, from the
+ * window's thread or from any other) left the next session's GPU stopped in a present at the boot logos: 4 of 8
+ * starts. Ended from outside it was 0 of 8, and 0 of 8 again with the window's close handled first; with this,
+ * 0 of 14 (docs/notes/2026-11-11-fg-freeze-exit.md). A copy of the exe started for this alone (--end-process, at the
+ * top of main) ends this one; when it cannot, this one ends itself as before. */
+static void end_by_another_process(UINT code)
+{
+    wchar_t exe[MAX_PATH];
+    const DWORD n = GetModuleFileNameW(NULL, exe, MAX_PATH);
+    if (n && n < MAX_PATH) {
+        wchar_t cmd[MAX_PATH + 48];
+        swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%ls\" --end-process %lu %u", exe,
+                 (unsigned long)GetCurrentProcessId(), code);
+        STARTUPINFOW si;
+        memset(&si, 0, sizeof si);
+        si.cb = sizeof si;
+        PROCESS_INFORMATION pi;
+        if (CreateProcessW(exe, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            CloseHandle(pi.hThread);
+            WaitForSingleObject(pi.hProcess, 5000);   /* it ends this process before it ends itself */
+            CloseHandle(pi.hProcess);
+        }
+    }
+    TerminateProcess(GetCurrentProcess(), code);
+}
+
+/* --end-process <pid> <code>: end_by_another_process's other half. */
+static int end_process_cli(const char* pid, const char* code)
+{
+    HANDLE h = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, (DWORD)strtoul(pid, NULL, 10));
+    if (!h) return 1;
+    TerminateProcess(h, (UINT)strtoul(code, NULL, 10));
+    WaitForSingleObject(h, 5000);
+    CloseHandle(h);
+    return 0;
+}
+#endif
+
 /* ---------------------------------------------------------------------------
  * Frame clock
  * -----------------------------------------------------------------------*/
@@ -434,7 +474,7 @@ static DWORD WINAPI frame_clock(LPVOID)
                 fflush(stdout);
                 fflush(stderr);
 #ifdef _WIN32
-                TerminateProcess(GetCurrentProcess(), 0);
+                end_by_another_process(0);
 #else
                 _Exit(0);
 #endif
@@ -1546,7 +1586,11 @@ int main(int argc, char** argv)
      * cache and quit, the game not run (precompile.cpp; the launcher's
      * Precompile shaders).
      * --report [--with-saves]: make a problem report of the last sessions and quit (report.cpp;
-     * the launcher's Report a problem). */
+     * the launcher's Report a problem).
+     * --end-process <pid> <code>: end that process and quit (end_by_another_process). */
+#ifdef _WIN32
+    if (argc == 4 && !strcmp(argv[1], "--end-process")) return end_process_cli(argv[2], argv[3]);
+#endif
     const char* elf = NULL;
     const char* settings = NULL;
     char settings_buf[1100];
