@@ -123,3 +123,11 @@ DualShock 3 needs a driver such as DsHidMini, and with DS4Windows XInput is the 
 The launcher's Cheats tab: Damage to Kratos (half, a quarter or none), Kratos's damage (2x, 5x or one hit), Max red orbs,
 Infinite magic and items, Infinite rage and Infinite double jumps. All are off by default and hook the title's own code, its
 damage, its meters and its jump ([note](notes/2026-11-07-cheats.md)).
+
+## Mods
+
+`paths.mods` names a folder laid out like the PS3's paths, `dev_hdd0\game\NPUA80918\USRDIR\...`. A file there is read in
+place of the game's, or added where the game has none, and the game's folder is left as it is. Empty, the default, means no
+mod folder. The log names each file taken from it (`[fs] mod`). The game's text, subtitles included, is plain UTF-8 inside its
+archives, so a translation can go in as a seventh update: `TPPS6.PSARC` with the text patches, and `PATCHES`
+holding `6` ([note](notes/2026-11-11-game-text.md)).

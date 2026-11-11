@@ -523,7 +523,8 @@ static void hide_init(void)
     s_hide_word.clear();
     static const struct { const char* section, *key, *token; } settings[] = {
         { "paths", "elf", "<elf>" }, { "paths", "vfs", "<vfs>" }, { "paths", "hdd0", "<hdd0>" },
-        { "paths", "ffmpeg", "<ffmpeg>" }, { "graphics", "shader_cache", "<shader_cache>" },
+        { "paths", "ffmpeg", "<ffmpeg>" }, { "paths", "mods", "<mods>" },
+        { "graphics", "shader_cache", "<shader_cache>" },
     };
     for (const auto& k : settings) {
         const char* v = ps3_settings_str(k.section, k.key, NULL, NULL);
