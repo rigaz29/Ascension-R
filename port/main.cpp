@@ -1369,6 +1369,13 @@ static void title_environment(void)
      * plan, 2.25). SPURS_RESERVE set by hand takes its place. */
     if (ps3_settings_bool("system", "steady_audio", "GOWA_STEADY_AUDIO", 1) && !getenv("SPURS_RESERVE"))
         env_default("SPURS_LANE", "7:5");
+    /* [system] speakers (the launcher's "Speakers"): the output's channels. The title's port is 7.1
+     * (PortOpen nChannel=8), filled as its own Sound Mode says: two channels on Stereo, the default;
+     * auto follows the device's own layout, and Windows folds a layout it lacks down. raw_audio
+     * ("Bypass sound effects"): the stream skips the APOs where the device has a raw path. The
+     * runtime's switches: libs/audio/cellAudio.c (docs/notes/2026-11-11-audio-output.md). */
+    env_default("PS3_AUDIO_CHANNELS", ps3_settings_str("system", "speakers", "PS3_AUDIO_CHANNELS", "auto"));
+    env_default("PS3_AUDIO_RAW", ps3_settings_bool("system", "raw_audio", "PS3_AUDIO_RAW", 0) ? "1" : "0");
     /* Each display buffer its own target, the flipped one presented: the title
      * draws its video into one buffer, tonemaps into the next and composites
      * its post chain into a third within one frame, and with a single

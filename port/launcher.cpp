@@ -138,6 +138,9 @@ static const char* const k_enter_n[] = { "Cross", "Circle" };
 static const char* const k_bak[] = { "0", "3", "5", "10" };
 static const char* const k_bak_n[] = { "Off", "Keep 3", "Keep 5", "Keep 10" };
 static const char* const k_bak_s[] = { "Off", "3", "5", "10" };
+static const char* const k_spk[] = { "auto", "stereo", "5.1", "7.1" };
+static const char* const k_spk_n[] = { "As Windows has the output device", "Stereo", "5.1", "7.1" };
+static const char* const k_spk_s[] = { "Auto", "Stereo", "5.1", "7.1" };
 static const char* const k_lang[] = { "auto", "en", "en-gb", "fr", "es", "de", "it", "nl", "pt", "pt-br",
                                       "ru", "ja", "ko", "zh-t", "zh-s", "fi", "sv", "da", "no", "pl", "tr" };
 static const char* const k_lang_n[] = { "Windows language", "English (US)", "English (UK)", "French", "Spanish",
@@ -219,6 +222,12 @@ static Opt s_opt[] = {
       "Copies kept of a save before the game writes over it." },
     { T_SYSTEM, "system", "steady_audio", "on", "Steady audio", 1, SW,
       "Runs the game's sound on a thread of its own, so heavy fights do not break it up." },
+    { T_SYSTEM, "system", "speakers", "auto", "Speakers", 0, LIST(k_spk, k_spk_n), k_spk_s,
+      "Auto follows the output device; 7.1 for Windows Sonic or Dolby Atmos for Headphones. Surround also needs "
+      "the game's Sound Mode (Options, Audio) on 5.1 or 7.1." },
+    { T_SYSTEM, "system", "raw_audio", "off", "Bypass sound effects", 1, SW,
+      "The game's sound skips Windows' and the sound card's effects (equalizers, loudness, virtual "
+      "surround), where the device has a way past them." },
     { T_SYSTEM, "launcher", "show", "on", "Show this window at start", 1, SW,
       "When off, hold Shift while the game starts to bring it back." },
 };

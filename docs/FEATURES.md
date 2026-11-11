@@ -118,6 +118,25 @@ out; SDL3 reads every controller, Xbox ones too. The Play tab's ready check name
 DualShock 3 needs a driver such as DsHidMini, and with DS4Windows XInput is the setting, or the pad counts twice
 ([note](notes/2026-11-10-controllers.md)).
 
+## Sound
+
+The game's sound goes to Windows through WASAPI in shared mode, so the effects of Windows and of the sound card apply to
+it as to any program: Equalizer APO and other equalizers, Loudness Equalization, virtual surround, and the Dolby, DTS or
+Nahimic suites. The stream says it is a game's, which some of those suites use to pick their game profile.
+
+- **Steady audio** (System, on): the game's sound runs on a worker of its own, so heavy fights do not break it up.
+- **Speakers** (`system.speakers`, Auto): the game mixes up to 7.1. Auto sends 7.1 to a 7.1 device, 5.1 to a 5.1 one
+  and stereo to the rest, as Windows has each set up. Set 7.1 or 5.1 by hand for Windows Sonic or Dolby Atmos for
+  Headphones, which make surround for headphones out of it. On a plain stereo device Windows folds it down. The game is
+  told what the output takes, but it fills the surround channels only with its own Sound Mode (Options, Audio) on 5.1
+  or 7.1 Surround.
+- **Bypass sound effects** (`system.raw_audio`, off): the stream skips those effects, where the driver has a way past
+  them. The log says whether it did.
+- **A change of output device**, such as headphones plugged in, a Bluetooth headset or another default device in
+  Windows, moves the sound to the new default device within a second. Before, the sound stopped until the next start.
+
+The [note](notes/2026-11-11-audio-output.md) has the details.
+
 ## Cheats
 
 The launcher's Cheats tab: Damage to Kratos (half, a quarter or none), Kratos's damage (2x, 5x or one hit), Max red orbs,
