@@ -106,8 +106,9 @@ game straight away, with its log in `logs\`.
 
 Open `build\Ascension-R.exe`. The launcher checks the game's folder and your setup, and **Play** starts the game.
 
-Shaders are built the first time they are needed, so expect stutter at first. **Precompile shaders**, in the launcher's sidebar,
-compiles the vertex shaders ahead of time.
+The first start of each version builds the game's vertex shaders before the game begins, on a screen of its own: a
+minute or two the first time, seconds after an update. Fragment shaders are built the first time they are needed, so
+expect some stutter at first. **Precompile shaders**, in the launcher's sidebar, does the vertex shaders on demand.
 
 A build from source keeps its settings, logs and shader caches in `build\`, and its saves in `gamedata\`.
 

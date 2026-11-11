@@ -252,7 +252,8 @@ def run_once(exe, env_extra, a, out, tag):
     pad = os.path.join(out, tag + ".pad")
     open(pad, "w").close()
     env = dict(os.environ)
-    env.update({"GOWA_THREADS": "10", "D3D12_VSYNC": "0", "PAD_FILE": pad})
+    # GOWA_PRECOMPILE_FIRST=0: a run measures the game, on a cache of its own; no precompile gate before it.
+    env.update({"GOWA_THREADS": "10", "D3D12_VSYNC": "0", "PAD_FILE": pad, "GOWA_PRECOMPILE_FIRST": "0"})
     if a.replay:
         env["PAD_REPLAY"] = os.path.abspath(a.replay)
     env.update(env_extra)

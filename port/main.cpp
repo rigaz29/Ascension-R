@@ -41,6 +41,7 @@
 #include "ps3emu/ps3_ftrace.h"    /* ps3_ft_dump: write a PS3_FTRACE trace on quitting */
 #include "report.h"               /* what a session leaves behind */
 #include "game_find.h"            /* game_file_needed: the files the game cannot start without */
+#include "loading_screen.h"       /* the precompile gate: the vertex shaders first, on a screen of their own */
 #include "ps3emu/ps3_settings.h"  /* ascension-r.ini: the player's settings and this machine's paths */
 
 #include <stdint.h>
@@ -300,6 +301,9 @@ static DWORD WINAPI frame_clock(LPVOID)
     int rsx_ok = (rsx_backend_init(WINDOW_WIDTH, WINDOW_HEIGHT, title) == 0);
     fprintf(stderr, "[rsx] %s backend init %s\n", RSX_BACKEND_NAME,
             rsx_ok ? "OK -- window open" : "FAILED");
+#ifdef _WIN32
+    gowa_loading_screen_close();   /* the precompile screen, if there was one: the game's window is up */
+#endif
 
     unsigned  last_flip = 0;
     /* Vblank beats at the PS3's 59.94 Hz (60000/1001), on the microsecond
@@ -1592,6 +1596,7 @@ int main(int argc, char** argv)
      * --end-process <pid> <code>: end that process and quit (end_by_another_process). */
 #ifdef _WIN32
     if (argc == 4 && !strcmp(argv[1], "--end-process")) return end_process_cli(argv[2], argv[3]);
+    if (argc == 3 && !strcmp(argv[1], "--loading-preview")) return gowa_loading_preview(argv[2]);
 #endif
     const char* elf = NULL;
     const char* settings = NULL;
@@ -1742,6 +1747,12 @@ int main(int argc, char** argv)
     if (const char* rd = getenv("SPU_JOB_REPLAY"))
         return spu_job_replay_main(rd);
 
+#ifdef _WIN32
+    /* The vertex shaders built for this version before anything of the game's runs, on a screen of their own
+     * where its window is about to be (loading_screen.cpp). The frame clock takes the screen down once the
+     * game's window is up. */
+    gowa_precompile_gate();
+#endif
     /* Install the guest-callback hook, then start the frame clock. It no-ops
      * until the title registers its vblank and flip handlers during init. */
     g_ps3_guest_caller = harness_guest_caller;

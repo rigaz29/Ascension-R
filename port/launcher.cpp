@@ -2023,9 +2023,12 @@ static void clear_shaders(void)
         toast_bad("No shader cache in the settings");
         return;
     }
-    /* Each compiler's pack and journal, what a fold cut short leaves, and the pipelines from before the store. */
+    /* Each compiler's pack and journal, what a fold cut short leaves, the pipelines from before the store, and the
+     * mark that the vertex shaders were built (the next start builds them again; the list of the programs found,
+     * .vprogs, stays: it is not shaders). */
     static const wchar_t* const ext[] = { L"", L".journal", L".tmp", L".journal.tmp", L".pso",
-                                          L".dxil", L".dxil.journal", L".dxil.tmp", L".dxil.journal.tmp", L".dxil.pso" };
+                                          L".dxil", L".dxil.journal", L".dxil.tmp", L".dxil.journal.tmp", L".dxil.pso",
+                                          L".precompiled" };
     enum { N = sizeof ext / sizeof ext[0], F = GAME_PATH_MAX + 16 };
     static wchar_t list[N * F + 1];     /* for the shell: one after the other, two zeros at the end */
     wchar_t base[GAME_PATH_MAX];
@@ -2049,7 +2052,7 @@ static void clear_shaders(void)
     }
     wchar_t m[200];
     swprintf(m, 200, L"Move %.0f MB of compiled shaders to the Recycle Bin?\n\n"
-                     L"The game builds them again as it reaches them, so the first run after this is slower.",
+                     L"The next start builds the vertex shaders first; the rest come as the game reaches them.",
              (double)bytes / 1048576.0);
     if (MessageBoxW(s_main, m, L"Clear shaders", MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2) != IDYES) return;
     SHFILEOPSTRUCTW op = {};
@@ -2141,7 +2144,8 @@ static void pc_start(void)
                     L"Compile the game's vertex shaders now?\n\n"
                     L"Every vertex shader in the game's archives goes into the shader cache, so none is compiled "
                     L"while you play. It reads about 7 GB of the game's files and takes a minute or two; the cache "
-                    L"grows by a few MB. Fragment shaders are still compiled as the game reaches them.",
+                    L"grows by a few MB. Fragment shaders are still compiled as the game reaches them.\n\n"
+                    L"The game does this by itself before its first start of each version.",
                     L"Precompile shaders", MB_YESNO | MB_ICONQUESTION) != IDYES)
         return;
     if (!save_all()) return;   /* it reads the settings Play would run with */

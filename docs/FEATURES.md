@@ -33,6 +33,10 @@ Precompile shaders, in the launcher's sidebar, reads the game's archives and com
 the cache before you play: 3,455 programs, about a minute and a half here, 3 MB more on disk. A session of the first
 level then compiled 4 vertex shaders where it had compiled 212. Fragment shaders are still compiled as the game reaches
 them: their text depends on the textures and state of each draw, which the files do not say.
+The game does it by itself before its first start of each version, and does not start before it is done: an 8-bit
+screen where its window is about to open shows how far it is (`port/loading_screen.cpp`). The programs it finds are
+kept beside the cache, so after an update it takes seconds; the first time, a minute or two. Clear shaders makes the
+next start do it again. `GOWA_PRECOMPILE_FIRST=0` leaves it out (the benches do).
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 Each session started from the launcher (not from a script) writes its output to `logs\session-<date>-<time>.log` beside

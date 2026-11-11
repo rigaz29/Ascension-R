@@ -15,6 +15,11 @@
  * (rsx_d3d12_precompile_vertex_programs). Fragment programs are not done: their text depends on the textures and
  * state of their draws, which the files do not say.
  *
+ * Beside the cache it leaves <cache>.vprogs, the programs found (read instead of the archives while their count and
+ * bytes are the same: a run after an update takes seconds), and when the build is done <cache>.precompiled, which
+ * says the version it was built for: the game's start does it first while that is missing or another version's
+ * (loading_screen.cpp). GOWA_PRECOMPILE_FOREGROUND keeps the process at normal priority, for that start.
+ *
  * Progress, one line each on stdout, for the launcher:
  *   precompile: read <archive n> <of> <name>
  *   precompile: found <programs>
@@ -37,6 +42,7 @@
 #include "third_party/zlib/zlib.h"
 #include "ps3emu/ps3_settings.h"
 #include "rsx_d3d12_backend.h"
+#include "version.h"
 
 static uint32_t be16(const uint8_t* p) { return (uint32_t)p[0] << 8 | p[1]; }
 static uint32_t be32(const uint8_t* p) { return (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | p[3]; }
@@ -143,6 +149,69 @@ static void scan_vps(const std::vector<uint8_t>& d, std::unordered_set<std::stri
     }
 }
 
+/* The cache file the build fills (graphics.shader_cache), or "" for none. */
+static std::string cache_file(void)
+{
+    const char* sc = ps3_settings_str("graphics", "shader_cache", "D3D12_SHADER_CACHE", NULL);
+    if (!sc || !*sc || ps3_settings_ieq(sc, "off")) return std::string();
+    return sc;
+}
+
+/* The programs found, beside the cache as <cache>.vprogs, for the next run: the archives are read once, not again
+ * at every version. Kept with the archives' count and bytes, and read only while those are the same. The game's own
+ * code: it stays on this PC like the cache, and nothing sends it anywhere. */
+static const char k_vpl_magic[8] = { 'G', 'O', 'W', 'A', 'V', 'P', 'L', '1' };
+
+static bool vp_list_read(const std::string& path, uint32_t narc, uint64_t bytes, std::unordered_set<std::string>& out)
+{
+    FILE* f = fopen(path.c_str(), "rb");
+    if (!f) return false;
+    char magic[8];
+    uint32_t na = 0, n = 0;
+    uint64_t by = 0;
+    bool ok = fread(magic, 1, 8, f) == 8 && !memcmp(magic, k_vpl_magic, 8) && fread(&na, 4, 1, f) == 1 &&
+              fread(&by, 8, 1, f) == 1 && fread(&n, 4, 1, f) == 1 && na == narc && by == bytes && n && n < 100000;
+    std::vector<char> b;
+    for (uint32_t i = 0; ok && i < n; i++) {
+        uint32_t len = 0;
+        ok = fread(&len, 4, 1, f) == 1 && len && len <= 512u * 16u && !(len & 15);
+        if (!ok) break;
+        b.resize(len);
+        ok = fread(b.data(), 1, len, f) == len;
+        if (ok) out.emplace(b.data(), len);
+    }
+    fclose(f);
+    if (!ok) out.clear();
+    return ok;
+}
+
+static void vp_list_write(const std::string& path, uint32_t narc, uint64_t bytes,
+                          const std::unordered_set<std::string>& progs)
+{
+    const std::string tmp = path + ".tmp";
+    FILE* f = fopen(tmp.c_str(), "wb");
+    if (!f) return;
+    const uint32_t n = (uint32_t)progs.size();
+    bool ok = fwrite(k_vpl_magic, 1, 8, f) == 8 && fwrite(&narc, 4, 1, f) == 1 && fwrite(&bytes, 8, 1, f) == 1 &&
+              fwrite(&n, 4, 1, f) == 1;
+    for (const std::string& s : progs) {
+        const uint32_t len = (uint32_t)s.size();
+        if (!ok) break;
+        ok = fwrite(&len, 4, 1, f) == 1 && fwrite(s.data(), 1, len, f) == len;
+    }
+    ok = !fclose(f) && ok;
+    if (!ok || !MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING)) DeleteFileA(tmp.c_str());
+}
+
+/* <cache>.precompiled: built for this version (loading_screen.cpp's gate reads the first line). */
+static void marker_write(const std::string& cache, const uint32_t stats[3])
+{
+    FILE* f = fopen((cache + ".precompiled").c_str(), "wb");
+    if (!f) return;
+    fprintf(f, "Ascension-R %s\n%u compiled, %u had, %u failed\n", AR_VERSION, stats[0], stats[1], stats[2]);
+    fclose(f);
+}
+
 static void compile_progress(uint32_t done, uint32_t total)
 {
     static DWORD last;
@@ -155,8 +224,9 @@ static void compile_progress(uint32_t done, uint32_t total)
 extern "C" int gowa_precompile(void)
 {
     setvbuf(stdout, NULL, _IONBF, 0);
-    /* Beside the player, who may be doing something else meanwhile. */
-    SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+    /* Beside the player, who may be doing something else meanwhile; from the gate before the game
+     * (loading_screen.cpp) the player is waiting for it. */
+    if (!getenv("GOWA_PRECOMPILE_FOREGROUND")) SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     const DWORD t0 = GetTickCount();
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
     if (!elf || !*elf) {
@@ -185,9 +255,17 @@ extern "C" int gowa_precompile(void)
         printf("precompile: error %s\n", why);
         return 1;
     }
+    const std::string sc = cache_file();
+    uint64_t arc_bytes = 0;
+    for (const std::string& a : arcs) {
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        if (GetFileAttributesExA((dir + "\\" + a).c_str(), GetFileExInfoStandard, &fa))
+            arc_bytes += (uint64_t)fa.nFileSizeHigh << 32 | fa.nFileSizeLow;
+    }
     std::unordered_set<std::string> found;
+    const bool listed = !sc.empty() && vp_list_read(sc + ".vprogs", (uint32_t)arcs.size(), arc_bytes, found);
     std::vector<uint8_t> buf, span;
-    for (size_t a = 0; a < arcs.size(); a++) {
+    for (size_t a = 0; !listed && a < arcs.size(); a++) {
         printf("precompile: read %u %u %s\n", (unsigned)a + 1, (unsigned)arcs.size(), arcs[a].c_str());
         HANDLE f = CreateFileA((dir + "\\" + arcs[a]).c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING,
                                FILE_FLAG_SEQUENTIAL_SCAN, NULL);
@@ -216,6 +294,7 @@ extern "C" int gowa_precompile(void)
         }
         CloseHandle(f);
     }
+    if (!listed && !sc.empty() && !found.empty()) vp_list_write(sc + ".vprogs", (uint32_t)arcs.size(), arc_bytes, found);
     printf("precompile: found %u\n", (unsigned)found.size());
     std::vector<const uint8_t*> ptr;
     std::vector<uint32_t> len;
@@ -232,6 +311,7 @@ extern "C" int gowa_precompile(void)
         printf("precompile: error %s\n", why);
         return 1;
     }
+    if (!sc.empty()) marker_write(sc, stats);
     printf("precompile: done %u %u %u %.0f\n", stats[0], stats[1], stats[2], (GetTickCount() - t0) / 1000.0);
     return 0;
 }
