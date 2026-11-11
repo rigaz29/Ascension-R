@@ -2166,6 +2166,29 @@ FSR's motion):
 - **Next.** The skinned velocity jobs (8% of EDGE's job time), kept jobs without unpacking, a velocity job's
   binormals.
 
+### 2.40 Update, 2026-11-11: what is left after A and B
+
+[The look](2026-11-11-next-candidates.md), the fight with the player's settings uncapped: six runs, 29-31.5 flips/s
+without the sampler.
+- **The frame.** EDGE is 102.8 SPU-ms of a 34.7 ms frame, on SPUs 0-3. RenderJobs 32.5, RenJobSet 23.2, audio 19.0 on
+  its own worker. Perfect packing of the six others would give +14% at most.
+- **EDGE's time.** A third is the runtime under the jobs, a quarter the job manager and the job module, a quarter the
+  native steps. 93% of jobs looked up have a result, and a kept one still costs 27-46 µs.
+- **More worker lanes are slower:** RenderJobs on two workers of its own, 29.2 against 30.8 flips/s.
+- **Nothing safe gives 5% alone.** What is left, in SPU-ms a flip:
+  - **D.** A velocity job's late binormals, which nothing should read: 0 to -3.5, hours.
+  - **U.** Kept unskinned jobs without unpacking: -4 to -7, days.
+  - **V.** Skinned velocity jobs K's way, with two palettes: -4 to -6, days to a week. The one move to the GPU left.
+  - **C.** The 7.6% of jobs the reader does not know: 0 to -4, unknown.
+  - **R, W.** A third pass over the runtime's hot spots, -3 to -6; natives for RenderJobs' and MeshProc's hottest
+    functions, -2 to -6.
+  - **S+J.** A stub for kept jobs and the job manager's load path native: -19 to -35, weeks, high risk. The only one
+    that can pass 5%, and the last estimates of its kind ran high by a factor of four.
+- **A millisecond of SPU time is worth 0.2-0.5% of the frame rate,** by three measurements. D, U, V and C together:
+  +3 to +7%.
+- **Next.** One probe run (the late binormals by class, the reader's failures by check), then D, U and V, then a slope
+  probe that prices S+J before any of it is built.
+
 ## 3. The budget for 33 ms
 
 | part | now | at 30 flips/s |
