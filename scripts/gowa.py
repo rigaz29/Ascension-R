@@ -70,7 +70,7 @@ APP_VER = "01.12"
 GAME_ELF = "GOWA.elf"
 GAME_ELF_SHA256 = "4bf75c897b82d1beb25514cbadaff3d03e1b0c7bf849fa5d289be4f9183462b5"
 # The game's files the launcher checks before it decrypts or builds anything (port/game_files.inc, `game-files`):
-# USRDIR's archives and the two lists that name them, each by its size and the SHA-256 of its first and last 64 KiB.
+# USRDIR's archives and the three lists that name them, each by its size and the SHA-256 of its first and last 64 KiB.
 GAME_FILES_INC = os.path.join(ROOT, "port", "game_files.inc")
 GAME_FILES_ENDS = 64 * 1024
 

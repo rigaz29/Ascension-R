@@ -762,7 +762,9 @@ static void game_refresh(void)
 /* What to tell a player who pressed something that needs the game. */
 static const char* game_needed_toast(void)
 {
-    return s_game.g.state == GAME_INCOMPLETE ? "Not the whole game: see the System tab" : "Set the game's folder first";
+    return s_game.g.state == GAME_INCOMPLETE                              ? "Not the whole game: see the System tab"
+           : s_game.g.state == GAME_OTHER_BUILD && s_game.g.other_version ? "Not version 1.12: see the System tab"
+                                                                          : "Set the game's folder first";
 }
 
 static const wchar_t* game_path_shown(void)
@@ -2480,16 +2482,18 @@ static void report_make(const wchar_t* heading)
     }
 }
 
-/* The last session froze with frame generation on, and it is still on: AMD FSR 3.1's frame generation swap chain has
- * stopped the GPU at the start of a session on this kind of PC (a laptop whose display hangs off the other GPU,
- * 2026-11-10). One click turns it off; FSR 3.1's scaling stays. 1 = asked. */
+/* The last session froze with the GPU stopped behind frame generation's swap chain, and it is still on: AMD FSR 3.1's
+ * frame generation swap chain has stopped the GPU at the start of a session on this kind of PC (a laptop whose display
+ * hangs off the other GPU, 2026-11-10; what set it off: docs/notes/2026-11-11-fg-freeze-exit.md). One click turns it
+ * off; FSR 3.1's scaling stays. 1 = asked. */
 static int fg_offer(void)
 {
     Opt* fg = opt_find("graphics", "frame_generation");
     if (!fg || !ps3_settings_ieq(fg->cur, "on")) return 0;
     static const wchar_t what[] =
-        L"Frame generation (AMD FSR 3.1) can stop the game at its start on some PCs, and it was on when the game froze. "
-        L"Turning it off keeps everything else, FSR 3.1's scaling too. You can turn it on again in the Graphics tab.";
+        L"The GPU stopped behind frame generation's swap chain (AMD FSR 3.1), which has happened at the start of the "
+        L"game on some PCs. Turning it off keeps everything else, FSR 3.1's scaling too. You can turn it on again in "
+        L"the Graphics tab.";
     int pressed = 0;
     const task_dialog_fn td = task_dialog();
     if (td) {
@@ -2522,9 +2526,9 @@ static int fg_offer(void)
 static void report_offer(void)
 {
     const wchar_t* h = NULL;
-    int generating = 0;
-    const SessionEnd end = gowa_last_session(&generating);
-    if (end == SESSION_FROZE && generating && fg_offer()) return;
+    int fg_stuck = 0;
+    const SessionEnd end = gowa_last_session(&fg_stuck);
+    if (end == SESSION_FROZE && fg_stuck && fg_offer()) return;
     switch (end) {
     case SESSION_CRASH:    h = L"The last session crashed. Make a report of it?"; break;
     case SESSION_GPU_LOST: h = L"The last session lost the graphics device. Make a report of it?"; break;

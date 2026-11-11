@@ -78,10 +78,16 @@ Sessions with frame generation off end the same way and leave nothing.
 - **The game is ended by another process (`main.cpp`).** When the window closes, the exe starts a copy of itself with
   `--end-process <pid> <code>`, handled first in `main`, which terminates the game and waits for it. When that cannot
   happen within 5 s, the game ends itself as before. The game is gone 91 ms after the close, and no process is left.
+  A game that cannot start for a file of its folder (`game_open_failed`) ends the same way.
 - **The freeze watch blames frame generation only for a GPU that stopped (`report.cpp`, fork
   `rsx_d3d12_backend_gpu_stuck`).** A stopped GPU is a wait for its fence that ran out and a fence that has not moved
   since. With frame generation on the log says so and where to turn it off; with it off it says the GPU stopped. A long
   load says nothing.
+- **The launcher offers frame generation off only after that line (`report.cpp` `gowa_last_session`, `launcher.cpp`
+  `fg_offer`).** It used to after any freeze with frame generation on, in place of the offer to make a report: a
+  freeze of the game's own, such as a job that never ends (issue #7), would have asked about frame generation and
+  never for the report. The last freeze of the session must be followed by "the GPU has stopped, behind frame
+  generation's swap chain", as in every frozen start of the runs above.
 
 ## Measured
 

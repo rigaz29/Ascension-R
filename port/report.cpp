@@ -465,9 +465,9 @@ static std::vector<std::string> session_logs(void)
     return v;
 }
 
-SessionEnd gowa_last_session(int* generating)
+SessionEnd gowa_last_session(int* fg_stuck)
 {
-    if (generating) *generating = 0;
+    if (fg_stuck) *fg_stuck = 0;
     const std::vector<std::string> logs = session_logs();
     if (logs.empty()) return SESSION_NONE;
     const std::string path = logs_dir() + "\\" + logs[0];
@@ -477,7 +477,14 @@ SessionEnd gowa_last_session(int* generating)
     CloseHandle(h);
     std::string log, why;
     if (!read_capped(path, log, 1u << 20, 8u << 20)) return SESSION_NONE;
-    if (generating) *generating = log.find("[D3D12] frame generation on:") != std::string::npos;
+    /* The last freeze's own line, which freeze_report writes only when the GPU had stopped with frame generation on.
+     * Frame generation merely on is not enough: a freeze of the game's own (a job that never ends, issue #7) with it on
+     * was put down to it, and the offer to turn it off took the place of the report. */
+    if (fg_stuck) {
+        const size_t p = log.rfind("[freeze] no new frame");
+        *fg_stuck = p != std::string::npos &&
+                    log.find("[freeze] the GPU has stopped, behind frame generation", p) != std::string::npos;
+    }
     return session_end_of(log, &why);
 }
 
@@ -990,6 +997,6 @@ int gowa_report_create(int with_saves, char* out, size_t n)
 void gowa_report_session_start(const char*) {}
 void gowa_where(const void*, char* out, size_t n) { if (n) out[0] = 0; }
 void gowa_freeze_watch_start(void) {}
-SessionEnd gowa_last_session(int* generating) { if (generating) *generating = 0; return SESSION_NONE; }
+SessionEnd gowa_last_session(int* fg_stuck) { if (fg_stuck) *fg_stuck = 0; return SESSION_NONE; }
 int gowa_report_create(int, char*, size_t) { return -1; }
 #endif

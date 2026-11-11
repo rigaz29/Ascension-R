@@ -169,12 +169,13 @@ extern "C" int  rsx_null_backend_pump_messages(void);
 #define WINDOW_HEIGHT 720
 
 #ifdef _WIN32
-/* The game ended by another process when the player closes it, not by itself. On a laptop whose display hangs off
- * the other GPU, a session with frame generation on that ended itself (TerminateProcess on its own process, from the
- * window's thread or from any other) left the next session's GPU stopped in a present at the boot logos: 4 of 8
- * starts. Ended from outside it was 0 of 8, and 0 of 8 again with the window's close handled first; with this,
- * 0 of 14 (docs/notes/2026-11-11-fg-freeze-exit.md). A copy of the exe started for this alone (--end-process, at the
- * top of main) ends this one; when it cannot, this one ends itself as before. */
+/* The game ended by another process when the player closes it, or when it cannot start (game_open_failed), not by
+ * itself. On a laptop whose display hangs off the other GPU, a session with frame generation on that ended itself
+ * (TerminateProcess on its own process, from the window's thread or from any other) left the next session's GPU
+ * stopped in a present at the boot logos: 4 of 8 starts. Ended from outside it was 0 of 8, and 0 of 8 again with the
+ * window's close handled first; with this, 0 of 14 (docs/notes/2026-11-11-fg-freeze-exit.md). A copy of the exe
+ * started for this alone (--end-process, at the top of main) ends this one; when it cannot, this one ends itself as
+ * before. */
 static void end_by_another_process(UINT code)
 {
     wchar_t exe[MAX_PATH];
@@ -1572,8 +1573,9 @@ static void game_open_failed(const char* gpath, const char* hpath)
                        L"launcher's System tab.");
         MessageBoxW(NULL, m, L"Ascension-R", MB_OK | MB_ICONERROR | MB_TOPMOST | MB_SETFOREGROUND);
     }
-    /* Terminated, as when the window closes: guest threads are still running and may hold locks an exit needs. */
-    TerminateProcess(GetCurrentProcess(), 3);
+    /* Ended as when the window closes, by another process: guest threads are still running and may hold locks an exit
+     * needs, and with frame generation on its swap chain may be up already. */
+    end_by_another_process(3);
 }
 #endif
 
