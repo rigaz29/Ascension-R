@@ -9,8 +9,9 @@
 #pragma once
 #include <stdint.h>
 
-/* A DLL built for another number is refused. Change it when a list below or a structure they share changes. */
-#define GAME_MODULE_ABI 1
+/* A DLL built for another number is refused. Change it when a list below or a structure they share changes.
+ * 2: atol and calloc (native/spu_edge_memo.c). */
+#define GAME_MODULE_ABI 2
 
 /* The program's functions. In the DLL each is one jump through the table. */
 #define GAME_MODULE_FUNCS(X)                                                                                                  \
@@ -28,8 +29,8 @@
 
 /* The C runtime's, called through an import. */
 #define GAME_MODULE_IMPORTS(X)                                                                                                \
-    X(__acrt_iob_func) X(__stdio_common_vfprintf) X(_aligned_malloc) X(abort) X(atoi) X(clock) X(fflush) X(free) X(getenv)    \
-    X(ldexp) X(log2f) X(malloc) X(strtoul)
+    X(__acrt_iob_func) X(__stdio_common_vfprintf) X(_aligned_malloc) X(abort) X(atoi) X(atol) X(calloc) X(clock) X(fflush)   \
+    X(free) X(getenv) X(ldexp) X(log2f) X(malloc) X(strtoul)
 
 /* The program's data that is settled before the guest runs: the DLL keeps a copy, so reading it costs what it did. */
 typedef struct { uint8_t* vb; const unsigned char* coh; } GameModuleMm;
