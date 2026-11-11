@@ -39,7 +39,3 @@ PARAM.SFO
 .venv/
 __pycache__/
 *.pyc
-
-# The precompile screen's pictures (port/loading_screen.cpp): kept on this PC, like every picture; a build embeds
-# the ones it finds (CMakeLists.txt, loading_art.rc).
-/port/art/

@@ -32,9 +32,12 @@ game does it before its first start of each version, and does not start before i
 Drawn on a 640x360 canvas with GDI, scaled up by whole pixels where that fills 90% of the window, else to fit, nearest
 either way:
 
-- three pictures behind (`port/art`, kept out of git like every picture; a build embeds those it finds as RCDATA
-  201-203 through `loading_art.rc`, which CMake writes): the two 1080-wide panoramas pan from left to right over the
-  14 s each is shown, and the next comes in through a 4x4 ordered dither on 2x2 blocks;
+- a scene behind, drawn by the code (`draw_scene`) rather than taken from pictures, so there is nothing to keep out
+  of git and nothing in it that is not this project's own: Greek ruins at sunset. A sky in dithered bands with stars,
+  a striped sun going down into the sea with its path on the water, four layers of cloud drifting, lightning far off
+  every 9.5 s from 6 s in, two ranges of mountains, birds, a cliff with a temple and two waterfalls, and before it
+  all broken columns, grass in the wind and a brazier whose fire flickers and sends up embers. The layers move a
+  little apart as a slow camera sways, 8 pixels over 45 s. A frame of it takes about 2 ms;
 - the lower part darker in dithered steps;
 - a panel with a gold frame and cut corners; the title at 2x in a 5x7 pixel font of its own, the percentage, a bar of
   28 segments from red through orange to gold, lit from above, the next one blinking; the archive or the count of
@@ -52,6 +55,7 @@ On a test folder (`logs\gate`) with a copy of the player's cache, the game start
 | Mark taken away, the list kept | 0.3 s to 2.0 s | at 1.4 s | checked in 1 s |
 | Marked | none | at 0.3 s | |
 | No mark, no list, the screen closed at 5 s | 0.3 s to 5.6 s | none | quit; nothing marked, nothing kept, no process left |
+| No mark, no list, the scene drawn in code | 0.5 s to 108.9 s | at 107.6 s | the build 107 s; in two screenshots a second apart the clouds, birds and fire had moved |
 
 At 125% the window's client is 1600x900: the canvas at 2.5x to fit, and the screenshot showed the panel whole.
 

@@ -1,12 +1,8 @@
-/* Resources of Ascension-R.exe: the manifest (gowa.manifest), the version in the file's properties, and the
- * pictures of the precompile screen (loading_screen.cpp), as CMakeLists.txt lists those port/art has in
- * loading_art.rc: none in a tree without them. */
+/* Resources of Ascension-R.exe: the manifest (gowa.manifest) and the version in the file's properties. */
 #include <windows.h>
 #include "version.h"
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "gowa.manifest"
-
-#include "loading_art.rc"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION AR_VERSION_RC

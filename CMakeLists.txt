@@ -451,29 +451,13 @@ if(SPU_SOURCES)
     endif()
 endif()
 
-# The precompile screen's pictures (port/loading_screen.cpp), from port/art: kept out of git like every picture
-# (check_repo.py). A build that has them carries them as RCDATA 201-203 (loading_art.rc, made here and included by
-# app.rc); one without draws the screen on a plain ground.
-set(_art_rc "")
-set(_art_deps "")
-foreach(_i 1 2 3)
-    set(_png "${CMAKE_CURRENT_SOURCE_DIR}/port/art/loading${_i}.png")
-    if(EXISTS "${_png}")
-        math(EXPR _id "200 + ${_i}")
-        string(APPEND _art_rc "${_id} RCDATA \"${_png}\"\n")
-        list(APPEND _art_deps "${_png}")
-    endif()
-endforeach()
-file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/loading_art.rc" CONTENT "${_art_rc}")
-
 # app.rc carries the version block and the manifest, and needs a
 # resource compiler. Listing it as a source on a host that has none is not a
 # link error, it is a "no rule to make" for a file nothing can consume.
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc" PROPERTIES
-                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/port/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/port/version.h;${CMAKE_CURRENT_BINARY_DIR}/loading_art.rc;${_art_deps}"
-                                INCLUDE_DIRECTORIES "${CMAKE_CURRENT_BINARY_DIR}")
+                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/port/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/port/version.h")
     # The manifest comes from app.rc; the linker's own would be a second one.
     if(MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")

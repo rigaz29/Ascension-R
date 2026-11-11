@@ -6,10 +6,9 @@
  * It runs where the game's window is about to open, in a window of its own laid out as that one will be (windowed at
  * its size, or borderless over the monitor), before the D3D12 window, its swap chain and the shader cache are made: a
  * process of its own builds them (the same exe with --precompile-shaders and this one's settings), and the cache is
- * free for the game again when it ends. That one prints how far it is; this one shows it on an 8-bit screen: the
- * pictures of port/art behind (panning when wider than the screen, one after the other through an ordered dither),
- * a pixel font, a bar of segments. The screen goes when the game's window is up (gowa_loading_screen_close, from the
- * frame clock).
+ * free for the game again when it ends. That one prints how far it is; this one shows it on an 8-bit screen: a scene
+ * drawn here (draw_scene: Greek ruins at sunset, all of it this file's own), a pixel font, a bar of segments. The
+ * screen goes when the game's window is up (gowa_loading_screen_close, from the frame clock).
  *
  * Done for this version: <shader cache>.precompiled says "Ascension-R <version>" (precompile.cpp writes it), and a
  * pack of the cache is there. Clear shaders moves it to the Recycle Bin with the cache, so the next start builds them
@@ -20,17 +19,15 @@
  * Everything is drawn on a 640x360 canvas, 16:9, scaled up by whole pixels where that fills most of the window.
  * Ascension-R.exe --loading-preview <folder> writes the screen in a few states to <folder> as BMP files, 2x.
  *
- * The pictures stay out of git like every picture (check_repo.py): port/art/loading1.png, loading2.png (1080x360,
- * panned) and loading3.png (640x360), indexed PNG, embedded by the build that has them (CMakeLists.txt makes
- * loading_art.rc). A tree without them draws the screen on a plain ground. Made from the full-size pictures with
- *   ffmpeg -i <in> -filter_complex "[0:v]scale=<W>:360:flags=area,split[a][b];[a]palettegen=max_colors=128:\
- *   stats_mode=full[p];[b][p]paletteuse=dither=none" -pix_fmt pal8 <out>.png
+ * The scene is code, not a picture: a sky of dithered bands and a striped sun, four layers of drifting clouds, a
+ * stroke of lightning now and then, far mountains with ruins on a peak, the sea and the sun on it, birds, a cliff
+ * with a temple and two waterfalls, and before it all broken columns and a brazier whose fire flickers and sends up
+ * embers. The layers move a little apart as a slow camera sways.
  */
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
 #include <windows.h>
-#include <wincodec.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -42,9 +39,6 @@
 #include "ps3emu/ps3_settings.h"
 #include "version.h"
 #include "loading_screen.h"
-
-#pragma comment(lib, "windowscodecs.lib")
-#pragma comment(lib, "ole32.lib")
 
 /* ---------------------------------------------------------------------------
  * The pixel font: 5x7 in a cell of 6x8, upper case (lower case is drawn as upper)
@@ -143,54 +137,478 @@ static void text(int x, int y, int scale, uint32_t color, uint32_t shadow, const
 }
 
 /* ---------------------------------------------------------------------------
- * The pictures (port/art, in app.rc as RCDATA 201-203)
+ * The scene: Greek ruins at sunset, drawn here
  * -----------------------------------------------------------------------*/
-struct Art { int w = 0, h = 0; std::vector<uint32_t> px; };
-static Art s_art[3];
-static int s_art_n;
+enum { HORIZON = 212, WATERLINE = 250 };   /* the sea's far edge; where the cliff stands in it */
 
-static bool art_load(int id, Art& a)
+static inline uint32_t hash32(uint32_t x)
 {
-    HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(id), (LPCWSTR)RT_RCDATA);
-    HGLOBAL g = r ? LoadResource(NULL, r) : NULL;
-    const void* data = g ? LockResource(g) : NULL;
-    const DWORD size = r ? SizeofResource(NULL, r) : 0;
-    if (!data || !size) return false;
-    IWICImagingFactory* f = NULL;
-    if (FAILED(CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&f)))) return false;
-    IWICStream* s = NULL;
-    IWICBitmapDecoder* d = NULL;
-    IWICBitmapFrameDecode* fr = NULL;
-    IWICFormatConverter* cv = NULL;
-    bool ok = false;
-    if (SUCCEEDED(f->CreateStream(&s)) && SUCCEEDED(s->InitializeFromMemory((BYTE*)data, size)) &&
-        SUCCEEDED(f->CreateDecoderFromStream(s, NULL, WICDecodeMetadataCacheOnDemand, &d)) &&
-        SUCCEEDED(d->GetFrame(0, &fr)) && SUCCEEDED(f->CreateFormatConverter(&cv)) &&
-        SUCCEEDED(cv->Initialize(fr, GUID_WICPixelFormat32bppBGRA, WICBitmapDitherTypeNone, NULL, 0.0,
-                                 WICBitmapPaletteTypeCustom))) {
-        UINT w = 0, h = 0;
-        cv->GetSize(&w, &h);
-        if (w >= CW && h == CH) {
-            a.w = (int)w;
-            a.h = (int)h;
-            a.px.resize((size_t)w * h);
-            ok = SUCCEEDED(cv->CopyPixels(NULL, w * 4, w * h * 4, (BYTE*)a.px.data()));
-        }
-    }
-    if (cv) cv->Release();
-    if (fr) fr->Release();
-    if (d) d->Release();
-    if (s) s->Release();
-    f->Release();
-    return ok;
+    x ^= x >> 16; x *= 0x7FEB352Du; x ^= x >> 15; x *= 0x846CA68Bu; x ^= x >> 16;
+    return x;
+}
+static inline float hashf(uint32_t x) { return (float)(hash32(x) & 0xFFFFFF) / 16777216.0f; }
+
+/* Smooth value noise in [0, 1), and three octaves of it. */
+static float vnoise(float x, uint32_t seed)
+{
+    const float fl = floorf(x);
+    const int i = (int)fl;
+    const float f = x - fl, u = f * f * (3.0f - 2.0f * f);
+    const float a = hashf((uint32_t)i * 0x9E3779B1u ^ seed), b = hashf((uint32_t)(i + 1) * 0x9E3779B1u ^ seed);
+    return a + (b - a) * u;
+}
+static float fbm(float x, uint32_t seed)
+{
+    return vnoise(x, seed) * 0.6f + vnoise(x * 2.13f, seed * 3u + 7u) * 0.28f + vnoise(x * 4.37f, seed * 5u + 13u) * 0.12f;
 }
 
-static void art_load_all(void)
+static inline void put(int x, int y, uint32_t c)
 {
-    static const int ids[3] = { 203, 201, 202 };   /* the one that fits first, then the two to pan */
-    s_art_n = 0;
-    for (int id : ids)
-        if (art_load(id, s_art[s_art_n])) s_art_n++;
+    if ((unsigned)x < CW && (unsigned)y < CH) s_canvas[y * CW + x] = c;
+}
+static inline uint32_t get(int x, int y) { return (unsigned)x < CW && (unsigned)y < CH ? s_canvas[y * CW + x] : 0; }
+/* The ordered dither at a level of 0 to 16: true on that many pixels of each 16. */
+static inline bool dith(int x, int y, int level) { return level > k_bayer[y & 3][x & 3]; }
+
+/* A colour along a palette of n, u from 0 to 1, in bands: each colour solid, dithered into the next over the last
+ * half of its band. */
+static uint32_t band(const uint32_t* pal, int n, float u, int x, int y)
+{
+    u = std::min(1.0f, std::max(0.0f, u)) * (float)(n - 1);
+    const int i = std::min((int)u, n - 2);
+    const float f = u - (float)i;
+    return dith(x, y, f < 0.5f ? 0 : (int)((f - 0.5f) * 32.0f)) ? pal[i + 1] : pal[i];
+}
+
+static inline int luma(uint32_t c) { return (int)(((c >> 16) & 255) * 3 + ((c >> 8) & 255) * 5 + (c & 255) * 2) / 10; }
+
+static void stroke(int x0, int y0, int x1, int y1, uint32_t c, uint32_t glow)
+{
+    for (int pass = glow ? 0 : 1; pass < 2; pass++) {
+        int x = x0, y = y0;
+        const int dx = abs(x1 - x0), dy = -abs(y1 - y0), sx = x0 < x1 ? 1 : -1, sy = y0 < y1 ? 1 : -1;
+        int e = dx + dy;
+        for (;;) {
+            if (pass) put(x, y, c);
+            else { put(x - 1, y, glow); put(x + 1, y, glow); }
+            if (x == x1 && y == y1) break;
+            const int e2 = 2 * e;
+            if (e2 >= dy) { e += dy; x += sx; }
+            if (e2 <= dx) { e += dx; y += sy; }
+        }
+    }
+}
+
+static void scene_sky(ULONGLONG t, float flash)
+{
+    static const uint32_t pal[] = { 0x140A24, 0x1E0E34, 0x2E1444, 0x44184E, 0x601C52, 0x822452,
+                                    0xA2304C, 0xC04444, 0xDA603C, 0xEC823C, 0xF6A64E, 0xFCC874 };
+    const int n = (int)(sizeof pal / sizeof pal[0]);
+    for (int y = 0; y < HORIZON; y++) {
+        const float f = powf((float)y / (HORIZON - 1), 1.25f);
+        for (int x = 0; x < CW; x++) {
+            uint32_t c = band(pal, n, f, x, y);
+            if (flash > 0.0f) c = rgb_mix(c, 0xD8CCFF, (int)(flash * (1.0f - f) * 150.0f));
+            s_canvas[y * CW + x] = c;
+        }
+    }
+    /* stars in the dark at the top, each twinkling at its own pace */
+    for (uint32_t i = 0; i < 40; i++) {
+        const uint32_t h = hash32(i * 2654435761u + 977u);
+        const int x = (int)(h % CW), y = (int)((h >> 10) % 78u);
+        const int tw = (int)((t / (220 + (h >> 24) * 3) + i) % 7u);
+        if (tw == 0) continue;
+        const uint32_t c = tw == 3 ? 0xFFF4E8 : y < 40 ? 0xB8A8D8 : 0x9A7AB8;
+        put(x, y, c);
+        if (tw == 3 && (h & 3) == 0) { put(x - 1, y, 0x7A64A8); put(x + 1, y, 0x7A64A8); put(x, y - 1, 0x7A64A8); put(x, y + 1, 0x7A64A8); }
+    }
+}
+
+/* The sun going down into the sea, its lower half cut into stripes, in a glow of dithered rings. */
+static void scene_sun(int cx, int cy, int r)
+{
+    for (int y = cy - r - 24; y < HORIZON; y++)
+        for (int x = cx - r - 24; x <= cx + r + 24; x++) {
+            const float d = sqrtf((float)((x - cx) * (x - cx) + (y - cy) * (y - cy)));
+            if (d <= (float)r || d > (float)r + 24.0f) continue;
+            if (dith(x, y, (int)((1.0f - (d - (float)r) / 24.0f) * 10.0f))) put(x, y, rgb_mix(get(x, y), 0xFFD890, 110));
+        }
+    static const uint32_t disc[] = { 0xFFF8D8, 0xFFE8A0, 0xFFCC6A, 0xFFA84A, 0xF8843E };
+    for (int y = cy - r; y < HORIZON; y++) {
+        const int dy = y - cy;
+        if (dy > 0) {
+            const int gap = 1 + dy / 9;
+            if (dy % 6 >= 6 - gap) continue;
+        }
+        const int half = (int)sqrtf((float)std::max(0, r * r - dy * dy));
+        for (int x = cx - half; x <= cx + half; x++) put(x, y, band(disc, 5, (float)(dy + r) / (float)(2 * r), x, y));
+    }
+}
+
+/* Four layers of cloud drifting at their own speeds, lit from below. */
+static void scene_clouds(float t_s, float cam)
+{
+    struct Layer { int y, thick; float freq, speed; uint32_t seed, top, mid, lit; };
+    static const Layer layers[] = {
+        {  30, 10, 0.012f, 2.0f, 11, 0x2C1442, 0x3E184A, 0x6E2852 },
+        {  70, 16, 0.009f, 3.5f, 23, 0x3E1648, 0x5A1E4E, 0xB04446 },
+        { 112, 16, 0.011f, 5.5f, 37, 0x561C4C, 0x7A2A4E, 0xE06A3E },
+        { 176,  5, 0.015f, 8.0f, 53, 0x7A2A48, 0xA84046, 0xFCB45A },   /* thin, across the sun */
+    };
+    for (const Layer& l : layers) {
+        const float off = t_s * l.speed + cam * 0.3f;
+        for (int x = 0; x < CW; x++) {
+            const float wx = (float)x + off, n = fbm(wx * l.freq, l.seed);
+            if (n < 0.55f) continue;
+            /* flat below, heaped above */
+            const float h = std::min(1.0f, (n - 0.55f) * 6.0f) * (float)l.thick;
+            const float heap = 0.6f + 0.4f * vnoise(wx * 0.09f, l.seed + 99u);
+            const int top = l.y - (int)(h * heap), bot = l.y + 1 + (int)(h * 0.15f);
+            for (int y = top; y <= bot; y++) {
+                if (y == top && !dith(x, y, 8)) continue;   /* a soft edge */
+                const float rel = bot > top ? (float)(y - top) / (float)(bot - top) : 1.0f;
+                uint32_t c = rel > 0.7f ? l.lit : rel > 0.3f ? l.mid : l.top;
+                if (rel > 0.6f && rel <= 0.7f && dith(x, y, 8)) c = l.lit;
+                if (rel > 0.2f && rel <= 0.3f && dith(x, y, 8)) c = l.mid;
+                put(x, y, c);
+            }
+        }
+    }
+}
+
+/* Now and then a stroke of lightning far off, with a fork, the sky lit with it (scene_sky's flash): the first a few
+ * seconds in, not as the screen opens. */
+static const ULONGLONG LIGHTNING_MS = 9500, LIGHTNING_FIRST_MS = 6000;
+static inline ULONGLONG lightning_t(ULONGLONG t) { return t + LIGHTNING_MS - LIGHTNING_FIRST_MS; }
+static void scene_lightning(ULONGLONG t, float cam)
+{
+    const ULONGLONG ph = lightning_t(t) % LIGHTNING_MS;
+    if (ph >= 230 || (ph > 60 && ph < 120)) return;   /* on, off, on again */
+    const uint32_t seed = (uint32_t)(lightning_t(t) / LIGHTNING_MS) * 2654435761u;
+    int x = 140 + (int)(hash32(seed) % 90) + (int)(cam * 0.15f), y = 22, fx = 0, fy = 0;
+    const int fork = 3 + (int)(hash32(seed + 1) % 5);
+    for (int k = 0; y < HORIZON - 20; k++) {
+        const int nx = x + (int)(hash32(seed + 17u * (uint32_t)k + 3u) % 15) - 7, ny = y + 9;
+        stroke(x, y, nx, ny, 0xF4F0FF, 0x9A86D0);
+        if (k == fork) { fx = nx; fy = ny; }
+        x = nx;
+        y = ny;
+    }
+    for (int k = 0; k < 4 && fx; k++) {
+        const int nx = fx + 4 + (int)(hash32(seed + 31u * (uint32_t)k) % 8), ny = fy + 8;
+        stroke(fx, fy, nx, ny, 0xE8E0FF, 0x7E6CB8);
+        fx = nx;
+        fy = ny;
+    }
+}
+
+/* A range of mountains: its top for x, falling away toward the sun, where they open onto the sea. */
+static int ridge(int x, float shift, int sun_x, uint32_t seed, float tall)
+{
+    const float wx = (float)x + shift;
+    const float d = std::min(1.0f, fabsf((float)(x - sun_x)) / 160.0f), open = d * d * (3.0f - 2.0f * d);
+    return HORIZON - (int)((fbm(wx * 0.0055f, seed) * tall + fbm(wx * 0.031f, seed + 2u) * tall * 0.2f) * open);
+}
+static void mountains(float shift, int sun_x, uint32_t seed, float tall, uint32_t body, uint32_t rim, uint32_t rim2)
+{
+    for (int x = 0; x < CW; x++) {
+        const int r = ridge(x, shift, sun_x, seed, tall);
+        for (int y = r; y < HORIZON; y++) put(x, y, y == r ? rim : (y == r + 1 && dith(x, y, 8)) ? rim2 : body);
+    }
+}
+/* Two ranges, the far one paler in the haze, and ruins on a peak of the near one. */
+static void scene_far(float cam, int sun_x)
+{
+    mountains(cam * 0.08f, sun_x, 151, 76.0f, 0x8A3858, 0xC85E62, 0xA44A5E);
+    const float shift = cam * 0.15f;
+    mountains(shift, sun_x, 101, 50.0f, 0x4A1C4C, 0x8A3A5A, 0x6A2A54);
+    int px = 150, py = HORIZON;
+    for (int x = 150; x < 230; x++) {
+        const int r = ridge(x, shift, sun_x, 101, 50.0f);
+        if (r < py) { py = r; px = x; }
+    }
+    for (int k = -2; k <= 2; k++) {
+        const int cx = px + k * 4;
+        for (int y = py - 9; y <= ridge(cx, shift, sun_x, 101, 50.0f); y++) put(cx, y, 0x4A1C4C);
+    }
+    fill(px - 10, py - 11, px + 11, py - 9, 0x4A1C4C);
+    fill(px - 10, py - 11, px + 11, py - 10, 0x8A3A5A);
+}
+
+/* The sea: darker as it comes near, small waves catching the sky, the sun on it in dashes that shimmer. */
+static void scene_sea(ULONGLONG t, int sun_x)
+{
+    static const uint32_t pal[] = { 0x7A2C56, 0x5A2452, 0x44204C, 0x321A40, 0x241430, 0x1A0E24 };
+    const uint32_t frame = (uint32_t)(t / 150), slow = (uint32_t)(t / 420);
+    for (int y = HORIZON; y < CH; y++) {
+        const int depth = y - HORIZON;
+        const float u = std::min(1.0f, (float)depth / 80.0f);
+        for (int x = 0; x < CW; x++) put(x, y, band(pal, 6, u, x, y));
+        if (depth % 4 == 2)
+            for (int x = 0; x < CW; x += 4)
+                if (hash32((uint32_t)x * 131u + (uint32_t)y * 977u + slow) % 19u == 0)
+                    fill(x, y, x + 3, y + 1, depth < 20 ? 0xA8486A : 0x7A3462);
+        if (depth & 1) continue;
+        const int w = 10 + depth * 2;   /* the sun's path, wider as it comes near */
+        for (int x = sun_x - w; x <= sun_x + w; x += 4) {
+            const uint32_t h = hash32((uint32_t)(x - sun_x + 4096) * 7919u + (uint32_t)y * 104729u + frame * 31u);
+            const int edge = abs(x - sun_x) * 16 / (w + 1);
+            if ((int)(h % 16u) < 11 - edge * 2 / 3)
+                fill(x, y, x + 3, y + 1, depth < 10 ? 0xFFE8B0 : depth < 30 ? 0xFFC870 : 0xF09A50);
+        }
+    }
+}
+
+static void scene_birds(ULONGLONG t)
+{
+    const float s = (float)t / 1000.0f;
+    for (int i = 0; i < 3; i++) {
+        const int x = (int)fmodf(s * (14.0f + (float)i * 3.0f) + (float)i * 230.0f, (float)CW + 80.0f) - 40;
+        const int y = 116 + i * 13 + (int)(sinf(s * 0.7f + (float)i) * 4.0f);
+        const int up = (int)((t / 180 + (ULONGLONG)i) & 1);
+        const uint32_t c = 0x22102C;
+        put(x, y, c); put(x - 1, y, c); put(x + 1, y, c);
+        put(x - 2, y + (up ? -1 : 1), c); put(x + 2, y + (up ? -1 : 1), c);
+        put(x - 3, y + (up ? -2 : 1), c); put(x + 3, y + (up ? -2 : 1), c);
+    }
+}
+
+/* A fire w wide standing on its base row, about h tall, flickering. */
+static void flame(int x0, int base, int w, int h, ULONGLONG t, uint32_t seed)
+{
+    const uint32_t frame = (uint32_t)(t / 90);
+    for (int i = 0; i < w; i++) {
+        const float centre = 1.0f - fabsf(((float)i + 0.5f) / (float)w * 2.0f - 1.0f);
+        const float n = vnoise((float)i * 0.45f + (float)t * 0.011f, seed);
+        const int fh = (int)((float)h * (0.35f + 0.65f * centre) * (0.65f + 0.6f * n));
+        for (int k = 0; k < fh; k++) {
+            const float rel = (float)k / (float)std::max(fh, 1);
+            if (rel > 0.7f && (hash32(seed + (uint32_t)i * 977u + (uint32_t)k * 131u + frame * 7u) & 1)) continue;
+            const uint32_t c = rel < 0.2f && centre > 0.5f ? 0xFFF4C4 : rel < 0.45f ? 0xFFD058 : rel < 0.72f ? 0xF68A2C : 0xC23A1C;
+            put(x0 + i, base - k, c);
+        }
+    }
+}
+
+/* Water falling from y0 into the sea, w wide, lit by the sunset on its left, and spray where it lands. */
+static void waterfall(int x0, int w, int y0, ULONGLONG t)
+{
+    static const uint32_t pal[] = { 0xFFF0E4, 0xF2C8B8, 0xC898AC, 0xE4B4B4 };
+    const int flow = (int)(t / 22), y1 = WATERLINE;
+    for (int y = y0; y < y1; y++)
+        for (int x = x0; x < x0 + w; x++) {
+            const int v = (y - flow + (int)(hash32((uint32_t)x * 2654435761u) % 9u)) & 0x3FFF;
+            put(x, y, x == x0 ? 0xFFE0B8 : x == x0 + w - 1 ? 0x7A4A6A : pal[(v / 3) % 4]);
+        }
+    for (int y = y1 - 14; y < y1 + 5; y++)
+        for (int x = x0 - 12; x < x0 + w + 12; x++) {
+            const float dx = ((float)x - ((float)x0 + (float)w * 0.5f)) / ((float)w * 0.5f + 12.0f);
+            const float dy = (float)(y - (y1 - 2)) / (y < y1 - 2 ? 12.0f : 6.0f), d = dx * dx + dy * dy;
+            if (d < 1.0f && dith(x + (int)(t / 120), y, (int)((1.0f - d) * 12.0f))) put(x, y, 0xF0DCDC);
+        }
+}
+
+/* Light from a fire, in dithered rings that waver with it, on what is dark near it (not on the sky behind). */
+static void glow(int cx, int cy, int r, uint32_t c, float strength, ULONGLONG t)
+{
+    const float flick = 0.85f + 0.15f * vnoise((float)t * 0.008f, 503);
+    for (int y = cy - r; y <= cy + r; y++)
+        for (int x = cx - r; x <= cx + r; x++) {
+            const float d = sqrtf((float)((x - cx) * (x - cx) + (y - cy) * (y - cy))) / (float)r;
+            if (d >= 1.0f) continue;
+            const uint32_t p = get(x, y);
+            if (luma(p) > 90) continue;
+            if (dith(x, y, (int)((1.0f - d) * strength * flick * 16.0f))) put(x, y, rgb_mix(p, c, 110));
+        }
+}
+
+/* A temple on its steps, x0 to x0 + 150, against the sunset: dark, lit on its edges toward the sun, and inside by
+ * the fires at the ends of its floor. */
+static void temple(int x0, int base, ULONGLONG t)
+{
+    const int w = 150;
+    for (int s = 0; s < 3; s++) {
+        const int y0 = base - 4 * (s + 1), inset = 5 * s;
+        fill(x0 + inset, y0, x0 + w - inset, y0 + 4, 0x3A1A2C);
+        fill(x0 + inset, y0, x0 + w - inset, y0 + 1, 0xC87048);
+        put(x0 + inset, y0 + 1, 0xA85A40);
+    }
+    const int floor_y = base - 12, col_top = floor_y - 34;
+    fill(x0 + 13, col_top, x0 + w - 11, floor_y, 0x12080E);
+    for (int y = floor_y - 12; y < floor_y; y++)
+        for (int x = x0 + 13; x < x0 + w - 11; x++)
+            if (dith(x, y, (y - (floor_y - 12)) * 10 / 12)) put(x, y, 0x5A2018);
+    for (int k = 0; k < 8; k++) {
+        const int cx = x0 + 13 + k * 17;
+        fill(cx, col_top, cx + 7, floor_y, 0x40202E);
+        fill(cx, col_top, cx + 1, floor_y, 0xF0A462);
+        fill(cx + 1, col_top, cx + 2, floor_y, 0xA85A42);
+        fill(cx + 4, col_top, cx + 5, floor_y, 0x341A28);
+        fill(cx - 1, col_top - 2, cx + 8, col_top, 0x5A2C36);
+        fill(cx - 1, col_top - 2, cx + 8, col_top - 1, 0xE09A5C);
+    }
+    fill(x0 + 8, col_top - 9, x0 + w - 8, col_top - 2, 0x4A2430);
+    fill(x0 + 8, col_top - 9, x0 + w - 8, col_top - 8, 0xF0B070);
+    fill(x0 + 8, col_top - 5, x0 + w - 8, col_top - 4, 0x2E1422);
+    for (int x = x0 + 12; x < x0 + w - 10; x += 6) fill(x, col_top - 7, x + 2, col_top - 5, 0x6A3438);
+    const int py = col_top - 9, apex = py - 20, mid = x0 + w / 2;
+    int prev = 0;
+    for (int y = apex; y < py; y++) {
+        const int half = (y - apex) * (w / 2 - 8) / (py - apex);
+        fill(mid - half, y, mid + half + 1, y + 1, 0x42202E);
+        fill(mid - half, y, mid - prev + 2, y + 1, 0xF4B474);   /* its slope toward the sun */
+        prev = half;
+    }
+    glow(x0 + 6, floor_y - 6, 22, 0xD0703A, 0.5f, t);
+    glow(x0 + w - 6, floor_y - 6, 22, 0xD0703A, 0.5f, t);
+    flame(x0 + 3, floor_y - 1, 6, 9, t, 401);
+    flame(x0 + w - 9, floor_y - 1, 6, 9, t, 409);
+}
+
+/* The cliff on the right, standing in the sea: dark rock in layers, lit on its edges toward the sun, the temple on
+ * it, two waterfalls down it, its shadow in the water and the sea breaking at its foot. */
+static int cliff_edge(int y, float ox) { return (int)(400.0f + ox - (float)(y - 148) * 0.24f + fbm((float)y * 0.09f, 211) * 14.0f); }
+static void scene_cliff(ULONGLONG t, float cam)
+{
+    const float ox = cam * 0.5f;
+    const int top = 148;
+    for (int y = top; y < WATERLINE; y++) {
+        const int e = cliff_edge(y, ox);
+        for (int x = std::max(e, 0); x < CW; x++) {
+            const int wx = x - (int)ox;
+            const uint32_t h = hash32((uint32_t)(wx >> 1) * 73856093u ^ (uint32_t)(y >> 1) * 19349663u);
+            const int layer = (y + (int)(vnoise((float)wx * 0.06f, 223) * 6.0f)) % 12;
+            uint32_t c = (h & 7) == 0 ? 0x3C1E30 : (h & 7) == 1 ? 0x221020 : 0x2E1626;
+            if (layer == 0) c = 0x180A14;
+            else if (layer == 1) c = 0x462434;
+            const int in = x - e;
+            if (in < 2) c = in == 0 ? 0xC86040 : 0x8A3E38;
+            else if (in < 18 && dith(x, y, (18 - in) / 2)) c = rgb_mix(c, 0x8A3E38, 80);
+            if (y - top < 2) c = y == top ? 0xE07A44 : 0x9A4638;
+            put(x, y, c);
+        }
+    }
+    for (int y = WATERLINE; y < WATERLINE + 30; y++) {
+        const int my = std::max(WATERLINE - 1 - (y - WATERLINE) * 3, top);
+        const int wob = (int)(sinf((float)y * 1.3f + (float)t * 0.004f) * 1.5f);
+        for (int x = std::max(cliff_edge(my, ox) + wob, 0); x < CW; x++)
+            if ((y & 1) || dith(x, y, 10)) put(x, y, rgb_mix(get(x, y), 0x100610, 150));
+    }
+    const int foot = cliff_edge(WATERLINE - 1, ox);
+    for (int x = std::max(foot - 6, 0); x < std::min(foot + 96, (int)CW); x++)
+        if (dith(x, WATERLINE, 13 - std::max(0, x - foot) / 8) && hash32((uint32_t)x * 31u + (uint32_t)(t / 200)) % 3u)
+            put(x, WATERLINE, 0xB890B0);
+    temple(456 + (int)ox, top, t);
+    waterfall(420 + (int)ox, 9, top + 1, t);
+    waterfall(441 + (int)ox, 6, top + 3, t);
+}
+
+/* A column from ytop to ybot, w wide, lit on its right; broken: its top ragged. */
+static void column(int x0, int w, int ytop, int ybot, int broken, uint32_t seed)
+{
+    for (int x = x0; x < x0 + w; x++) {
+        const int rx = x - x0;
+        const int top = broken ? ytop + (int)(hash32(seed + (uint32_t)rx / 2u) % 9u) : ytop;
+        for (int y = top; y < ybot; y++) {
+            uint32_t c = rx % 5 == 0 ? 0x140A14 : 0x1C0E1A;
+            if (rx >= w - 5) c = rx >= w - 2 ? 0xC2643E : 0x8A4436;
+            if (y == top && broken) c = 0x9A4A3A;
+            put(x, y, c);
+        }
+    }
+}
+
+static void embers(int cx, int base, ULONGLONG t)
+{
+    for (uint32_t i = 0; i < 14; i++) {
+        const float life = 2600.0f + (float)(hash32(611u + i) % 1400u);
+        const float ph = fmodf((float)t + (float)(hash32(631u + i) % 4000u), life) / life;
+        const int y = base - (int)(ph * 110.0f);
+        const int x = cx + (int)(sinf(ph * 9.0f + (float)i) * (2.0f + ph * 10.0f)) + (int)(hash32(641u + i) % 9u) - 4;
+        if (ph > 0.85f && (hash32((uint32_t)(t / 80) + i) & 1)) continue;
+        put(x, y, ph < 0.4f ? 0xFFD070 : ph < 0.75f ? 0xF68A30 : 0xA83A1C);
+    }
+}
+
+/* Before it all on the left: a ledge, a column under a broken beam, a broken column, a fallen drum, a brazier. */
+static int ledge_top(int wx)
+{
+    int top = 204 + wx * 24 / 230 + (int)(fbm((float)wx * 0.07f, 307) * 6.0f);
+    if (wx > 196) top += (wx - 196) * (wx - 196) / 6;   /* where it breaks off */
+    return top;
+}
+static void scene_near(ULONGLONG t, float cam)
+{
+    const int ox = (int)cam;
+    for (int x = 0; x < CW; x++) {
+        const int wx = x - ox, top = ledge_top(wx);
+        if (top >= CH) break;
+        for (int y = top; y < CH; y++) {
+            const uint32_t h = hash32((uint32_t)(wx >> 1) * 83492791u ^ (uint32_t)(y >> 1) * 2971215073u);
+            put(x, y, y == top ? 0xB0503C : y == top + 1 ? 0x5A2630 : (h & 7) == 0 ? 0x24101E : 0x140A16);
+        }
+    }
+    static const int tufts[] = { 6, 20, 66, 108, 140, 200 };   /* grass, in the wind */
+    for (int wx : tufts) {
+        const int base = ledge_top(wx);
+        for (int b = 0; b < 4; b++) {
+            const int gx = wx + ox + b * 2 - 3, tall = 3 + (int)(hash32((uint32_t)(wx * 4 + b)) % 4u);
+            const int sway = (int)(sinf((float)t * 0.0021f + (float)(wx + b)) * 1.3f);
+            stroke(gx, base, gx + sway, base - tall, 0x1C0E1A, 0);
+            put(gx + sway, base - tall, 0xA04A38);
+        }
+    }
+    column(34 + ox, 24, 100, ledge_top(46) + 1, 0, 0);
+    fill(30 + ox, 94, 62 + ox, 100, 0x22101C);          /* its capital */
+    fill(30 + ox, 94, 62 + ox, 95, 0xA85A3A);
+    fill(58 + ox, 94, 62 + ox, 100, 0xC2643E);
+    fill(-6 + ox, 82, 66 + ox, 94, 0x1A0C18);           /* the beam it still holds, broken off at the left */
+    fill(-6 + ox, 82, 66 + ox, 83, 0xB0603C);
+    fill(60 + ox, 82, 66 + ox, 94, 0x9A4A38);
+    column(116 + ox, 20, 176, ledge_top(126) + 1, 1, 77);
+    {   /* a fallen drum of a column, lying on the ledge, its end toward the sun */
+        const int y1 = ledge_top(166) + 1, y0 = y1 - 13, x0 = 144 + ox, x1 = 184 + ox;
+        for (int y = y0; y < y1; y++) {
+            const int k = y - y0;
+            fill(x0, y, x1, y + 1, k == 0 ? 0xA85A3C : k % 3 == 2 ? 0x140A14 : 0x1E0E1A);
+        }
+        for (int y = y0; y < y1; y++) {
+            const float v = ((float)(y - y0) + 0.5f) / 13.0f * 2.0f - 1.0f;
+            const int half = (int)(3.5f * sqrtf(std::max(0.0f, 1.0f - v * v)) + 0.5f);
+            fill(x1 - half, y, x1 + half + 1, y + 1, 0x7A3C34);
+            put(x1 + half, y, 0xC2643E);
+        }
+    }
+    /* the brazier: three legs, a bowl, its fire, its light, its embers */
+    const int bx = 92 + ox, bowl = ledge_top(92) - 24;
+    stroke(bx, bowl + 8, bx - 9, ledge_top(83) + 1, 0x2A1418, 0);
+    stroke(bx, bowl + 8, bx + 9, ledge_top(101) + 1, 0x2A1418, 0);
+    stroke(bx, bowl + 8, bx, ledge_top(92) + 1, 0x2A1418, 0);
+    for (int y = bowl; y < bowl + 8; y++) {
+        const int half = 13 - (y - bowl);
+        fill(bx - half, y, bx + half + 1, y + 1, y == bowl ? 0xE07A3C : 0x2A1418);
+    }
+    glow(bx, bowl - 8, 72, 0xD0703A, 0.55f, t);
+    flame(bx - 11, bowl - 1, 23, 22, t, 331);
+    embers(bx, bowl - 6, t);
+}
+
+static void draw_scene(ULONGLONG t)
+{
+    const float t_s = (float)t / 1000.0f;
+    const float cam = sinf(t_s * 6.2831853f / 45.0f) * 8.0f;
+    const ULONGLONG lp = lightning_t(t) % LIGHTNING_MS;
+    const float flash = lp < 60 ? 1.0f : lp >= 120 && lp < 200 ? 0.6f : 0.0f;
+    const int sun_x = 300 + (int)(cam * 0.1f), sun_y = HORIZON - 24;
+    scene_sky(t, flash);
+    scene_sun(sun_x, sun_y, 44);
+    scene_clouds(t_s, cam);
+    scene_lightning(t, cam);
+    scene_far(cam, sun_x);
+    scene_sea(t, sun_x);
+    scene_birds(t);
+    scene_cliff(t, cam);
+    scene_near(t, cam);
 }
 
 /* ---------------------------------------------------------------------------
@@ -212,37 +630,7 @@ static Progress s_prog;
 /* ---------------------------------------------------------------------------
  * A frame
  * -----------------------------------------------------------------------*/
-static const int SHOW_MS = 14000, FADE_MS = 1200;
-
-/* x of the picture's view: from its left side to its right over the time it is shown, eased. */
-static int art_pan(const Art& a, int t)
-{
-    if (a.w <= CW) return 0;
-    const double u = std::min(1.0, std::max(0.0, (double)t / SHOW_MS));
-    return (int)((a.w - CW) * (0.5 - 0.5 * cos(3.14159265358979 * u)));
-}
-
-static void draw_background(ULONGLONG t)
-{
-    if (!s_art_n) {
-        fill(0, 0, CW, CH, 0x1A0E0A);
-        return;
-    }
-    const int i = (int)((t / SHOW_MS) % (ULONGLONG)s_art_n), j = (i + 1) % s_art_n;
-    const int local = (int)(t % SHOW_MS);
-    const Art& a = s_art[i];
-    const Art& b = s_art[j];
-    const int ax = art_pan(a, local), bx = art_pan(b, 0);
-    /* the dissolve: the next picture comes in through a 4x4 ordered dither on 2x2 blocks */
-    const int f16 = s_art_n > 1 && local > SHOW_MS - FADE_MS ? (local - (SHOW_MS - FADE_MS)) * 17 / FADE_MS : 0;
-    for (int y = 0; y < CH; y++)
-        for (int x = 0; x < CW; x++) {
-            const int next = f16 > k_bayer[(y >> 1) & 3][(x >> 1) & 3];
-            s_canvas[y * CW + x] = (next ? b.px[(size_t)y * b.w + x + bx] : a.px[(size_t)y * a.w + x + ax]) & 0xFFFFFF;
-        }
-}
-
-/* The lower part darker, in dithered steps, so the panel reads over any picture. */
+/* The lower part darker, in dithered steps, so the panel reads over the scene. */
 static void draw_shade(void)
 {
     const int top = 196;
@@ -316,7 +704,7 @@ static void upper(char* s)
 
 static void compose(ULONGLONG t, const Progress& p)
 {
-    draw_background(t);
+    draw_scene(t);
     draw_shade();
     const int px0 = 24, py0 = 272, px1 = CW - 24, py1 = 352;
     draw_frame_box(px0, py0, px1, py1);
@@ -459,8 +847,6 @@ static LRESULT CALLBACK wnd_proc(HWND h, UINT m, WPARAM w, LPARAM l)
 /* The window as the game's will be (rsx_d3d12_backend.c: d3d12_create_window, d3d12_set_borderless). */
 static DWORD WINAPI ui_main(LPVOID)
 {
-    CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    art_load_all();
     WNDCLASSEXW wc = {};
     wc.cbSize = sizeof wc;
     wc.lpfnWndProc = wnd_proc;
@@ -732,18 +1118,15 @@ static int write_bmp2x(const char* path)
 
 int gowa_loading_preview(const char* dir)
 {
-    CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    art_load_all();
-    printf("loading preview: %d pictures\n", s_art_n);
     struct Shot { const char* name; ULONGLONG t; Progress p; };
     std::vector<Shot> shots;
     Progress p;
     p.phase = PH_READ; p.a = 12; p.n = 48; snprintf(p.name, sizeof p.name, "STAT.PSARC");
     shots.push_back({ "1_reading", 3000, p });
     p = Progress(); p.phase = PH_BUILD; p.found = 3455; p.done = 2418; p.total = 6910;
-    shots.push_back({ "2_building", 19000, p });
+    shots.push_back({ "2_building", 21500, p });
     p.done = 5200;
-    shots.push_back({ "3_building_dissolve", 27400, p });
+    shots.push_back({ "3_building_lightning", LIGHTNING_FIRST_MS + 2 * LIGHTNING_MS + 30, p });
     p = Progress(); p.phase = PH_DONE; p.done = p.total = 6910;
     shots.push_back({ "4_done", 33000, p });
     p = Progress(); p.phase = PH_ERROR; p.done = 1200; p.total = 6910;
