@@ -106,3 +106,24 @@ its build check came out with the same DLL. Unpacked as a new player has it, it 
 source, and was published the same day as `v0.1.0-alpha.3` (the tag at the version's commit, `9add610`), before a
 controller had been tried on it. Its notes have the install steps, EDGE on the GPU, the speed against RPCS3 and a
 status table. README.md points at the releases page now.
+
+## The second release, 0.1.0-alpha.4 (2026-11-11)
+
+- **The first package stopped at the DLL's link:** `calloc` and `atol` undefined, from `native/spu_edge_memo.c` since
+  the unskinned jobs' transforms went to the vertex pass. One exe takes them from the C runtime, so no build of this
+  tree had seen it. Both went into `GAME_MODULE_IMPORTS`, `GAME_MODULE_ABI` 2 (`bf591d4`), and
+  `tests/test_game_module_crt.py` now reads `native/` for C runtime calls the table lacks, in CI. With the table before,
+  it names those two.
+- **The package:** a zip of 144.6 MB, 464 files and 328.7 MB unpacked, SHA-256
+  `fbf14dcc69b326344cf7fd3743768c081c6d63bbda62c8f0e5dd13830b9c44a9`. Its audit found what alpha.3's had. Its build
+  check made the DLL in 479 s: SHA-256 `44ee25b2c2f426dfb4844c0c3a1680e34817e2486ba9a7ea894cdd3f30087525`.
+- **The zip on another drive** (issues #1 and #6):
+  - unpacked on D:, with `LOCALAPPDATA` pointed at a folder on C: so the data folder was there and this PC's own was
+    left alone;
+  - `kit-build` run as the launcher runs it, with the Kit's Python and no `GOWA_*` or `PYTHON*`, built the DLL in
+    503 s, byte for byte the build check's. Its three lift messages named the folders on C: in full, where alpha.3
+    stopped;
+  - the Kit's exe, from D:, with that data folder and default settings, loaded the DLL (22,320 lifted functions) and
+    played the first fight at 34.3 fps, the sound clean.
+- **The bench stopped on the D: exe** too, as it named the exe relative to the tree (`e52b4a6`).
+- **Not done:** the launcher's window, a fresh decrypt, a controller.
