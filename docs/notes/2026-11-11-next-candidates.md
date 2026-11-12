@@ -327,3 +327,27 @@ where the reader takes `0x87` alone. The byte is likely EDGE's flags and uniform
   known one with one slot different.
 
 So D is worth doing, 1.9 ms for certain and 3.5 if the second call goes too. C is small unless its pieces are learned.
+
+## D, tried and not kept (2026-11-12)
+
+The change: the job reader's kind kept for the job (at `0x9A40`), and the hook at `0xA928` leaving both of a velocity
+job's calls to `0xA880` out (back at `0x54F8` and `0x5AEC`), none of them run late. `GOWA_EDGE_VEL_BINORM=0` made them as
+before.
+
+- **Right.** With `GOWA_EDGE_VEL=2` the check compared 1,198,356 velocity jobs and 381,164,480 vertexes: no position
+  word and no normal or tangent byte differed. The normals loop went from about 3.2 million calls a run to 31 thousand.
+- **Not faster.** The fight, ABBA and then BAAB, eight runs:
+
+  | | flips/s, the four runs | mean |
+  |---|---|---|
+  | made (`=0`) | 28.92, 29.80, 30.05, 29.72 | 29.62 |
+  | left out | 28.30, 27.39, 27.90, 27.41 | 27.75 |
+
+  Every run without them was below every run with them. Every workload's time a flip rose with it, RenderJobs' as much
+  as EDGE's: the frames got longer, not EDGE's work larger. Nothing found explains it. Within a run the 10 s windows
+  move between 22 and 33 flips/s with the fight itself.
+- **The gate,** ABBA: 45.73, 41.64, 40.93, 38.78 (made, left out, left out, made). Each run held within ±1 flip/s, and
+  the four fell with the laptop's heat, by more than D could ever move it.
+- **So it was not kept.** It saves ~3.5 SPU-ms a frame by the probe's clock, +0.7-1.8% by the estimate above, which
+  runs of either scene cannot show on this laptop. A measurement that turns it on and off within one run could; not
+  done.
