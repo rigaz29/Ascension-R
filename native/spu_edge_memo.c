@@ -423,14 +423,21 @@ static void ek_decline(spu_context* ctx)
     t_m.state = 0;
 }
 
-/* the backend's way when a draw does not go through the pass */
+/* the backend's way when a draw does not go through the pass; on its own thread, so under the SPU's
+ * rounding for the call, as er_fill. The game's lit pass tests EQUAL against its depth pass, and the
+ * two may come one from here and one from the vertex pass or the SPU: with the host's rounding the
+ * positions differed in the last bit and the lit pass left speckled holes in the mesh (a resident
+ * part that filled up often, VTX_RESIDENT_MB=8, showed it on Kratos). */
 static void ek_fill(const rsx_kept* k, const void* skin, uint8_t* ring, uint32_t n)
 {
+    const unsigned csr = _mm_getcsr();
+    _mm_setcsr(csr | 0xE040u);
     const uint8_t* in = (const uint8_t*)k->verts;
     for (uint32_t v = 0; v < n; v++, in += k->rec) {
         if (k->rec == EK_IN_LIT) ek_vertex_lit((const ek_rec*)skin, in, ring + (size_t)v * k->stride);
         else ek_vertex_pos((const ek_rec*)skin, in, ring + (size_t)v * k->stride);
     }
+    _mm_setcsr(csr);
 }
 
 /* ------------------------------------------------------------------- an unskinned job's inputs */
