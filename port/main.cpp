@@ -548,7 +548,11 @@ static bool alloc_guest_vm(void)
 {
 #ifdef _WIN32
     AddVectoredExceptionHandler(1, vm_commit_veh);
-    vm_base = (uint8_t*)VirtualAlloc(NULL, VM_SIZE, MEM_RESERVE, PAGE_READWRITE);
+    /* Top down, so above 4 GB on every PC. The runtime tells a guest address from a host pointer by its value in
+     * places (cellSaveData, cellRtc: below 4 GB is the guest's), and Windows left to itself put this below 4 GB on
+     * some PCs, where a host pointer into the guest's memory read as a guest address: issue #10's saves went into the
+     * save folder itself, with no folder of their own. */
+    vm_base = (uint8_t*)VirtualAlloc(NULL, VM_SIZE, MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE);
     ppu_vm_size = 0;              /* the whole space is backed; no OOB guard needed */
 #else
     /* No vectored exception handlers off Windows, so the arena is committed up
