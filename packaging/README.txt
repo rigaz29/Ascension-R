@@ -26,8 +26,8 @@ FIRST START
 2. In the System tab, pick the game's folder with Browse, or let Auto detect find it.
 3. If the game still has to be decrypted, the same row says what is missing. Choose rpcs3.exe or press Download RPCS3,
    and choose the .rap file if it asks for one. Your game's folder and your RPCS3 are only read.
-4. Press Play. Shaders are built the first time they are needed, so expect stutter at first. "Precompile shaders" in
-   the launcher builds part of them ahead.
+4. Press Play. The first start of each version builds the game's vertex shaders on a screen of its own, a minute or two
+   the first time. The other shaders are built the first time they are needed, so expect some stutter at first.
 
 
 CONTROLLERS

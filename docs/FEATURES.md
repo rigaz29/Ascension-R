@@ -29,13 +29,12 @@ the files before took 83 MB. A cache from an older build is converted at the fir
 The pipelines kept in it are built on several threads at the start, and the title waits for them, a third of a second
 here: no pipeline the cache has is then built in play. `graphics.pipeline_wait = off` (Build pipelines first, in the
 Graphics tab) lets the game go on while they build.
-Precompile shaders, in the launcher's sidebar, reads the game's archives and compiles every vertex shader in them into
-the cache before you play: 3,455 programs, about a minute and a half here, 3 MB more on disk. A session of the first
+Before its first start of each version the game reads its archives and compiles every vertex shader in them into the
+cache, and does not start before it is done: an 8-bit screen where its window is about to open shows how far it is
+(`port/loading_screen.cpp`, `port/precompile.cpp`). The first time that is 3,455 programs, a minute or two, 3 MB more
+on disk; the programs it finds are kept beside the cache, so after an update it takes seconds. A session of the first
 level then compiled 4 vertex shaders where it had compiled 212. Fragment shaders are still compiled as the game reaches
-them: their text depends on the textures and state of each draw, which the files do not say.
-The game does it by itself before its first start of each version, and does not start before it is done: an 8-bit
-screen where its window is about to open shows how far it is (`port/loading_screen.cpp`). The programs it finds are
-kept beside the cache, so after an update it takes seconds; the first time, a minute or two. Clear shaders makes the
+them: their text depends on the textures and state of each draw, which the files do not say. Clear shaders makes the
 next start do it again. `GOWA_PRECOMPILE_FIRST=0` leaves it out (the benches do).
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 

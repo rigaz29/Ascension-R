@@ -1593,8 +1593,8 @@ int main(int argc, char** argv)
      * The ELF defaults to [paths] elf in the settings. --no-launcher is for
      * scripts: the settings window (launcher.cpp) is not shown.
      * --precompile-shaders: compile the game's vertex programs into the shader
-     * cache and quit, the game not run (precompile.cpp; the launcher's
-     * Precompile shaders).
+     * cache and quit, the game not run (precompile.cpp; the precompile gate
+     * runs it, loading_screen.cpp).
      * --report [--with-saves]: make a problem report of the last sessions and quit (report.cpp;
      * the launcher's Report a problem).
      * --end-process <pid> <code>: end that process and quit (end_by_another_process). */

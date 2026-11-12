@@ -1,6 +1,7 @@
 /*
  * Precompile: the game's vertex programs, from its archives, into the shader cache before it runs.
- * Ascension-R.exe --precompile-shaders [--settings <file>]; the launcher's Precompile shaders runs it.
+ * Ascension-R.exe --precompile-shaders [--settings <file>]; the game's start runs it while this version's vertex
+ * programs are not built yet (the precompile gate, loading_screen.cpp).
  *
  * The programs sit in the WAD and AS files inside the PSARC archives beside the executable, each behind a header
  * of the engine's own: the instruction count (u16), 0 (u16), the input and output masks (u32 each), 0020FFFF, and
@@ -20,7 +21,7 @@
  * says the version it was built for: the game's start does it first while that is missing or another version's
  * (loading_screen.cpp). GOWA_PRECOMPILE_FOREGROUND keeps the process at normal priority, for that start.
  *
- * Progress, one line each on stdout, for the launcher:
+ * Progress, one line each on stdout, for the gate's screen:
  *   precompile: read <archive n> <of> <name>
  *   precompile: found <programs>
  *   precompile: compile <done> <of>

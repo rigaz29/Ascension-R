@@ -64,3 +64,10 @@ At 125% the window's client is 1600x900: the canvas at 2.5x to fit, and the scre
 - Fragment shaders are still built the first time they are needed, so a new place can still leave something out for
   a moment the first time: the gate takes the vertex shaders' part of that away.
 - The Kit's player has a build of the game's code first (about ten minutes) and then this, on the first Play.
+
+## The launcher's button, taken out
+
+With the gate, every first start of a version builds the vertex shaders, so the launcher's Precompile shaders only
+did again what was done. It went from the sidebar with its progress bar, the wait it put on Play and Clear shaders,
+its stop when the window closed, and its launcher shot; the sidebar's other links moved down into its place.
+`--precompile-shaders` stays: the gate runs it, and its progress lines are read by the gate's screen alone.
