@@ -83,6 +83,7 @@ static const uint8_t* glyph(char c)
  * The canvas
  * -----------------------------------------------------------------------*/
 enum { CW = 640, CH = 360 };
+static_assert(CW == GOWA_SCENE_W && CH == GOWA_SCENE_H, "loading_screen.h gives the launcher this size");
 static uint32_t s_canvas[CW * CH];   /* 0x00RRGGBB, as a 32-bit DIB takes it */
 
 static inline uint32_t rgb_mix(uint32_t d, uint32_t s, int a)
@@ -610,6 +611,16 @@ static void draw_scene(ULONGLONG t)
     scene_cliff(t, cam);
     scene_near(t, cam);
 }
+
+/* The scene alone, for the launcher's header (launcher.cpp). The launcher has closed before the gate opens this screen,
+ * so the two never draw on the canvas at once. */
+const uint32_t* gowa_scene_frame(uint64_t t_ms)
+{
+    draw_scene((ULONGLONG)t_ms);
+    return s_canvas;
+}
+
+const uint8_t* gowa_pixel_glyph(char c) { return glyph(c); }
 
 /* ---------------------------------------------------------------------------
  * What the build says

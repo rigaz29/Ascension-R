@@ -1,10 +1,16 @@
 /* Resources of Ascension-R.exe: the manifest (gowa.manifest), the icon (app.ico, scripts/brand/brand.py; its windows
- * take it as resource 1) and the version in the file's properties. */
+ * take it as resource 1), the launcher's fonts and the version in the file's properties. */
 #include <windows.h>
 #include "version.h"
 
 CREATEPROCESS_MANIFEST_RESOURCE_ID RT_MANIFEST "gowa.manifest"
 1 ICON "app.ico"
+
+/* The launcher's fonts, under the SIL Open Font License 1.1 (THIRD_PARTY_NOTICES.md). launcher.cpp reads them from
+ * memory by these numbers. */
+101 RCDATA "..\\third_party\\silkscreen\\Silkscreen-Regular.ttf"
+102 RCDATA "..\\third_party\\silkscreen\\Silkscreen-Bold.ttf"
+103 RCDATA "..\\third_party\\pixelify-sans\\PixelifySans-VariableFont_wght.ttf"
 
 VS_VERSION_INFO VERSIONINFO
 FILEVERSION AR_VERSION_RC

@@ -8,14 +8,16 @@
  * launcher.show = off skips it; holding Shift while the game starts brings it
  * back.
  *
- * The window is drawn with Direct2D and DirectWrite: a sidebar of tabs (Play,
- * Graphics, Display, Controls, Game patches, Cheats, System), a header with the
- * game's own art (PIC1.PNG and ICON0.PNG of the PS3_GAME folder the player
- * installed; nothing of the game is in this repository), cards of settings
- * as segmented buttons, switches and lists, and a bar with Play. The keyboard
- * keys are set in a window of their own. GOWA_LAUNCHER_SHOT=<folder> draws
- * every tab into PNG files there and quits, to look at the window without
- * opening it.
+ * The window is drawn with Direct2D and DirectWrite, 8-bit and neon: a sidebar
+ * of tabs (Play, Graphics, Display, Controls, Game patches, Cheats, System), a
+ * header with the precompile screen's scene moving in it (loading_screen.cpp,
+ * all of it this port's own), cards of settings as segmented buttons, switches
+ * and lists, and a bar with Play. Its fonts are Silkscreen and Pixelify Sans,
+ * from the exe (app.rc). Retro effects (Display tab) is its glow and scanlines.
+ * The keyboard keys are set in a window of their own.
+ * GOWA_LAUNCHER_SHOT=<folder> draws every tab into PNG files there and quits,
+ * to look at the window without opening it; GOWA_LAUNCHER_SHOT_DPI sets their
+ * DPI (120, a 125% display, by default).
  *
  * The System tab shows the game's folder: Browse picks it, Auto detect looks
  * for it on every disk (game_find.cpp), and a window that opens with no game
@@ -36,19 +38,23 @@
 #include "game_prepare.h"
 #include "report.h"
 #include "version.h"
+#include "loading_screen.h"   /* the header's scene and the pixel font */
 
+#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <wchar.h>
+#include <wctype.h>
 
 #ifdef _WIN32
 #include <commctrl.h>   /* SetWindowSubclass: the keyboard window's buttons */
 #include <shellapi.h>   /* ShellExecuteA: Open save folder */
 #include <objbase.h>
 #include <shobjidl.h>   /* IFileOpenDialog: Browse */
-#include <d2d1.h>
-#include <dwrite.h>
+#include <d2d1_1.h>
+#include <d2d1effects.h>   /* the glow's blur */
+#include <dwrite_3.h>      /* fonts read from memory */
 #include <wincodec.h>
 #include <dxgi1_6.h>   /* IDXGIFactory6: which GPU is which */
 #include <dwmapi.h>
@@ -57,6 +63,7 @@
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "dxgi.lib")
+#pragma comment(lib, "dxguid.lib")   /* CLSID_D2D1GaussianBlur */
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "ole32.lib")
 extern "C" const char* ps3_pad_key_name(int vk);   /* libs/input/cellPad.c */
@@ -166,6 +173,8 @@ static Opt s_opt[] = {
       "Draws the game to the full width of a wider screen. The HUD, menus and movies stay 16:9. Takes effect at the next start." },
     { T_DISPLAY, "display", "shader_hint", "on", "Shader build indicator", 1, SW,
       "A spinner in the bottom left corner while the game's new shaders are built, as RPCS3 shows." },
+    { T_DISPLAY, "launcher", "effects", "on", "Retro effects", 1, SW,
+      "Scanlines and a neon glow in this window. The game is not changed." },
     { T_GRAPHICS, "graphics", "gpu", "discrete", "Graphics card", 0, LIST(k_gpu, k_gpu_n), k_gpu_n, NULL },   /* gpu_detect */
     { T_GRAPHICS, "graphics", "render_scale", "1", "Internal resolution", 0, LIST(k_rscale, k_rscale_n), k_rscale_s,
       "What the scene is drawn at. Bloom, blur and shadow maps stay at the game's size. "
@@ -352,6 +361,14 @@ static const char* opt_name(const Opt& o)
     return i >= 0 ? o.names[i] : o.cur;
 }
 
+/* An option's short name: its segment's, else its list entry. */
+static const char* opt_short(const Opt* o)
+{
+    if (!o) return "";
+    const int i = opt_index(*o, o->cur);
+    return i < 0 ? o->cur : o->seg ? o->seg[i] : o->names[i];
+}
+
 #ifdef _WIN32
 /* ---------------------------------------------------------------------------
  * The keyboard window (Win32 controls)
@@ -381,6 +398,12 @@ static void dark_caption(HWND h)
 {
     BOOL dark = TRUE;   /* DWMWA_USE_IMMERSIVE_DARK_MODE: 20, 19 before Windows 10 20H1 */
     if (FAILED(DwmSetWindowAttribute(h, 20, &dark, sizeof dark))) DwmSetWindowAttribute(h, 19, &dark, sizeof dark);
+    /* Windows 11: the title bar in the window's own colours (DWMWA_BORDER_COLOR, _CAPTION_COLOR, _TEXT_COLOR as
+     * COLORREF). Windows 10 says no and keeps its dark one. */
+    const COLORREF border = RGB(0x2C, 0x1A, 0x40), caption = RGB(0x0A, 0x06, 0x11), title = RGB(0xE8, 0xD2, 0xA8);
+    DwmSetWindowAttribute(h, 34, &border, sizeof border);
+    DwmSetWindowAttribute(h, 35, &caption, sizeof caption);
+    DwmSetWindowAttribute(h, 36, &title, sizeof title);
 }
 
 static void kb_label(int i)
@@ -530,7 +553,6 @@ static struct {
     int elf_ok;
     int profiles;
     char saves[1100];
-    char vfs[1100];
     int pad;        /* controllers plugged in, as the Controller API reads them */
     char pad_name[160];   /* the first one's name and what reads it */
 } s_rc;
@@ -931,31 +953,51 @@ static void preset_apply(int k)
 }
 
 /* ---------------------------------------------------------------------------
- * Drawing: Direct2D and DirectWrite
+ * Drawing: Direct2D and DirectWrite, 8-bit and neon
+ *
+ * Square edges a whole number of device pixels wide, buttons with a bevel, 16x16 pixel icons, the pixel fonts
+ * Silkscreen (headings, buttons) and Pixelify Sans (the rest), and in the header the precompile screen's scene with
+ * each of its pixels a whole number of device pixels. All but the scene is drawn into a layer (layer_draw), again only
+ * when something changes; a frame (frame_draw) is the scene, the layer over it and, with Retro effects, the glow added
+ * and the scanlines over all. So the scene moves 30 times a second for next to nothing.
  * -----------------------------------------------------------------------*/
-static const float WIN_W = 1120.0f, WIN_H = 720.0f, SIDE_W = 248.0f, FOOT_H = 72.0f;
+static const float WIN_W = 1120.0f, WIN_H = 720.0f, SIDE_W = 220.0f, FOOT_H = 76.0f;
+static const float HERO_PLAY = 236.0f, HERO_TAB = 120.0f;   /* the header: on the Play tab, on the others */
 
 /* Colours, 0xRRGGBB */
 enum : unsigned {
-    C_BG = 0x0E0E10, C_SIDE = 0x131315, C_CARD = 0x1A1A1E, C_CARD_HI = 0x222227, C_LINE = 0x2B2B32,
-    C_TEXT = 0xECECEE, C_TEXT2 = 0xA3A3AD, C_MUTED = 0x71717B, C_RED = 0xB3261E, C_RED_HI = 0xD0352B,
-    C_GOLD = 0xE2A23B, C_OK = 0x4ADE80, C_WARN = 0xFBBF24, C_BAD = 0xF87171,
+    C_BG = 0x120A1C, C_SIDE = 0x170D24, C_CARD = 0x1C1029, C_CARD_HI = 0x241436, C_CTL = 0x271839, C_CTL_HI = 0x34214C,
+    C_LO = 0x0E0716, C_HI = 0x45305E,       /* a bevel's dark and lit edges */
+    C_LINE = 0x2C1A40, C_EDGE = 0x3B2556,   /* rules; the edge of a card or a field */
+    C_TEXT = 0xF8E6BC, C_TEXT2 = 0xE8D2A8, C_MUTED = 0xCDB8D8, C_DIM = 0x8C7398, C_OFF = 0x5A4270,
+    C_GOLD = 0xFFCC6A, C_GOLD_HI = 0xFFDC96, C_INK = 0x1A0F28,   /* what is chosen, and the writing on it */
+    C_NEON = 0xFF4FA8, C_CYAN = 0x4FE9FF,
+    C_OK = 0x7DF0A0, C_WARN = 0xFF9A5A, C_WARN_T = 0xFFB27A, C_BAD = 0xFF6B7A,
 };
 
 static ID2D1Factory* s_d2d;
 static IDWriteFactory* s_dw;
 static IWICImagingFactory* s_wic;
-static IWICFormatConverter* s_img_bg;     /* PIC1.PNG */
-static IWICFormatConverter* s_img_logo;   /* ICON0.PNG */
-static IDWriteTextFormat *s_tf_ui, *s_tf_ui_b, *s_tf_small, *s_tf_head, *s_tf_title, *s_tf_icon, *s_tf_play, *s_tf_cap;
+static IDWriteFactory5* s_dw5;                      /* Windows 10 1709 on: the fonts read from memory */
+static IDWriteInMemoryFontFileLoader* s_font_mem;
+static IDWriteFontCollection1* s_fonts;             /* Silkscreen and Pixelify Sans; NULL, Segoe UI */
+static IDWriteTextFormat *s_tf_ui, *s_tf_ui_b, *s_tf_small, *s_tf_cap, *s_tf_head, *s_tf_btn, *s_tf_title, *s_tf_play;
 static IDWriteTextFormat* s_tf_desc;   /* s_tf_small from the top of its box: the lines under labels */
 static IDWriteTextFormat* s_tf_path;   /* s_tf_small on one line, cut before its last two folders */
-static const wchar_t* s_icon_font = L"Segoe MDL2 Assets";
 
 /* What the render target owns; made again with it. */
-static ID2D1RenderTarget* s_rt;
+static ID2D1RenderTarget* s_rt;                     /* the window's, or the shots' */
+static ID2D1RenderTarget* s_d;                      /* what is drawn on: the layer while it is drawn, else s_rt */
 static ID2D1SolidColorBrush* s_br;
-static ID2D1Bitmap *s_bm_bg, *s_bm_logo;
+static ID2D1BitmapRenderTarget* s_layer;            /* all but the scene, clear where the scene shows */
+static ID2D1DeviceContext* s_dc;                    /* s_rt's, to add the glow; none before Windows 8 */
+static ID2D1BitmapRenderTarget *s_glow_src, *s_glow;   /* what glows; it blurred */
+static ID2D1Effect *s_blur_near, *s_blur_far;       /* two widths of glow */
+static ID2D1Bitmap *s_bm_scene, *s_bm_fx, *s_bm_icon, *s_bm_word, *s_bm_word_glow;
+static float s_px = 1.0f;                           /* device pixels a DIP */
+static int s_layer_old = 1;                         /* the layer is to be drawn again */
+static ULONGLONG s_t0;                              /* when the window opened: the scene's clock */
+static int s_anim;                                  /* the scene moves */
 
 static D2D1_COLOR_F col(unsigned rgb, float a = 1.0f)
 {
@@ -972,53 +1014,50 @@ static const wchar_t* W(const char* s)
     return b;
 }
 
+/* The fonts in the exe (app.rc), read from memory into a collection of their own. Without it (Windows 10 before
+ * 1709, a resource missing) the text is Segoe UI. */
+enum { RES_SILKSCREEN = 101, RES_SILKSCREEN_BOLD = 102, RES_PIXELIFY = 103 };
+static const wchar_t* s_f_pixel = L"Segoe UI";   /* Silkscreen, once read */
+static const wchar_t* s_f_body = L"Segoe UI";    /* Pixelify Sans */
+
+static void fonts_load(void)
+{
+    IDWriteFontSetBuilder1* b = NULL;
+    IDWriteFontSet* set = NULL;
+    int n = 0;
+    if (FAILED(s_dw->QueryInterface(__uuidof(IDWriteFactory5), (void**)&s_dw5))) s_dw5 = NULL;
+    if (s_dw5 && SUCCEEDED(s_dw5->CreateInMemoryFontFileLoader(&s_font_mem)) &&
+        SUCCEEDED(s_dw5->RegisterFontFileLoader(s_font_mem)) && SUCCEEDED(s_dw5->CreateFontSetBuilder(&b))) {
+        const int ids[] = { RES_SILKSCREEN, RES_SILKSCREEN_BOLD, RES_PIXELIFY };
+        for (int i = 0; i < 3; i++) {
+            HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(ids[i]), MAKEINTRESOURCEW(10));   /* RT_RCDATA */
+            HGLOBAL g = r ? LoadResource(NULL, r) : NULL;
+            const void* p = g ? LockResource(g) : NULL;
+            const DWORD size = r ? SizeofResource(NULL, r) : 0;
+            IDWriteFontFile* f = NULL;
+            /* The exe's own bytes, there as long as the program is: the loader keeps no copy. */
+            if (p && size && SUCCEEDED(s_font_mem->CreateInMemoryFontFileReference(s_dw5, p, size, NULL, &f))) {
+                if (SUCCEEDED(b->AddFontFile(f))) n++;
+                f->Release();
+            }
+        }
+        if (n == 3 && SUCCEEDED(b->CreateFontSet(&set)) && SUCCEEDED(s_dw5->CreateFontCollectionFromFontSet(set, &s_fonts))) {
+            s_f_pixel = L"Silkscreen";
+            s_f_body = L"Pixelify Sans";
+        } else {
+            s_fonts = NULL;
+        }
+    }
+    if (set) set->Release();
+    if (b) b->Release();
+}
+
 static IDWriteTextFormat* tf(const wchar_t* family, float px, DWRITE_FONT_WEIGHT wt)
 {
     IDWriteTextFormat* f = NULL;
-    s_dw->CreateTextFormat(family, NULL, wt, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, L"en-us", &f);
+    s_dw->CreateTextFormat(family, s_fonts, wt, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, L"en-us", &f);
     if (f) f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     return f;
-}
-
-static int font_exists(const wchar_t* family)
-{
-    IDWriteFontCollection* c = NULL;
-    UINT32 idx = 0;
-    BOOL ok = FALSE;
-    if (SUCCEEDED(s_dw->GetSystemFontCollection(&c, FALSE)) && c) {
-        c->FindFamilyName(family, &idx, &ok);
-        c->Release();
-    }
-    return ok;
-}
-
-static IWICFormatConverter* load_png(const char* path)
-{
-    IWICBitmapDecoder* dec = NULL;
-    IWICBitmapFrameDecode* fr = NULL;
-    IWICFormatConverter* cv = NULL;
-    if (!s_wic || GetFileAttributesA(path) == INVALID_FILE_ATTRIBUTES) return NULL;
-    if (SUCCEEDED(s_wic->CreateDecoderFromFilename(W(path), NULL, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &dec)) &&
-        SUCCEEDED(dec->GetFrame(0, &fr)) && SUCCEEDED(s_wic->CreateFormatConverter(&cv)) &&
-        FAILED(cv->Initialize(fr, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, NULL, 0.0,
-                              WICBitmapPaletteTypeMedianCut))) {
-        cv->Release();
-        cv = NULL;
-    }
-    if (fr) fr->Release();
-    if (dec) dec->Release();
-    return cv;
-}
-
-/* The game's pictures, through the link. */
-static void art_load(void)
-{
-    char p[3700];
-    WideCharToMultiByte(CP_UTF8, 0, s_game.link_vfs, -1, s_rc.vfs, sizeof s_rc.vfs, NULL, NULL);
-    snprintf(p, sizeof p, "%s\\PIC1.PNG", s_rc.vfs);
-    s_img_bg = load_png(p);
-    snprintf(p, sizeof p, "%s\\ICON0.PNG", s_rc.vfs);
-    s_img_logo = load_png(p);
 }
 
 static int ui_init(void)
@@ -1027,20 +1066,20 @@ static int ui_init(void)
         FAILED(DWriteCreateFactory(DWRITE_FACTORY_TYPE_SHARED, __uuidof(IDWriteFactory), (IUnknown**)&s_dw)))
         return 0;
     CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&s_wic));
-    if (font_exists(L"Segoe Fluent Icons")) s_icon_font = L"Segoe Fluent Icons";
-    const wchar_t* ui = font_exists(L"Segoe UI Variable Text") ? L"Segoe UI Variable Text" : L"Segoe UI";
-    const wchar_t* serif = font_exists(L"Palatino Linotype") ? L"Palatino Linotype" : L"Georgia";
-    s_tf_ui = tf(ui, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
-    s_tf_ui_b = tf(ui, 14.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    s_tf_small = tf(ui, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
-    s_tf_cap = tf(ui, 11.5f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
-    s_tf_head = tf(serif, 17.0f, DWRITE_FONT_WEIGHT_BOLD);
-    s_tf_title = tf(serif, 30.0f, DWRITE_FONT_WEIGHT_BOLD);
-    s_tf_play = tf(serif, 22.0f, DWRITE_FONT_WEIGHT_BOLD);
-    s_tf_icon = tf(s_icon_font, 16.0f, DWRITE_FONT_WEIGHT_NORMAL);
-    s_tf_desc = tf(ui, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
-    s_tf_path = tf(ui, 12.5f, DWRITE_FONT_WEIGHT_NORMAL);
-    if (!s_tf_ui || !s_tf_ui_b || !s_tf_small || !s_tf_cap || !s_tf_head || !s_tf_title || !s_tf_play || !s_tf_icon ||
+    fonts_load();
+    /* Silkscreen's dots are an eighth of its size: at 8, 16 and 24 they are whole pixels at 100%, 150% and 200%. */
+    const wchar_t *pix = s_f_pixel, *body = s_f_body;
+    s_tf_ui = tf(body, 15.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    s_tf_ui_b = tf(body, 15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
+    s_tf_small = tf(body, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    s_tf_desc = tf(body, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    s_tf_path = tf(body, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    s_tf_cap = tf(pix, s_fonts ? 8.0f : 11.0f, DWRITE_FONT_WEIGHT_BOLD);
+    s_tf_head = tf(pix, 16.0f, DWRITE_FONT_WEIGHT_BOLD);
+    s_tf_btn = tf(pix, 16.0f, DWRITE_FONT_WEIGHT_NORMAL);
+    s_tf_title = tf(pix, 24.0f, DWRITE_FONT_WEIGHT_BOLD);
+    s_tf_play = tf(pix, 24.0f, DWRITE_FONT_WEIGHT_BOLD);
+    if (!s_tf_ui || !s_tf_ui_b || !s_tf_small || !s_tf_cap || !s_tf_head || !s_tf_btn || !s_tf_title || !s_tf_play ||
         !s_tf_desc || !s_tf_path)
         return 0;
     s_tf_desc->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
@@ -1048,7 +1087,7 @@ static int ui_init(void)
         DWRITE_TRIMMING trim = { DWRITE_TRIMMING_GRANULARITY_CHARACTER, 0, 0 };
         IDWriteInlineObject* dots = NULL;
         s_dw->CreateEllipsisTrimmingSign(s_tf_ui, &dots);
-        IDWriteTextFormat* one_line[] = { s_tf_ui, s_tf_ui_b, s_tf_cap, s_tf_head, s_tf_title, s_tf_play };
+        IDWriteTextFormat* one_line[] = { s_tf_ui, s_tf_ui_b, s_tf_cap, s_tf_head, s_tf_btn, s_tf_title, s_tf_play };
         for (size_t i = 0; i < sizeof one_line / sizeof one_line[0]; i++) {
             one_line[i]->SetWordWrapping(DWRITE_WORD_WRAPPING_NO_WRAP);
             if (dots) one_line[i]->SetTrimming(&trim, dots);
@@ -1059,64 +1098,369 @@ static int ui_init(void)
         if (dots) s_tf_path->SetTrimming(&at_folder, dots);
         if (dots) dots->Release();
     }
-    art_load();
     return 1;
+}
+
+static D2D1_RECT_F R(float x, float y, float w, float h) { return D2D1::RectF(x, y, x + w, y + h); }
+/* On the device's pixels: what is drawn has hard edges, in whole pixels. */
+static float snap(float v) { return floorf(v * s_px + 0.5f) / s_px; }
+static D2D1_RECT_F SR(D2D1_RECT_F r) { return D2D1::RectF(snap(r.left), snap(r.top), snap(r.right), snap(r.bottom)); }
+/* n DIPs in whole device pixels, at least one: the dots of what is drawn in pixels. Up from three quarters, so a 16
+ * pixel icon stays 16 pixels at 150%, not 32. */
+static int dots(float n)
+{
+    const int d = (int)floorf(n * s_px + 0.25f);
+    return d < 1 ? 1 : d;
+}
+static float thick(float n) { return (float)dots(n) / s_px; }
+
+static int effects_on(void)
+{
+    static const Opt* o = opt_find("launcher", "effects");
+    return !o || opt_on(*o);
+}
+
+/* The scene's clock: still, at a moment without lightning, when it does not move (shots, Windows' animations off). */
+static ULONGLONG scene_ms(void) { return s_anim ? GetTickCount64() - s_t0 : 4000; }
+
+/* "ASCENSION-R" in the precompile screen's pixel font as the banner has it (scripts/brand/brand.cpp): gold down its
+ * rows, a dark outline a dot round it, a shadow under. A bitmap pixel a dot. glow: the dots alone, in neon. */
+enum { WORD_W = 67, WORD_H = 10 };
+static ID2D1Bitmap* word_bitmap(int glow)
+{
+    static const uint32_t rows[7] = { 0xFFF6DA, 0xFFE9A8, 0xFFD680, 0xFFC064, 0xFCA450, 0xF48640, 0xE2683A };
+    static const char name[] = "ASCENSION-R";
+    static uint32_t px[WORD_W * WORD_H];
+    memset(px, 0, sizeof px);
+    for (int pass = glow ? 2 : 0; pass < 3; pass++)
+        for (int i = 0; name[i]; i++) {
+            const uint8_t* g = gowa_pixel_glyph(name[i]);
+            if (!g) continue;
+            for (int r = 0; r < 7; r++)
+                for (int b = 0; b < 5; b++) {
+                    if (!(g[r] & (0x10 >> b))) continue;
+                    const int x = 1 + i * 6 + b, y = 1 + r;
+                    if (pass == 0) px[(y + 2) * WORD_W + x + 1] = 0xFF0E0410u;
+                    else if (pass == 1)
+                        for (int dy = -1; dy <= 1; dy++)
+                            for (int dx = -1; dx <= 1; dx++) px[(y + dy) * WORD_W + x + dx] = 0xFF2A0A22u;
+                    else px[y * WORD_W + x] = 0xFF000000u | (glow ? (uint32_t)C_NEON : rows[r]);
+                }
+        }
+    ID2D1Bitmap* bm = NULL;
+    s_rt->CreateBitmap(D2D1::SizeU(WORD_W, WORD_H), px, WORD_W * 4,
+                       D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED)),
+                       &bm);
+    return bm;
+}
+/* Where the word goes at (x, y), each dot about n DIPs. */
+static D2D1_RECT_F word_rect(float x, float y, float n)
+{
+    const float d = (float)dots(n) / s_px;
+    return D2D1::RectF(snap(x), snap(y), snap(x) + WORD_W * d, snap(y) + WORD_H * d);
+}
+
+/* The program's icon (app.ico), at the size of its own drawings nearest 32 DIPs: one of its pixels a device pixel. */
+static ID2D1Bitmap* icon_bitmap(void)
+{
+    static const int have[] = { 16, 32, 48, 64 };
+    const int want = (int)(32.0f * s_px + 0.5f);
+    int n = have[0];
+    for (int i = 1; i < 4; i++) if (abs(have[i] - want) < abs(n - want)) n = have[i];
+    HICON hi = (HICON)LoadImageW(GetModuleHandleW(NULL), MAKEINTRESOURCEW(1), IMAGE_ICON, n, n, 0);
+    IWICBitmap* wb = NULL;
+    IWICFormatConverter* cv = NULL;
+    ID2D1Bitmap* bm = NULL;
+    if (hi && s_wic && SUCCEEDED(s_wic->CreateBitmapFromHICON(hi, &wb)) && SUCCEEDED(s_wic->CreateFormatConverter(&cv)) &&
+        SUCCEEDED(cv->Initialize(wb, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, NULL, 0.0,
+                                 WICBitmapPaletteTypeMedianCut))) {
+        const float dpi = 96.0f * s_px;
+        s_rt->CreateBitmapFromWicBitmap(
+            cv, D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi),
+            &bm);
+    }
+    if (cv) cv->Release();
+    if (wb) wb->Release();
+    if (hi) DestroyIcon(hi);
+    return bm;
+}
+
+/* Retro effects' overlay: a dark line every third device pixel or so, and the corners darker. Black, its alpha only. */
+static void fx_make(void)
+{
+    const UINT pw = (UINT)(WIN_W * s_px + 0.5f), ph = (UINT)(WIN_H * s_px + 0.5f);
+    uint32_t* p = (uint32_t*)malloc((size_t)pw * ph * 4);
+    if (!p) return;
+    const int line = dots(1.0f), period = line * 3;
+    for (UINT y = 0; y < ph; y++) {
+        const float scan = (int)(y % (UINT)period) < line ? 0.16f : 0.0f;
+        const float dy = ((float)y + 0.5f) / (float)ph - 0.5f;
+        for (UINT x = 0; x < pw; x++) {
+            const float dx = ((float)x + 0.5f) / (float)pw - 0.5f;
+            float v = (sqrtf(dx * dx + dy * dy) * 1.41421356f - 0.55f) / 0.45f;   /* 0 near the middle, 1 in a corner */
+            v = v < 0.0f ? 0.0f : v * v * 0.35f;
+            const float a = 1.0f - (1.0f - scan) * (1.0f - v);
+            p[(size_t)y * pw + x] = (uint32_t)(a * 255.0f + 0.5f) << 24;
+        }
+    }
+    const float dpi = 96.0f * s_px;
+    s_rt->CreateBitmap(D2D1::SizeU(pw, ph), p, pw * 4,
+                       D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_PREMULTIPLIED), dpi, dpi),
+                       &s_bm_fx);
+    free(p);
+}
+
+template <class T> static void drop(T*& p)
+{
+    if (p) p->Release();
+    p = NULL;
 }
 
 static void rt_release(void)
 {
-    if (s_bm_bg) { s_bm_bg->Release(); s_bm_bg = NULL; }
-    if (s_bm_logo) { s_bm_logo->Release(); s_bm_logo = NULL; }
-    if (s_br) { s_br->Release(); s_br = NULL; }
-    if (s_rt) { s_rt->Release(); s_rt = NULL; }
+    drop(s_blur_near);
+    drop(s_blur_far);
+    drop(s_glow);
+    drop(s_glow_src);
+    drop(s_dc);
+    drop(s_layer);
+    drop(s_bm_scene);
+    drop(s_bm_fx);
+    drop(s_bm_icon);
+    drop(s_bm_word);
+    drop(s_bm_word_glow);
+    drop(s_br);
+    drop(s_rt);
+    s_d = NULL;
 }
 
-static void rt_bitmaps(void)
-{
-    if (s_img_bg) s_rt->CreateBitmapFromWicBitmap(s_img_bg, NULL, &s_bm_bg);
-    if (s_img_logo) s_rt->CreateBitmapFromWicBitmap(s_img_logo, NULL, &s_bm_logo);
-}
-
+/* What a new target needs: the layer, the glow's targets and blurs (Windows 8 on), the bitmaps. */
 static void rt_resources(void)
 {
+    float dx = 96.0f, dy = 96.0f;
+    s_rt->GetDpi(&dx, &dy);
+    s_px = dx / 96.0f;
+    s_d = s_rt;
     s_rt->CreateSolidColorBrush(col(C_TEXT), &s_br);
-    rt_bitmaps();
+    if (FAILED(s_rt->CreateCompatibleRenderTarget(&s_layer))) s_layer = NULL;
+    if (FAILED(s_rt->QueryInterface(__uuidof(ID2D1DeviceContext), (void**)&s_dc))) s_dc = NULL;
+    if (s_layer && s_dc && SUCCEEDED(s_rt->CreateCompatibleRenderTarget(&s_glow_src)) &&
+        SUCCEEDED(s_rt->CreateCompatibleRenderTarget(&s_glow))) {
+        ID2D1DeviceContext* g = NULL;
+        ID2D1Bitmap* src = NULL;
+        if (SUCCEEDED(s_glow->QueryInterface(__uuidof(ID2D1DeviceContext), (void**)&g)) && SUCCEEDED(s_glow_src->GetBitmap(&src))) {
+            ID2D1Effect** fx[2] = { &s_blur_near, &s_blur_far };
+            const float sd[2] = { 3.0f, 11.0f };   /* DIPs */
+            for (int i = 0; i < 2; i++) {
+                if (FAILED(g->CreateEffect(CLSID_D2D1GaussianBlur, fx[i]))) { *fx[i] = NULL; continue; }
+                (*fx[i])->SetInput(0, src);
+                (*fx[i])->SetValue(D2D1_GAUSSIANBLUR_PROP_STANDARD_DEVIATION, sd[i]);
+            }
+        }
+        if (src) src->Release();
+        if (g) g->Release();
+    }
+    s_rt->CreateBitmap(D2D1::SizeU(GOWA_SCENE_W, GOWA_SCENE_H), gowa_scene_frame(scene_ms()), GOWA_SCENE_W * 4,
+                       D2D1::BitmapProperties(D2D1::PixelFormat(DXGI_FORMAT_B8G8R8A8_UNORM, D2D1_ALPHA_MODE_IGNORE)),
+                       &s_bm_scene);
+    s_bm_word = word_bitmap(0);
+    s_bm_word_glow = word_bitmap(1);
+    s_bm_icon = icon_bitmap();
+    fx_make();
+    s_layer_old = 1;
 }
 
-/* The pictures of another folder. */
-static void art_reload(void)
+/* The scene's next frame, into its bitmap. */
+static void scene_tick(void)
 {
-    if (s_bm_bg) { s_bm_bg->Release(); s_bm_bg = NULL; }
-    if (s_bm_logo) { s_bm_logo->Release(); s_bm_logo = NULL; }
-    if (s_img_bg) { s_img_bg->Release(); s_img_bg = NULL; }
-    if (s_img_logo) { s_img_logo->Release(); s_img_logo = NULL; }
-    art_load();
-    if (s_rt) rt_bitmaps();
+    if (s_bm_scene) s_bm_scene->CopyFromMemory(NULL, gowa_scene_frame(scene_ms()), GOWA_SCENE_W * 4);
 }
 
 static void fill(D2D1_RECT_F r, unsigned rgb, float a = 1.0f)
 {
     s_br->SetColor(col(rgb, a));
-    s_rt->FillRectangle(r, s_br);
+    s_d->FillRectangle(SR(r), s_br);
 }
-static void fill_rr(D2D1_RECT_F r, float rad, unsigned rgb, float a = 1.0f)
+/* A frame w DIPs wide (whole device pixels) inside r. */
+static void frame(D2D1_RECT_F r, unsigned rgb, float a = 1.0f, float w = 2.0f)
 {
+    r = SR(r);
+    const float t = thick(w);
     s_br->SetColor(col(rgb, a));
-    s_rt->FillRoundedRectangle(D2D1::RoundedRect(r, rad, rad), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.left, r.top, r.right, r.top + t), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.left, r.bottom - t, r.right, r.bottom), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.left, r.top + t, r.left + t, r.bottom - t), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.right - t, r.top + t, r.right, r.bottom - t), s_br);
 }
-static void stroke_rr(D2D1_RECT_F r, float rad, unsigned rgb, float a = 1.0f, float w = 1.0f)
+/* A block with an 8-bit bevel: lit along the top and left, dark along the bottom and right; pressed, the other way. */
+static void bevel(D2D1_RECT_F r, unsigned face, unsigned hi, unsigned lo, float w, float a_hi, float a_lo, int pressed)
 {
-    s_br->SetColor(col(rgb, a));
-    s_rt->DrawRoundedRectangle(D2D1::RoundedRect(r, rad, rad), s_br, w);
+    r = SR(r);
+    const float t = thick(w);
+    if (pressed) {
+        const unsigned c = hi; hi = lo; lo = c;
+        const float a = a_hi; a_hi = a_lo; a_lo = a;
+    }
+    fill(r, face);
+    s_br->SetColor(col(hi, a_hi));
+    s_d->FillRectangle(D2D1::RectF(r.left, r.top, r.right - t, r.top + t), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.left, r.top + t, r.left + t, r.bottom - t), s_br);
+    s_br->SetColor(col(lo, a_lo));
+    s_d->FillRectangle(D2D1::RectF(r.left + t, r.bottom - t, r.right, r.bottom), s_br);
+    s_d->FillRectangle(D2D1::RectF(r.right - t, r.top + t, r.right, r.bottom - t), s_br);
 }
+
+/* Silkscreen at a whole number of device pixels a dot is drawn unsmoothed: its dots stay square. */
+static int sharp(IDWriteTextFormat* f)
+{
+    if (!s_fonts || (f != s_tf_cap && f != s_tf_head && f != s_tf_btn && f != s_tf_title && f != s_tf_play)) return 0;
+    const float dot = f->GetFontSize() * s_px / 8.0f;
+    return fabsf(dot - floorf(dot + 0.5f)) < 0.01f;
+}
+/* Text in a box, its first pixel on a whole device pixel. */
 static void text(const wchar_t* s, IDWriteTextFormat* f, D2D1_RECT_F r, unsigned rgb, float a = 1.0f,
                  DWRITE_TEXT_ALIGNMENT al = DWRITE_TEXT_ALIGNMENT_LEADING)
 {
+    const float w = r.right - r.left, h = r.bottom - r.top;
+    IDWriteTextLayout* l = NULL;
+    if (!s || !*s || w <= 0.0f || h <= 0.0f) return;
     f->SetTextAlignment(al);
+    if (FAILED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, w, h, &l)) || !l) return;
+    DWRITE_TEXT_METRICS m;
+    float x = snap(r.left);
+    if (SUCCEEDED(l->GetMetrics(&m))) x = snap(r.left + m.left) - m.left;
+    s_d->SetTextAntialiasMode(sharp(f) ? D2D1_TEXT_ANTIALIAS_MODE_ALIASED : D2D1_TEXT_ANTIALIAS_MODE_GRAYSCALE);
     s_br->SetColor(col(rgb, a));
-    s_rt->DrawText(s, (UINT32)wcslen(s), f, r, s_br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    s_d->DrawTextLayout(D2D1::Point2F(x, r.top), l, s_br, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+    l->Release();
 }
-static D2D1_RECT_F R(float x, float y, float w, float h) { return D2D1::RectF(x, y, x + w, y + h); }
+/* How wide a text is on one line. */
+static float text_w(const wchar_t* s, IDWriteTextFormat* f)
+{
+    IDWriteTextLayout* l = NULL;
+    float w = 0.0f;
+    if (SUCCEEDED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, 4096.0f, 256.0f, &l)) && l) {
+        DWRITE_TEXT_METRICS m;
+        if (SUCCEEDED(l->GetMetrics(&m))) w = m.widthIncludingTrailingWhitespace;
+        l->Release();
+    }
+    return w;
+}
+/* Upper case, into one of a few buffers that rotate: Silkscreen's capitals. */
+static const wchar_t* UP(const wchar_t* s)
+{
+    static wchar_t buf[4][160];
+    static int k;
+    wchar_t* b = buf[k++ & 3];
+    size_t i = 0;
+    for (; s[i] && i < 159; i++) b[i] = (wchar_t)towupper(s[i]);
+    b[i] = 0;
+    return b;
+}
+
+/* 16x16 icons, '#' a dot, a dot a DIP: whole pixels at 100% and 200%; between, their two-dot lines stay even (3
+ * pixels at 150%) and a one-dot detail comes out one pixel or two. */
+typedef const char (*Icon)[17];
+static const char k_ic_play[16][17] = {
+    "................", "....##..........", "....##..........", "....####........", "....####........",
+    "....######......", "....######......", "....########....", "....########....", "....######......",
+    "....######......", "....####........", "....####........", "....##..........", "....##..........",
+    "................" };
+static const char k_ic_pic[16][17] = {
+    "................", "................", ".##############.", ".##############.", ".##..........##.",
+    ".##......##..##.", ".##......##..##.", ".##..........##.", ".##...##.....##.", ".##..####..#.##.",
+    ".##.######.####.", ".##############.", ".##############.", "................", "................",
+    "................" };
+static const char k_ic_screen[16][17] = {
+    "................", ".##############.", ".##############.", ".##..........##.", ".##..........##.",
+    ".##..........##.", ".##..........##.", ".##..........##.", ".##############.", ".##############.",
+    "................", ".......##.......", ".......##.......", "....########....", "....########....",
+    "................" };
+static const char k_ic_pad[16][17] = {
+    "................", "................", "................", "..############..", ".##############.",
+    "####.######.####", "###...####.#.###", "####.######.####", "################", "######....######",
+    "####........####", ".##..........##.", "................", "................", "................",
+    "................" };
+static const char k_ic_wrench[16][17] = {
+    "................", "..........####..", ".........##.....", "........##...##.", "........##..###.",
+    "........#######.", ".......######...", "......###.......", ".....###........", "....###.........",
+    "...###..........", "..###...........", ".###............", ".##.............", "................",
+    "................" };
+static const char k_ic_bolt[16][17] = {
+    "................", "................", "........####....", ".......####.....", "......####......",
+    ".....####.......", "....#########...", "....########....", ".......####.....", "......####......",
+    ".....####.......", "....###.........", "...##...........", "..#.............", "................",
+    "................" };
+static const char k_ic_chip[16][17] = {
+    "................", ".....##..##.....", ".....##..##.....", "..############..", "..##........##..",
+    "####.######.####", "####.######.####", "..##.##..##.##..", "..##.##..##.##..", "####.######.####",
+    "####.######.####", "..##........##..", "..############..", ".....##..##.....", ".....##..##.....",
+    "................" };
+static const char k_ic_flag[16][17] = {
+    "................", "..##............", "..############..", "..###########...", "..##########....",
+    "..###########...", "..############..", "..##............", "..##............", "..##............",
+    "..##............", "..##............", "..##............", "..##............", "..##............",
+    "................" };
+static const char k_ic_cube[16][17] = {
+    "................", "......####......", "....###..###....", "..###......###..", ".##..........##.",
+    ".####......####.", ".##.###..###.##.", ".##...####...##.", ".##....##....##.", ".##....##....##.",
+    ".##....##....##.", ".###...##...###.", "...###.##.###...", ".....######.....", ".......##.......",
+    "................" };
+static const char k_ic_trash[16][17] = {
+    "................", "......####......", "......#..#......", ".##############.", ".##############.",
+    "..############..", "..##.##..##.##..", "..##.##..##.##..", "..##.##..##.##..", "..##.##..##.##..",
+    "..##.##..##.##..", "..##.##..##.##..", "..############..", "...##########...", "................",
+    "................" };
+static const char k_ic_folder[16][17] = {
+    "................", "................", ".#####..........", ".######.........", ".##############.",
+    ".##############.", ".##..........##.", ".##..........##.", ".##..........##.", ".##..........##.",
+    ".##..........##.", ".##############.", ".##############.", "................", "................",
+    "................" };
+static const char k_ic_check[16][17] = {
+    "................", "................", "................", "................", "............##..",
+    "...........###..", "..##......###...", "..###....###....", "...###..###.....", "....######......",
+    ".....####.......", "......##........", "................", "................", "................",
+    "................" };
+static const char k_ic_warn[16][17] = {
+    "................", "................", ".......##.......", "......####......", "......####......",
+    ".....######.....", ".....##..##.....", "....###..###....", "....###..###....", "...####..####...",
+    "...##########...", "..#####..#####..", "..############..", ".##############.", "................",
+    "................" };
+static const char k_ic_info[16][17] = {
+    "................", "................", ".....######.....", "...##########...", "..#####..#####..",
+    ".##############.", ".######..######.", ".######..######.", ".######..######.", ".######..######.",
+    "..#####..#####..", "...##########...", ".....######.....", "................", "................",
+    "................" };
+static const char k_ic_cross[16][17] = {
+    "................", "................", "................", "...##......##...", "...###....###...",
+    "....###..###....", ".....######.....", "......####......", ".....######.....", "....###..###....",
+    "...###....###...", "...##......##...", "................", "................", "................",
+    "................" };
+static const char k_ic_down[16][17] = {
+    "................", "................", "................", "................", "................",
+    "..##........##..", "..###......###..", "...###....###...", "....###..###....", ".....######.....",
+    "......####......", ".......##.......", "................", "................", "................",
+    "................" };
+static const char k_ic_search[16][17] = {
+    "................", "....####........", "..########......", ".###....###.....", ".##......##.....",
+    ".##......##.....", ".##......##.....", ".###....###.....", "..########......", "....####.##.....",
+    ".........###....", "..........###...", "...........###..", "............##..", "................",
+    "................" };
+
+/* An icon in the 16-DIP box at (x, y), its runs of dots filled unsmoothed (the targets draw aliased). */
+static void icon(Icon rows, float x, float y, unsigned rgb, float a = 1.0f)
+{
+    const float ox = snap(x), oy = snap(y);
+    s_br->SetColor(col(rgb, a));
+    for (int r = 0; r < 16; r++)
+        for (int c = 0; c < 16;) {
+            if (rows[r][c] != '#') { c++; continue; }
+            int e = c;
+            while (e < 16 && rows[r][e] == '#') e++;
+            s_d->FillRectangle(D2D1::RectF(ox + (float)c, oy + (float)r, ox + (float)e, oy + (float)(r + 1)), s_br);
+            c = e;
+        }
+}
 
 /* How tall a text is, wrapped at a width. */
 static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
@@ -1190,78 +1534,199 @@ static void hit(D2D1_RECT_F r, int id)
 static int inside(D2D1_RECT_F r, float x, float y) { return x >= r.left && x < r.right && y >= r.top && y < r.bottom; }
 static int hovered(int id) { return s_hover == id; }
 
+/* --- the glow --------------------------------------------------------------
+ * What glows is listed while the layer is drawn, then drawn into a layer of its own, blurred twice and added over
+ * the frame (glow_draw): neon. Only with Retro effects. */
+struct Glow {
+    D2D1_RECT_F r, clip;
+    unsigned rgb;
+    float a, w;                 /* w: a frame that wide; 0, the box filled */
+    IDWriteTextFormat* f;       /* else s, in f */
+    DWRITE_TEXT_ALIGNMENT al;
+    ID2D1Bitmap* bm;            /* else bm, over r */
+    wchar_t s[40];
+};
+static Glow s_glows[64];
+static int s_nglow;
+static D2D1_RECT_F s_holes[16];   /* what the glow goes round but not over: the gold buttons */
+static int s_nhole;
+
+static Glow* glow_add(D2D1_RECT_F r, unsigned rgb, float a)
+{
+    if (s_nglow >= (int)(sizeof s_glows / sizeof s_glows[0])) return NULL;
+    Glow* g = &s_glows[s_nglow++];
+    memset(g, 0, sizeof *g);
+    g->r = r;
+    g->clip = s_clip;
+    g->rgb = rgb;
+    g->a = a;
+    return g;
+}
+static void glow_rect(D2D1_RECT_F r, unsigned rgb, float a, float w = 0.0f)
+{
+    if (Glow* g = glow_add(r, rgb, a)) g->w = w;
+}
+static void glow_text(const wchar_t* s, IDWriteTextFormat* f, D2D1_RECT_F r, unsigned rgb, float a,
+                      DWRITE_TEXT_ALIGNMENT al = DWRITE_TEXT_ALIGNMENT_LEADING)
+{
+    if (Glow* g = glow_add(r, rgb, a)) {
+        g->f = f;
+        g->al = al;
+        swprintf(g->s, sizeof g->s / sizeof g->s[0], L"%ls", s);
+    }
+}
+static void glow_bitmap(ID2D1Bitmap* bm, D2D1_RECT_F r, float a)
+{
+    if (!bm) return;
+    if (Glow* g = glow_add(r, 0, a)) g->bm = bm;
+}
+static void glow_hole(D2D1_RECT_F r)
+{
+    if (s_nhole < (int)(sizeof s_holes / sizeof s_holes[0])) s_holes[s_nhole++] = r;
+}
+
+static void glow_draw(void)
+{
+    if (!s_glow_src || !s_glow || !s_blur_near) return;
+    ID2D1RenderTarget* keep = s_d;
+    s_d = s_glow_src;
+    s_d->BeginDraw();
+    s_d->SetTransform(D2D1::Matrix3x2F::Identity());
+    s_d->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
+    s_d->Clear(D2D1::ColorF(0, 0, 0, 0));
+    for (int i = 0; i < s_nglow; i++) {
+        const Glow& g = s_glows[i];
+        const int clipped = g.clip.left > NO_CLIP.left;   /* in a card that scrolls */
+        if (clipped) s_d->PushAxisAlignedClip(g.clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        if (g.bm) s_d->DrawBitmap(g.bm, g.r, g.a, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        else if (g.f) text(g.s, g.f, g.r, g.rgb, g.a, g.al);
+        else if (g.w > 0.0f) frame(g.r, g.rgb, g.a, g.w);
+        else fill(g.r, g.rgb, g.a);
+        if (clipped) s_d->PopAxisAlignedClip();
+    }
+    s_d->EndDraw();
+    s_d = keep;
+    ID2D1DeviceContext* dc = NULL;
+    if (FAILED(s_glow->QueryInterface(__uuidof(ID2D1DeviceContext), (void**)&dc))) return;
+    dc->BeginDraw();
+    dc->SetTransform(D2D1::Matrix3x2F::Identity());
+    dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+    dc->DrawImage(s_blur_near, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_PLUS);
+    if (s_blur_far) dc->DrawImage(s_blur_far, D2D1_INTERPOLATION_MODE_LINEAR, D2D1_COMPOSITE_MODE_PLUS);
+    for (int i = 0; i < s_nhole; i++) {
+        dc->PushAxisAlignedClip(SR(s_holes[i]), D2D1_ANTIALIAS_MODE_ALIASED);
+        dc->Clear(D2D1::ColorF(0, 0, 0, 0));
+        dc->PopAxisAlignedClip();
+    }
+    dc->EndDraw();
+    dc->Release();
+}
+
 /* --- widgets --------------------------------------------------------------- */
-static const float SEG_H = 34.0f;
+static const float SEG_H = 34.0f, SW_W = 52.0f, SW_H = 26.0f;
+
+/* One of a row of buttons: chosen, gold; else dark, lighter under the mouse; pressed, sunk. */
+static void w_choice(D2D1_RECT_F r, int chosen, int id, const wchar_t* label)
+{
+    const int down = s_press == id && hovered(id);
+    if (chosen) bevel(r, C_GOLD, 0xFFFFFF, 0x000000, 3.0f, 0.45f, 0.28f, 0);
+    else bevel(r, hovered(id) ? C_CTL_HI : C_CTL, C_HI, C_LO, 3.0f, 1.0f, 1.0f, down);
+    const float o = down ? 1.0f : 0.0f;
+    text(label, chosen ? s_tf_ui_b : s_tf_ui, D2D1::RectF(r.left + o, r.top + o, r.right + o, r.bottom + o),
+         chosen ? C_INK : C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+}
 
 /* Buttons side by side, one of them chosen: the option's values. */
 static void w_segmented(Opt& o, int oi, float x, float y, float w)
 {
-    const D2D1_RECT_F box = R(x, y, w, SEG_H);
-    fill_rr(box, 8, C_BG);
-    stroke_rr(box, 8, C_LINE);
     const int sel = opt_index(o, o.cur);
-    const float sw = (w - 4.0f) / (float)o.n;
+    const float gap = 4.0f, sw = (w - gap * (float)(o.n - 1)) / (float)o.n;
     for (int i = 0; i < o.n; i++) {
-        const D2D1_RECT_F s = R(x + 2.0f + sw * (float)i, y + 2.0f, sw, SEG_H - 4.0f);
+        const D2D1_RECT_F s = R(x + (sw + gap) * (float)i, y, sw, SEG_H);
         const int id = H_SEG + oi * 16 + i;
-        if (i == sel) fill_rr(s, 6, C_RED);
-        else if (hovered(id)) fill_rr(s, 6, C_CARD_HI);
-        text(W((o.seg ? o.seg : o.names)[i]), s_tf_ui, s, i == sel ? 0xFFFFFF : C_TEXT2, 1.0f,
-             DWRITE_TEXT_ALIGNMENT_CENTER);
+        w_choice(s, i == sel, id, W((o.seg ? o.seg : o.names)[i]));
         hit(s, id);
     }
 }
-
-/* A switch, on the right of its row. */
-static void w_switch(int on, float x, float y, int id)
+/* How wide w_segmented's buttons need to be for the option's names: all as wide as the widest. */
+static float seg_w(const Opt& o)
 {
-    const D2D1_RECT_F t = R(x, y, 46, 26);
-    fill_rr(t, 13, on ? C_RED : 0x3A3A42);
-    if (hovered(id)) stroke_rr(t, 13, on ? C_RED_HI : 0x55555E, 1.0f, 1.5f);
-    s_br->SetColor(col(0xFFFFFF));
-    s_rt->FillEllipse(D2D1::Ellipse(D2D1::Point2F(on ? x + 33.0f : x + 13.0f, y + 13.0f), 9.0f, 9.0f), s_br);
-    hit(R(x - 4, y - 4, 54, 34), id);
+    float m = 0.0f;
+    for (int i = 0; i < o.n; i++) {
+        const float w = text_w(W((o.seg ? o.seg : o.names)[i]), s_tf_ui_b);
+        if (w > m) m = w;
+    }
+    return (m + 26.0f) * (float)o.n + 4.0f * (float)(o.n - 1);
 }
 
-/* A box showing the value; it opens the list. */
+/* A switch, on the right of its row: a square that moves over, cyan when on. */
+static void w_switch(int on, float x, float y, int id)
+{
+    const D2D1_RECT_F t = R(x, y, SW_W, SW_H);
+    const unsigned c = on ? C_CYAN : hovered(id) ? C_DIM : C_OFF;
+    fill(t, C_BG);
+    frame(t, c, 1.0f, 2.0f);
+    fill(R(on ? x + SW_W - 21.0f : x + 5.0f, y + 5.0f, 16.0f, 16.0f), c);
+    if (on) glow_rect(t, C_CYAN, 0.6f, 2.0f);
+    hit(R(x - 4, y - 4, SW_W + 8, SW_H + 8), id);
+}
+
+/* A box showing the value, sunk; it opens the list. */
 static void w_dropdown(Opt& o, int oi, float x, float y, float w)
 {
-    const int id = H_DD + oi;
+    const int id = H_DD + oi, open = s_dd == oi;
     const D2D1_RECT_F box = R(x, y, w, SEG_H);
-    fill_rr(box, 8, hovered(id) || s_dd == oi ? C_CARD_HI : C_BG);
-    stroke_rr(box, 8, s_dd == oi ? C_RED : C_LINE);
-    text(W(opt_name(o)), s_tf_ui, R(x + 12, y, w - 40, SEG_H), C_TEXT);
-    text(L"\xE70D", s_tf_icon, R(x + w - 30, y, 20, SEG_H), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    bevel(box, hovered(id) || open ? C_CARD_HI : C_BG, C_LO, C_EDGE, 2.0f, 1.0f, 1.0f, 0);
+    if (open) frame(box, C_GOLD, 1.0f, 2.0f);
+    text(W(opt_name(o)), s_tf_ui, R(x + 12, y, w - 44, SEG_H), C_TEXT);
+    icon(k_ic_down, x + w - 28, y + (SEG_H - 16.0f) * 0.5f, open ? C_GOLD : C_MUTED);
     hit(box, id);
 }
 
-static void w_button(const wchar_t* label, D2D1_RECT_F r, int id, int primary)
+enum { B_PLAIN, B_PLAY, B_BAR };   /* a button in a card; Play; Defaults, Save and Quit in the bar */
+static void w_button(const wchar_t* label, D2D1_RECT_F r, int id, int kind)
 {
-    const int hov = hovered(id);
-    if (primary) {
-        fill_rr(r, 8, hov ? C_RED_HI : C_RED);
-        stroke_rr(r, 8, 0xE5534B, 0.6f);
-        text(label, s_tf_play, r, 0xFFF4E0, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    const int hov = hovered(id), down = s_press == id && hov;
+    const float o = down ? 1.0f : 0.0f;   /* pressed: what is on it a pixel down and right */
+    if (kind == B_PLAY) {
+        const D2D1_RECT_F ring = R(r.left - 2, r.top - 2, r.right - r.left + 4, r.bottom - r.top + 4);
+        frame(ring, C_NEON, 1.0f, 2.0f);
+        bevel(r, hov ? C_GOLD_HI : C_GOLD, 0xFFFFFF, 0x000000, 4.0f, 0.5f, 0.3f, down);
+        glow_rect(ring, C_NEON, 1.0f, 2.0f);
+        glow_rect(r, C_NEON, 0.35f);
+        glow_hole(r);
+        const float tw = text_w(label, s_tf_play), x = snap(r.left + (r.right - r.left - 28.0f - tw) * 0.5f) + o;
+        icon(k_ic_play, x, (r.top + r.bottom) * 0.5f - 8.0f + o, C_INK);
+        text(label, s_tf_play, D2D1::RectF(x + 28.0f, r.top + o, x + 36.0f + tw, r.bottom + o), C_INK);
     } else {
-        fill_rr(r, 8, hov ? C_CARD_HI : C_CARD);
-        stroke_rr(r, 8, C_LINE);
-        text(label, s_tf_ui_b, r, C_TEXT, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+        bevel(r, hov ? C_CTL_HI : C_CTL, C_HI, C_LO, kind == B_BAR ? 3.0f : 2.0f, 1.0f, 1.0f, down);
+        text(label, kind == B_BAR ? s_tf_btn : s_tf_ui_b, D2D1::RectF(r.left + o, r.top + o, r.right + o, r.bottom + o),
+             C_TEXT, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
     }
     hit(r, id);
 }
 
 static void w_card(D2D1_RECT_F r, const wchar_t* title)
 {
-    fill_rr(r, 12, C_CARD);
-    stroke_rr(r, 12, C_LINE);
-    if (title) text(title, s_tf_head, R(r.left + 22, r.top + 14, r.right - r.left - 44, 26), C_GOLD);
+    fill(r, C_CARD);
+    frame(r, C_EDGE, 1.0f, 2.0f);
+    frame(R(r.left - 1, r.top - 1, r.right - r.left + 2, r.bottom - r.top + 2), C_NEON, 0.22f, 1.0f);
+    glow_rect(r, C_NEON, 0.12f, 2.0f);
+    if (title) {
+        const D2D1_RECT_F t = R(r.left + 18, r.top + 14, r.right - r.left - 36, 18);
+        text(title, s_tf_head, t, C_GOLD);
+        glow_text(title, s_tf_head, t, C_GOLD, 0.5f);
+    }
 }
 
 /* One setting: its label and the line under it on the left, its control on the right. */
 /* The width of a row's control, and the height of its label and the line under it. */
 static float ctl_w(const Opt& o)
 {
-    return o.check ? 46.0f : o.seg ? (o.n <= 2 ? 220.0f : (float)o.n * (o.n >= 5 ? 66.0f : 82.0f)) : 300.0f;
+    if (o.check) return SW_W;
+    if (!o.seg) return 300.0f;
+    const float w = o.n <= 2 ? 220.0f : (float)o.n * (o.n >= 5 ? 66.0f : 82.0f), need = seg_w(o);
+    return need > w ? need : w;
 }
 static float label_h(const wchar_t* desc, float tw, float* dh)
 {
@@ -1278,11 +1743,7 @@ static void w_label(const wchar_t* label, const wchar_t* desc, float x, float y,
     if (dh > 0.0f) text(desc, s_tf_desc, R(x, ty + 26, tw, dh + 2), C_MUTED);
 }
 
-static void w_rule(float x, float y, float w)
-{
-    s_br->SetColor(col(C_LINE, 0.6f));
-    s_rt->DrawLine(D2D1::Point2F(x, y), D2D1::Point2F(x + w, y), s_br, 1.0f);
-}
+static void w_rule(float x, float y, float w) { fill(R(x, y - 1.0f, w, 2.0f), C_LINE); }
 
 static float opt_row_h(const Opt& o, float w)
 {
@@ -1297,7 +1758,7 @@ static float w_row(Opt& o, int oi, float x, float y, float w, int sw_id)
     const wchar_t* desc = o.desc ? W(o.desc) : NULL;
     const float lh = label_h(desc, tw, &dh), rh = row_h(lh);
     w_label(W(o.label), desc, x, y, tw, rh, lh, dh);
-    const float cx = x + w - cw, cy = y + (rh - (o.check ? 26.0f : SEG_H)) * 0.5f;
+    const float cx = x + w - cw, cy = y + (rh - (o.check ? SW_H : SEG_H)) * 0.5f;
     if (o.check) w_switch(opt_on(o), cx, cy, sw_id);
     else if (o.seg) w_segmented(o, oi, cx, cy, cw);
     else w_dropdown(o, oi, cx, cy, cw);
@@ -1306,288 +1767,322 @@ static float w_row(Opt& o, int oi, float x, float y, float w, int sw_id)
 
 /* --- the parts of the window ---------------------------------------------- */
 static const wchar_t* const k_tab_name[T_N] = { L"Play", L"Graphics", L"Display", L"Controls", L"Game patches", L"Cheats", L"System" };
-static const wchar_t* const k_tab_icon[T_N] = { L"\xE768", L"\xE790", L"\xE7F4", L"\xE7FC", L"\xE90F", L"\xE945", L"\xE770" };
+static const Icon k_tab_icon[T_N] = { k_ic_play, k_ic_pic, k_ic_screen, k_ic_pad, k_ic_wrench, k_ic_bolt, k_ic_chip };
 static const wchar_t* const k_tab_desc[T_N] = {
     L"", L"How the picture is scaled, smoothed and filtered.", L"The window, its pace and the frame rate display.",
     L"Controller and keyboard.", L"Switches that change what the game draws, for speed.",
     L"For an easier fight. The game reads these when it starts.",
     L"The game's folder, language, saves and this window." };
 
+/* A link down the sidebar: an icon and a name, lit under the mouse. */
+static void side_link(Icon ic, const wchar_t* s, float y, int id)
+{
+    const D2D1_RECT_F r = R(14, y, SIDE_W - 30, 32);
+    const int hov = hovered(id);
+    if (hov) fill(r, C_CARD);
+    icon(ic, 28, y + 8, hov ? C_TEXT : C_MUTED);
+    text(s, s_tf_small, R(54, y, SIDE_W - 72, 32), hov ? C_TEXT : C_MUTED);
+    hit(r, id);
+}
+
+static void draw_progress(float x, float y, float w, float frac, int warn, float h = 10.0f);
+
 static void draw_sidebar(void)
 {
     fill(R(0, 0, SIDE_W, WIN_H), C_SIDE);
-    s_br->SetColor(col(C_LINE));
-    s_rt->DrawLine(D2D1::Point2F(SIDE_W - 0.5f, 0), D2D1::Point2F(SIDE_W - 0.5f, WIN_H), s_br, 1.0f);
-    /* The game's logo (ICON0.PNG: 320 x 176), else its name. */
-    if (s_bm_logo) s_rt->DrawBitmap(s_bm_logo, R(24, 18, 200, 110), 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
-    else text(L"GOD OF WAR\nASCENSION", s_tf_head, R(24, 30, 200, 80), C_GOLD);
-    text(L"PC PORT \x00B7 RECOMPILED", s_tf_cap, R(26, 132, 200, 18), C_GOLD, 0.9f);
+    fill(R(SIDE_W - 2, 0, 2, WIN_H), C_LINE);
+    /* The program's icon, its name in the precompile screen's pixel font, its version and the day it was built. */
+    if (s_bm_icon) {
+        const D2D1_SIZE_F z = s_bm_icon->GetSize();
+        const float x = snap(16.0f + (32.0f - z.width) * 0.5f), y = snap(18.0f + (32.0f - z.height) * 0.5f);
+        s_d->DrawBitmap(s_bm_icon, D2D1::RectF(x, y, x + z.width, y + z.height), 1.0f,
+                        D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+    }
+    if (s_bm_word) {
+        const D2D1_RECT_F wr = word_rect(56.0f, 18.0f, 2.0f);
+        s_d->DrawBitmap(s_bm_word, wr, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        glow_bitmap(s_bm_word_glow, wr, 0.55f);
+    }
+    text(W("v" AR_VERSION), s_tf_small, R(58, 38, SIDE_W - 72, 16), C_MUTED);
     {
         static const char d[] = __DATE__;   /* "Mmm dd yyyy", the day padded with a space */
         char b[40];
-        snprintf(b, sizeof b, "v%s \xC2\xB7 %d %.3s %.4s", AR_VERSION, atoi(d + 4), d, d + 7);
-        text(W(b), s_tf_small, R(26, 150, 200, 18), C_MUTED);
+        snprintf(b, sizeof b, "Built %d %.3s %.4s", atoi(d + 4), d, d + 7);
+        text(UP(W(b)), s_tf_cap, R(18, 62, SIDE_W - 36, 12), C_DIM);
     }
-    float y = 186.0f;
+    float y = 86.0f;
     for (int t = 0; t < T_N; t++) {
-        const D2D1_RECT_F r = R(14, y, SIDE_W - 28, 40);
-        const int id = H_NAV + t;
-        if (t == s_tab) {
-            fill_rr(r, 8, C_CARD_HI);
-            fill_rr(R(14, y + 9, 3, 22), 1.5f, C_RED);
+        const D2D1_RECT_F r = R(14, y, SIDE_W - 30, 40);
+        const int id = H_NAV + t, on = t == s_tab;
+        if (on) {
+            fill(r, C_CARD_HI);
+            frame(r, C_NEON, 1.0f, 2.0f);
+            glow_rect(r, C_NEON, 0.85f, 2.0f);
         } else if (hovered(id)) {
-            fill_rr(r, 8, C_CARD);
+            fill(r, C_CARD);
+            frame(r, C_EDGE, 1.0f, 2.0f);
         }
-        text(k_tab_icon[t], s_tf_icon, R(30, y, 24, 40), t == s_tab ? C_GOLD : C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-        text(k_tab_name[t], t == s_tab ? s_tf_ui_b : s_tf_ui, R(64, y, 160, 40), t == s_tab ? C_TEXT : C_TEXT2);
+        icon(k_tab_icon[t], 28, y + 12, on ? C_GOLD : C_TEXT2);
+        text(k_tab_name[t], on ? s_tf_ui_b : s_tf_ui, R(54, y, SIDE_W - 72, 40), on ? 0xFFFFFF : C_TEXT2);
         hit(r, id);
-        y += 44.0f;
+        y += 46.0f;
     }
-    const D2D1_RECT_F rp = R(14, WIN_H - 192, SIDE_W - 28, 40);
-    if (hovered(H_REPORT)) fill_rr(rp, 8, C_CARD);
-    text(L"\xEBE8", s_tf_icon, R(30, rp.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    text(L"Report a problem", s_tf_ui, R(64, rp.top, 160, 40), C_TEXT2);
-    hit(rp, H_REPORT);
-    /* Down at the bottom: the compiled shaders and the save folder. Precompile shaders shows how far
-     * it is while it runs, with a bar under its name. */
-    const D2D1_RECT_F pc = R(14, WIN_H - 148, SIDE_W - 28, 40);
-    if (hovered(H_PRECOMPILE) && !s_pc.running) fill_rr(pc, 8, C_CARD);
-    text(L"\xE9F5", s_tf_icon, R(30, pc.top, 24, 40), s_pc.running ? C_GOLD : C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    /* Down at the bottom: Report a problem, the compiled shaders and the save folder. Precompile shaders shows how
+     * far it is while it runs, with a bar under its name. */
+    const float by = WIN_H - 160.0f;
+    fill(R(18, by - 10, SIDE_W - 38, 2), C_LINE);
+    side_link(k_ic_flag, L"Report a problem", by, H_REPORT);
     if (s_pc.running) {
         wchar_t lbl[48];
         swprintf(lbl, 48, L"Precompiling %d%%", (int)(pc_frac() * 100.0f));
-        text(lbl, s_tf_ui, R(64, pc.top - 3, 160, 40), C_TEXT);
-        fill_rr(R(64, pc.top + 29, 150, 3), 1.5f, C_LINE);
-        fill_rr(R(64, pc.top + 29, 150 * pc_frac() + 1, 3), 1.5f, C_GOLD);
+        icon(k_ic_cube, 28, by + 38, C_GOLD);
+        text(lbl, s_tf_small, R(54, by + 34, SIDE_W - 72, 22), C_TEXT);
+        draw_progress(54, by + 57, SIDE_W - 72, pc_frac(), 0);
+        hit(R(14, by + 36, SIDE_W - 30, 32), H_PRECOMPILE);
     } else {
-        text(L"Precompile shaders", s_tf_ui, R(64, pc.top, 160, 40), C_TEXT2);
+        side_link(k_ic_cube, L"Precompile shaders", by + 36, H_PRECOMPILE);
     }
-    hit(pc, H_PRECOMPILE);
-    const D2D1_RECT_F c = R(14, WIN_H - 104, SIDE_W - 28, 40);
-    if (hovered(H_SHADERS)) fill_rr(c, 8, C_CARD);
-    text(L"\xE74D", s_tf_icon, R(30, c.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    text(L"Clear shaders", s_tf_ui, R(64, c.top, 160, 40), C_TEXT2);
-    hit(c, H_SHADERS);
-    const D2D1_RECT_F r = R(14, WIN_H - 60, SIDE_W - 28, 40);
-    if (hovered(H_SAVES)) fill_rr(r, 8, C_CARD);
-    text(L"\xE8B7", s_tf_icon, R(30, r.top, 24, 40), C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    text(L"Open save folder", s_tf_ui, R(64, r.top, 160, 40), C_TEXT2);
-    hit(r, H_SAVES);
+    side_link(k_ic_trash, L"Clear shaders", by + 72, H_SHADERS);
+    side_link(k_ic_folder, L"Open save folder", by + 108, H_SAVES);
 }
 
-/* The header: the game's art (PIC1.PNG, 1920 x 1080) under a dark fade. */
-static void draw_hero(float h)
+static D2D1_RECT_F hero_rect(void) { return R(SIDE_W, 0, WIN_W - SIDE_W, s_tab == T_PLAY ? HERO_PLAY : HERO_TAB); }
+
+/* The header. The scene is under the layer (scene_draw), which is clear here: this only fades it into the page at the
+ * bottom and, where text goes over it (shade), from the left; and a neon edge under it. */
+static void draw_hero(int shade)
 {
-    const D2D1_RECT_F r = R(SIDE_W, 0, WIN_W - SIDE_W, h);
-    fill(r, 0x1A1410);
-    if (s_bm_bg) {
-        /* Kratos is in the upper middle: a band from 18% of the height, the full width. */
-        const D2D1_SIZE_F sz = s_bm_bg->GetSize();
-        const float aspect = (WIN_W - SIDE_W) / h;
-        const float sh = sz.width / aspect, sy = sz.height * 0.16f;
-        s_rt->DrawBitmap(s_bm_bg, r, 0.85f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR,
-                         D2D1::RectF(0, sy, sz.width, sy + sh));
-    }
-    /* Dark from the left for the text, and into the page at the bottom. */
+    const D2D1_RECT_F r = hero_rect();
+    const float h = r.bottom;
     ID2D1GradientStopCollection* gs = NULL;
-    D2D1_GRADIENT_STOP st[3] = { { 0.0f, col(C_BG, 0.96f) }, { 0.45f, col(C_BG, 0.55f) }, { 1.0f, col(C_BG, 0.05f) } };
     ID2D1LinearGradientBrush* g = NULL;
-    if (SUCCEEDED(s_rt->CreateGradientStopCollection(st, 3, &gs)) &&
-        SUCCEEDED(s_rt->CreateLinearGradientBrush(
-            D2D1::LinearGradientBrushProperties(D2D1::Point2F(SIDE_W, 0), D2D1::Point2F(WIN_W, 0)), gs, &g))) {
-        s_rt->FillRectangle(r, g);
-        g->Release();
+    if (shade) {
+        D2D1_GRADIENT_STOP st[3] = { { 0.0f, col(C_BG, 0.9f) }, { 0.55f, col(C_BG, 0.6f) }, { 1.0f, col(C_BG, 0.0f) } };
+        if (SUCCEEDED(s_d->CreateGradientStopCollection(st, 3, &gs)) &&
+            SUCCEEDED(s_d->CreateLinearGradientBrush(
+                D2D1::LinearGradientBrushProperties(D2D1::Point2F(SIDE_W, 0), D2D1::Point2F(SIDE_W + 680.0f, 0)), gs, &g))) {
+            s_d->FillRectangle(SR(r), g);
+            g->Release();
+            g = NULL;
+        }
+        if (gs) { gs->Release(); gs = NULL; }
     }
-    if (gs) { gs->Release(); gs = NULL; }
-    D2D1_GRADIENT_STOP sb[2] = { { 0.0f, col(C_BG, 0.0f) }, { 1.0f, col(C_BG, 1.0f) } };
-    if (SUCCEEDED(s_rt->CreateGradientStopCollection(sb, 2, &gs)) &&
-        SUCCEEDED(s_rt->CreateLinearGradientBrush(
-            D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, h * 0.55f), D2D1::Point2F(0, h)), gs, &g))) {
-        s_rt->FillRectangle(r, g);
+    const float fade = h > 160.0f ? 64.0f : 40.0f;
+    D2D1_GRADIENT_STOP sb[2] = { { 0.0f, col(C_BG, 0.0f) }, { 1.0f, col(C_BG, 0.92f) } };
+    if (SUCCEEDED(s_d->CreateGradientStopCollection(sb, 2, &gs)) &&
+        SUCCEEDED(s_d->CreateLinearGradientBrush(
+            D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, h - fade), D2D1::Point2F(0, h)), gs, &g))) {
+        s_d->FillRectangle(SR(R(SIDE_W, h - fade, WIN_W - SIDE_W, fade)), g);
         g->Release();
     }
     if (gs) gs->Release();
+    fill(R(SIDE_W, h - 2, WIN_W - SIDE_W, 2), C_NEON);
+    glow_rect(R(SIDE_W, h - 2, WIN_W - SIDE_W, 2), C_NEON, 0.7f);
 }
 
-static void draw_chip(const wchar_t* s, float x, float y, float w)
+/* A label in a cyan frame, as wide as its text: how wide it came out. */
+static float draw_chip(const wchar_t* s, float x, float y)
 {
-    const D2D1_RECT_F r = R(x, y, w, 28);
-    fill_rr(r, 14, C_BG, 0.55f);
-    stroke_rr(r, 14, C_GOLD, 0.7f);
-    text(s, s_tf_small, r, C_TEXT, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    const float w = snap(text_w(s, s_tf_cap) + 18.0f);
+    const D2D1_RECT_F r = R(x, y, w, 20);
+    fill(r, C_BG, 0.6f);
+    frame(r, C_CYAN, 1.0f, 2.0f);
+    glow_rect(r, C_CYAN, 0.45f, 2.0f);
+    text(s, s_tf_cap, r, C_CYAN, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+    return w;
 }
 
-/* frac: how far, or negative when that is not known. */
-static void draw_progress(float x, float y, float w, float frac, int warn)
+/* A bar of segments, as the precompile screen's. frac: how far, or negative when that is not known. */
+static void draw_progress(float x, float y, float w, float frac, int warn, float h)
 {
-    const float h = 6.0f;
-    fill_rr(R(x, y, w, h), 3.0f, 0x3A3A44);
+    const D2D1_RECT_F r = R(x, y, w, h);
+    fill(r, C_BG);
+    frame(r, C_EDGE, 1.0f, 2.0f);
+    const float in = 3.0f, seg = 6.0f, gap = 2.0f;
+    const int n = (int)((w - 2.0f * in + gap) / (seg + gap));
+    if (n <= 0) return;
+    int from = 0, to;
     if (frac >= 0.0f) {
-        const float fw = w * (frac > 1.0f ? 1.0f : frac);
-        if (fw >= h) fill_rr(R(x, y, fw, h), 3.0f, warn ? C_WARN : C_GOLD);
-    } else {
-        const float t = (float)(GetTickCount64() % 1600) / 1600.0f;
-        const float at = t < 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
-        fill_rr(R(x + (w - w * 0.25f) * at, y, w * 0.25f, h), 3.0f, warn ? C_WARN : C_GOLD);
+        to = (int)((float)n * (frac > 1.0f ? 1.0f : frac) + 0.5f);
+    } else {   /* back and forth, a quarter of the bar */
+        const float t = (float)(GetTickCount64() % 1600) / 1600.0f, at = t < 0.5f ? t * 2.0f : (1.0f - t) * 2.0f;
+        const int span = n / 4 > 1 ? n / 4 : 1;
+        from = (int)((float)(n - span) * at + 0.5f);
+        to = from + span;
     }
+    for (int i = from; i < to; i++) fill(R(x + in + (float)i * (seg + gap), y + in, seg, h - 2.0f * in), warn ? C_WARN : C_GOLD);
 }
 
 static void check_line(float x, float y, float w, int state, const wchar_t* s)
 {
     /* state: 1 fine, 2 for information, 0 a warning, -1 missing */
-    const unsigned c = state == 1 ? C_OK : state == 2 ? C_TEXT2 : state == 0 ? C_WARN : C_BAD;
-    text(state == 1 ? L"\xE73E" : state == 2 ? L"\xE946" : state == 0 ? L"\xE7BA" : L"\xE711", s_tf_icon,
-         R(x, y, 22, 26), c, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-    text(s, s_tf_ui, R(x + 32, y, w - 32, 26), state < 0 ? C_BAD : C_TEXT);
+    const unsigned c = state == 1 ? C_OK : state == 2 ? C_MUTED : state == 0 ? C_WARN : C_BAD;
+    icon(state == 1 ? k_ic_check : state == 2 ? k_ic_info : state == 0 ? k_ic_warn : k_ic_cross, x, y + 5, c);
+    text(s, s_tf_ui, R(x + 26, y, w - 26, 26), state < 0 ? C_BAD : state == 0 ? C_WARN_T : C_TEXT);
 }
 
 static void draw_play(void)
 {
-    const float hh = 270.0f;
-    draw_hero(hh);
-    const float x0 = SIDE_W + 40;
-    text(L"NATIVE PC PORT \x00B7 WINDOWS", s_tf_cap, R(x0, 44, 400, 18), C_GOLD);
-    text(L"GOD OF WAR", s_tf_title, R(x0, 66, 520, 44), 0xF3E6D0);
-    text(L"ASCENSION", s_tf_head, R(x0 + 2, 108, 520, 26), C_GOLD);
-    text(L"Recompiled from the PlayStation 3 version: PPU and SPU code lifted to x86, the RSX drawn with Direct3D 12.",
-         s_tf_small, R(x0, 138, 470, 40), C_TEXT2);
+    draw_hero(0);
+    /* The title over the scene, in a box of its own: the port's name as the banner draws it, what it is, and chips. */
     {
-        wchar_t b[60];
-        if (s_game.g.title_id[0]) swprintf(b, 60, L"%ls \x00B7 %ls", W(s_game.g.title_id), game_version());
-        else swprintf(b, 60, L"NPUA80918 \x00B7 1.12");
-        draw_chip(b, x0, 190, 150);
+        const float px = SIDE_W + 28, py = 24, pw = 440;
+        const wchar_t* sub = L"PS3 code recompiled to x86-64, drawn with Direct3D 12.";
+        const float sh = text_h(sub, s_tf_desc, pw - 36);
+        const D2D1_RECT_F panel = R(px, py, pw, 128 + sh);
+        fill(panel, C_BG, 0.8f);
+        frame(panel, C_NEON, 1.0f, 2.0f);
+        glow_rect(panel, C_NEON, 0.75f, 2.0f);
+        text(L"NATIVE PC PORT \x00B7 STATIC RECOMPILATION", s_tf_cap, R(px + 18, py + 14, pw - 36, 12), C_CYAN);
+        if (s_bm_word) {
+            const D2D1_RECT_F wr = word_rect(px + 14, py + 34, 4.0f);
+            s_d->DrawBitmap(s_bm_word, wr, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+            glow_bitmap(s_bm_word_glow, wr, 0.9f);
+        }
+        text(sub, s_tf_desc, R(px + 18, py + 82, pw - 36, sh + 2), C_TEXT);
+        wchar_t b[80];
+        float cx = px + 18;
+        const float cy = py + 94 + sh;
+        if (s_game.g.title_id[0]) swprintf(b, 80, L"%ls \x00B7 %ls", W(s_game.g.title_id), game_version());
+        else swprintf(b, 80, L"NPUA80918 \x00B7 1.12");
+        cx += draw_chip(UP(b), cx, cy) + 8;
+        cx += draw_chip(L"DIRECT3D 12", cx, cy) + 8;
+        const Opt* rs = opt_find("graphics", "render_scale");
+        if (rs && ps3_settings_ieq(rs->cur, "native")) swprintf(b, 80, L"INTERNAL: WINDOW");
+        else swprintf(b, 80, L"%ls INTERNAL", UP(W(rs ? opt_short(rs) : "720p")));
+        draw_chip(b, cx, cy);
     }
-    draw_chip(L"Direct3D 12", x0 + 160, 190, 110);
-    draw_chip(L"720p internal", x0 + 280, 190, 120);
 
     /* Ready check */
-    const float cy = hh + 8, chh = WIN_H - FOOT_H - cy - 20;
-    const float cw = (WIN_W - SIDE_W - 80 - 20) * 0.5f;
+    const float x0 = SIDE_W + 16, cy = HERO_PLAY + 14, chh = WIN_H - FOOT_H - 16 - cy;
+    const float cw = (WIN_W - SIDE_W - 48) * 0.5f, lx = x0 + 18, lw = cw - 36;
     const D2D1_RECT_F c1 = R(x0, cy, cw, chh);
     w_card(c1, L"READY CHECK");
-    float y = cy + 54;
+    float y = cy + 44;
     if (s_find.thread) {
-        check_line(x0 + 22, y, cw - 44, 2, L"Looking for the game\x2026");
+        check_line(lx, y, lw, 2, L"Looking for the game\x2026");
     } else if (s_prep.thread) {
         wchar_t b[160];
         float f;
         const int level = prep_line(b, 160, &f);
-        check_line(x0 + 22, y, cw - 44, level, b);
-        draw_progress(x0 + 54, y + 27, cw - 76, f, level == 0);
+        check_line(lx, y, lw, level, b);
+        draw_progress(lx + 26, y + 28, lw - 26, f, level == 0, 8.0f);
+        y += 10;
 #ifdef PORT_GAME_MODULE
     } else if (s_kit.running || (s_rc.elf_ok && s_kit.state != 0)) {
         /* The game's code, built here: what it is at, and under it the bar and Stop, or what Build would do. */
         wchar_t b[480];
         const wchar_t* hint = L"";
         const int level = s_kit.running ? kit_line(b, 480) : kit_need(b, 480, &hint);
-        check_line(x0 + 22, y, cw - 44, level, b);
+        check_line(lx, y, lw, level, b);
         if (s_kit.running) {
             y += 34;
-            draw_progress(x0 + 54, y + 12, cw - 76 - 106, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
-            w_button(L"Stop", R(x0 + cw - 118, y - 2, 96, 30), H_KIT_STOP, 0);
+            draw_progress(lx + 26, y + 10, lw - 26 - 106, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
+            w_button(L"Stop", R(lx + lw - 96, y, 96, 30), H_KIT_STOP, B_PLAIN);
         } else if (s_kit.state != 3) {
             y += 34;
             const int log = s_kit.err[0] != 0;
-            text(hint, s_tf_small, R(x0 + 54, y, cw - 76 - (log ? 212 : 106), 26), C_TEXT2);
-            if (log) w_button(L"Log", R(x0 + cw - 224, y - 2, 96, 30), H_KIT_LOG, 0);
-            w_button(log ? L"Try again" : L"Build", R(x0 + cw - 118, y - 2, 96, 30), H_KIT_BUILD, 0);
+            text(hint, s_tf_small, R(lx + 26, y, lw - 26 - (log ? 212 : 106), 26), C_MUTED);
+            if (log) w_button(L"Log", R(lx + lw - 202, y - 2, 96, 30), H_KIT_LOG, B_PLAIN);
+            w_button(log ? L"Try again" : L"Build", R(lx + lw - 96, y - 2, 96, 30), H_KIT_BUILD, B_PLAIN);
         }
 #endif
     } else if (!s_rc.elf_ok) {
         const GameInfo& g = s_game.g;
-        check_line(x0 + 22, y, cw - 150, -1, g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
-                                             : g.state == GAME_INCOMPLETE ? (g.files_missing ? L"Game files missing (System tab)"
-                                                                                             : L"Wrong game files (System tab)")
-                                             : g.state == GAME_OTHER_BUILD && g.other_version ? L"Not version 1.12 (System tab)"
-                                             : L"Game not found");
-        w_button(L"Find game", R(x0 + cw - 118, y - 2, 96, 30), H_GAME_AUTO, 0);
+        check_line(lx, y, lw - 106, -1, g.state == GAME_NO_ELF ? L"Not decrypted yet (System tab)"
+                                        : g.state == GAME_INCOMPLETE ? (g.files_missing ? L"Game files missing (System tab)"
+                                                                                        : L"Wrong game files (System tab)")
+                                        : g.state == GAME_OTHER_BUILD && g.other_version ? L"Not version 1.12 (System tab)"
+                                        : L"Game not found");
+        w_button(L"Find game", R(lx + lw - 96, y - 2, 96, 30), H_GAME_AUTO, B_PLAIN);
     } else if (s_game.g.state == GAME_OTHER_BUILD) {
-        check_line(x0 + 22, y, cw - 44, 0, s_game.g.other_version ? L"Game found, but not version 1.12"
-                                                                  : L"Game found, but another GOWA.elf");
+        check_line(lx, y, lw, 0, s_game.g.other_version ? L"Game found, but not version 1.12"
+                                                        : L"Game found, but another GOWA.elf");
     } else {
         wchar_t b[100];
         swprintf(b, 100, L"Game found: %ls %ls", s_game.g.title_id[0] ? W(s_game.g.title_id) : L"GOWA.elf", game_version());
-        check_line(x0 + 22, y, cw - 44, 1, b);
+        check_line(lx, y, lw, 1, b);
     }
-    y += 34;
+    y += 32;
     {
         wchar_t b[200];
         if (s_rc.profiles > 0) swprintf(b, 200, L"Saves: %d profile%ls", s_rc.profiles, s_rc.profiles == 1 ? L"" : L"s");
         else swprintf(b, 200, L"No saves yet: a new game makes one");
-        check_line(x0 + 22, y, cw - 44, s_rc.profiles > 0 ? 1 : 0, b);
+        check_line(lx, y, lw, s_rc.profiles > 0 ? 1 : 0, b);
     }
-    y += 34;
+    y += 32;
     {
         wchar_t b[300];
         swprintf(b, 300, L"Graphics: %ls", gpu_chosen()[0] ? W(gpu_chosen()) : L"no Direct3D adapter found");
-        check_line(x0 + 22, y, cw - 44, gpu_chosen()[0] ? 1 : -1, b);
+        check_line(lx, y, lw, gpu_chosen()[0] ? 1 : -1, b);
     }
-    y += 34;
+    y += 32;
     {
         int n = 0;
         for (int i = 0; i < s_npopt; i++) n += opt_on(s_popt[i]);
         wchar_t b[200];
         swprintf(b, 200, L"Game patches: %d of %d on", n, s_npopt);
-        check_line(x0 + 22, y, cw - 44, 1, b);
+        check_line(lx, y, lw, 1, b);
     }
-    y += 34;
+    y += 32;
     {
         const Opt* dev = opt_find("input", "device");
         if (dev && ps3_settings_ieq(dev->cur, "keyboard"))
-            check_line(x0 + 22, y, cw - 44, 2, L"Keyboard and mouse (Controls tab)");
+            check_line(lx, y, lw, 2, L"Keyboard and mouse (Controls tab)");
         else if (s_rc.pad) {
             wchar_t b[220];
             if (s_rc.pad > 1) swprintf(b, 220, L"Controller: %ls, and %d more", W(s_rc.pad_name), s_rc.pad - 1);
             else swprintf(b, 220, L"Controller: %ls", W(s_rc.pad_name));
-            check_line(x0 + 22, y, cw - 44, 1, b);
+            check_line(lx, y, lw, 1, b);
         }
         else
-            check_line(x0 + 22, y, cw - 44, dev && ps3_settings_ieq(dev->cur, "pad") ? 0 : 2,
+            check_line(lx, y, lw, dev && ps3_settings_ieq(dev->cur, "pad") ? 0 : 2,
                        dev && ps3_settings_ieq(dev->cur, "pad") ? L"No controller found (Controls: controller only)"
                                                                 : L"No controller: keyboard and mouse");
     }
-    Opt* fps = opt_find("display", "show_fps");
-    text(L"Game folder", s_tf_cap, R(x0 + 22, cy + chh - 94, cw - 44, 18), C_MUTED);
-    text(game_path_shown(), s_tf_path, R(x0 + 22, cy + chh - 76, cw - 44, 20), C_TEXT2);
-    text(L"Settings file", s_tf_cap, R(x0 + 22, cy + chh - 52, cw - 44, 18), C_MUTED);
-    text(W(ps3_settings_path()), s_tf_path, R(x0 + 22, cy + chh - 34, cw - 44, 20), C_TEXT2);
+    const float cb = cy + chh;
+    w_rule(lx, cb - 98, lw);
+    text(L"GAME FOLDER", s_tf_cap, R(lx, cb - 86, lw, 12), C_MUTED);
+    text(game_path_shown(), s_tf_path, R(lx, cb - 72, lw, 20), C_TEXT2);
+    text(L"SETTINGS FILE", s_tf_cap, R(lx, cb - 46, lw, 12), C_MUTED);
+    text(W(ps3_settings_path()), s_tf_path, R(lx, cb - 32, lw, 20), C_TEXT2);
 
     /* Your setup */
-    const float x1 = x0 + cw + 20;
+    const float x1 = x0 + cw + 16, rx = x1 + 18, rw = cw - 36;
     const D2D1_RECT_F c2 = R(x1, cy, cw, chh);
     w_card(c2, L"YOUR SETUP");
     const int pn = preset_now();
-    const float pw = cw - 44, segw = (pw - 4) / (float)N_PRESET;
-    const D2D1_RECT_F box = R(x1 + 22, cy + 54, pw, SEG_H);
-    fill_rr(box, 8, C_BG);
-    stroke_rr(box, 8, C_LINE);
+    const float pgap = 6.0f, pbw = (rw - 2.0f * pgap) / (float)N_PRESET;
     for (int k = 0; k < N_PRESET; k++) {
-        const D2D1_RECT_F s = R(x1 + 24 + segw * (float)k, cy + 56, segw, SEG_H - 4);
-        if (k == pn) fill_rr(s, 6, C_RED);
-        else if (hovered(H_PRESET + k)) fill_rr(s, 6, C_CARD_HI);
-        text(W(k_presets[k].name), s_tf_ui, s, k == pn ? 0xFFFFFF : C_TEXT2, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+        const D2D1_RECT_F s = R(rx + (pbw + pgap) * (float)k, cy + 44, pbw, 38);
+        w_choice(s, k == pn, H_PRESET + k, W(k_presets[k].name));
+        if (k == pn) {
+            glow_rect(s, C_GOLD, 0.45f);
+            glow_hole(s);
+        }
         hit(s, H_PRESET + k);
     }
     text(pn >= 0 ? W(k_presets[pn].desc) : L"Your own mix of game patches (Game patches tab).", s_tf_desc,
-         R(x1 + 22, cy + 98, pw, 36), C_TEXT2);
-    float ry = cy + 142;
+         R(rx, cy + 92, rw, 36), C_MUTED);
+    float ry = cy + 136;
     const char* quick[][2] = { { "display", "mode" }, { "display", "frame_cap" } };
     for (int q = 0; q < 2; q++) {
         Opt* o = opt_find(quick[q][0], quick[q][1]);
         if (!o) continue;
-        text(W(o->label), s_tf_ui_b, R(x1 + 22, ry, 140, SEG_H), C_TEXT);
-        w_segmented(*o, (int)(o - s_opt), x1 + 22 + 140, ry, pw - 140);
-        ry += SEG_H + 12;
+        float sw = seg_w(*o);
+        if (sw > rw - 150.0f) sw = rw - 150.0f;
+        text(W(o->label), s_tf_ui, R(rx, ry, rw - sw - 10, SEG_H), C_TEXT);
+        w_segmented(*o, (int)(o - s_opt), rx + rw - sw, ry, sw);
+        ry += SEG_H + 14;
     }
-    ry += 4;
     if (Opt* vs = opt_find("display", "vsync")) {
-        text(L"VSync", s_tf_ui_b, R(x1 + 22, ry, 220, 26), C_TEXT);
-        w_switch(opt_on(*vs), x1 + 22 + pw - 46, ry, H_SW + (int)(vs - s_opt));
-        ry += 26 + 14;
+        text(L"VSync", s_tf_ui, R(rx, ry, rw - SW_W - 10, SW_H), C_TEXT);
+        w_switch(opt_on(*vs), rx + rw - SW_W, ry, H_SW + (int)(vs - s_opt));
+        ry += SW_H + 16;
     }
-    if (fps) {
-        text(L"Frame rate and load on screen", s_tf_ui_b, R(x1 + 22, ry, 260, 26), C_TEXT);
-        w_switch(ps3_settings_ieq(fps->cur, "overlay"), x1 + 22 + pw - 46, ry, H_SW + (int)(fps - s_opt));
+    if (Opt* fps = opt_find("display", "show_fps")) {
+        text(L"Frame rate and load on screen", s_tf_ui, R(rx, ry, rw - SW_W - 10, SW_H), C_TEXT);
+        w_switch(ps3_settings_ieq(fps->cur, "overlay"), rx + rw - SW_W, ry, H_SW + (int)(fps - s_opt));
     }
 }
 
@@ -1615,8 +2110,8 @@ static void draw_game_row(float x, float y, float w)
         AcquireSRWLockShared(&s_find.lock);
         swprintf(b, sizeof b / sizeof b[0], L"Searching: %ls", s_find.now);
         ReleaseSRWLockShared(&s_find.lock);
-        text(L"\xE721", s_tf_icon, R(x, y + 74, 22, 26), C_GOLD, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
-        text(b, s_tf_path, R(x + 32, y + 74, w - 32, 26), C_TEXT2);
+        icon(k_ic_search, x, y + 79, C_GOLD);
+        text(b, s_tf_path, R(x + 26, y + 74, w - 26, 26), C_TEXT2);
     } else {
         wchar_t b[GAME_PATH_MAX + 128];
         const int level = game_status(b, sizeof b / sizeof b[0]);
@@ -1626,13 +2121,13 @@ static void draw_game_row(float x, float y, float w)
         wchar_t b[32];
         float f;
         const int level = prep_line(b, 32, &f);
-        draw_progress(x + 32, y + 112, w - 32 - 110, f, level == 0);
-        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_PREP_STOP, 0);
+        draw_progress(x + 26, y + 110, w - 26 - 110, f, level == 0);
+        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_PREP_STOP, B_PLAIN);
     }
 #ifdef PORT_GAME_MODULE
     else if (s_kit.running) {   /* the game's code, after the decrypting: the status line above says how far */
-        draw_progress(x + 32, y + 112, w - 32 - 110, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
-        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_KIT_STOP, 0);
+        draw_progress(x + 26, y + 110, w - 26 - 110, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
+        w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_KIT_STOP, B_PLAIN);
     }
 #endif
     if (prep_asks()) {
@@ -1652,11 +2147,15 @@ static void draw_game_row(float x, float y, float w)
 
 static void draw_settings(int tab)
 {
-    const float x0 = SIDE_W + 40, hh = 120.0f;
-    draw_hero(hh);
-    text(k_tab_name[tab], s_tf_title, R(x0, 30, 600, 44), 0xF3E6D0);
-    text(k_tab_desc[tab], s_tf_ui, R(x0 + 2, 74, 640, 24), C_TEXT2);
-    const float cw = WIN_W - SIDE_W - 80, cy = hh + 4, rx = x0 + 24, rw = cw - 48;
+    const float x0 = SIDE_W + 16, hh = HERO_TAB;
+    draw_hero(1);
+    {
+        const D2D1_RECT_F t = R(SIDE_W + 28, 30, 600, 32);
+        text(UP(k_tab_name[tab]), s_tf_title, t, C_GOLD);
+        glow_text(UP(k_tab_name[tab]), s_tf_title, t, C_NEON, 0.7f);
+    }
+    text(k_tab_desc[tab], s_tf_ui, R(SIDE_W + 28, 68, 640, 24), C_TEXT);
+    const float cw = WIN_W - SIDE_W - 48, cy = hh + 14, rx = x0 + 24, rw = cw - 48;
     /* The rows of the tab, then what follows them. */
     Opt* rows[MAX_POPT + N_OPT];
     int nr = 0;
@@ -1677,8 +2176,8 @@ static void draw_settings(int tab)
     const float off = s_scroll[tab];
     const int scrolls = s_scroll_max[tab] > 0.0f;
     if (scrolls) {
-        s_clip = R(SIDE_W, cy, WIN_W - SIDE_W, view);
-        s_rt->PushAxisAlignedClip(s_clip, D2D1_ANTIALIAS_MODE_ALIASED);
+        s_clip = SR(R(SIDE_W, cy - 1, WIN_W - SIDE_W, view + 1));   /* the card's neon line, a DIP out */
+        s_d->PushAxisAlignedClip(s_clip, D2D1_ANTIALIAS_MODE_ALIASED);
     }
     w_card(R(x0, cy - off, cw, ch), NULL);
     float y = cy + 16 - off;
@@ -1697,30 +2196,22 @@ static void draw_settings(int tab)
         const float rh = row_h(klh);
         w_rule(rx, y, rw);
         w_label(L"Keyboard keys", keys_desc, rx, y, rw - 212, rh, klh, kdh);
-        w_button(L"Edit keys\x2026", R(rx + rw - 180, y + (rh - SEG_H) * 0.5f, 180, SEG_H), H_KEYS, 0);
+        w_button(L"Edit keys\x2026", R(rx + rw - 180, y + (rh - SEG_H) * 0.5f, 180, SEG_H), H_KEYS, B_PLAIN);
     }
     if (tab == T_PATCHES) {
         w_rule(rx, y, rw);
-        text(L"\xE946", s_tf_icon, R(rx, y + 8, 18, 26), C_MUTED, 1.0f, DWRITE_TEXT_ALIGNMENT_CENTER);
+        icon(k_ic_info, rx, y + 13, C_MUTED);
         text(L"Off: drawn as on the PS3. The game reads these when it starts.", s_tf_small,
              R(rx + 26, y + 8, rw - 26, 26), C_MUTED);
     }
     if (scrolls) {
-        s_rt->PopAxisAlignedClip();
+        s_d->PopAxisAlignedClip();
         s_clip = NO_CLIP;
         /* Where in the card the window is, beside it. */
-        const float bx = x0 + cw + 14, thumb = view * view / ch < 40.0f ? 40.0f : view * view / ch;
-        fill_rr(R(bx, cy, 6, view), 3, C_CARD);
-        fill_rr(R(bx, cy + (view - thumb) * off / s_scroll_max[tab], 6, thumb), 3, C_MUTED);
+        const float bx = x0 + cw + 6, thumb = view * view / ch < 40.0f ? 40.0f : view * view / ch;
+        fill(R(bx, cy, 6, view), C_CARD);
+        fill(R(bx, cy + (view - thumb) * off / s_scroll_max[tab], 6, thumb), C_OFF);
     }
-}
-
-/* An option's short name: its segment's, else its list entry. */
-static const char* opt_short(const Opt* o)
-{
-    if (!o) return "";
-    const int i = opt_index(*o, o->cur);
-    return i < 0 ? o->cur : o->seg ? o->seg[i] : o->names[i];
 }
 
 static void summary(wchar_t* out, size_t n)
@@ -1739,27 +2230,33 @@ static void draw_footer(void)
 {
     const float y = WIN_H - FOOT_H;
     fill(R(SIDE_W, y, WIN_W - SIDE_W, FOOT_H), C_SIDE);
-    s_br->SetColor(col(C_LINE));
-    s_rt->DrawLine(D2D1::Point2F(SIDE_W, y + 0.5f), D2D1::Point2F(WIN_W, y + 0.5f), s_br, 1.0f);
+    fill(R(SIDE_W, y, WIN_W - SIDE_W, 2), C_LINE);
+    /* Play on the right, and from it leftward Quit, Save and Defaults, each as wide as its name. */
+    const D2D1_RECT_F play = R(WIN_W - 20 - 196, y + 11, 196, 54);
+    w_button(L"PLAY", play, H_PLAY, B_PLAY);
+    const wchar_t* names[3] = { L"QUIT", L"SAVE", L"DEFAULTS" };
+    const int ids[3] = { H_QUIT, H_SAVE, H_DEFAULTS };
+    float bx = play.left - 6;
+    for (int i = 0; i < 3; i++) {
+        const float bw = snap(text_w(names[i], s_tf_btn) + 32.0f);
+        bx -= 10 + bw;
+        w_button(names[i], R(bx, y + 16, bw, 44), ids[i], B_BAR);
+    }
+    const float tw = bx - 16 - (SIDE_W + 20);
     wchar_t sum[300];
     summary(sum, 300);
     const int pn = preset_now();
     if (s_toast[0] && GetTickCount64() < s_toast_until) {
         const unsigned c = s_toast_bad ? C_BAD : C_OK;
-        text(s_toast_bad ? L"\xE711" : L"\xE73E", s_tf_icon, R(SIDE_W + 32, y, 20, FOOT_H), c, 1.0f,
-             DWRITE_TEXT_ALIGNMENT_CENTER);
-        text(W(s_toast), s_tf_ui_b, R(SIDE_W + 60, y, 300, FOOT_H), c);
+        icon(s_toast_bad ? k_ic_cross : k_ic_check, SIDE_W + 20, y + (FOOT_H - 16.0f) * 0.5f, c);
+        text(W(s_toast), s_tf_ui_b, R(SIDE_W + 46, y, tw - 26, FOOT_H), c);
     } else {
         wchar_t p[80];
         if (pn >= 0) swprintf(p, 80, L"%ls preset", W(k_presets[pn].name));
         else swprintf(p, 80, L"Custom patches");
-        text(p, s_tf_ui_b, R(SIDE_W + 32, y + 15, 300, 22), C_TEXT);
-        text(sum, s_tf_small, R(SIDE_W + 32, y + 37, 300, 20), C_TEXT2);
+        text(UP(p), s_tf_head, R(SIDE_W + 20, y + 18, tw, 18), C_GOLD);
+        text(sum, s_tf_small, R(SIDE_W + 20, y + 40, tw, 20), C_MUTED);
     }
-    w_button(L"Defaults", R(WIN_W - 520, y + 16, 104, 40), H_DEFAULTS, 0);
-    w_button(L"Save", R(WIN_W - 406, y + 16, 90, 40), H_SAVE, 0);
-    w_button(L"Quit", R(WIN_W - 306, y + 16, 90, 40), H_QUIT, 0);
-    w_button(L"PLAY", R(WIN_W - 204, y + 12, 180, 48), H_PLAY, 1);
 }
 
 /* The open list, over everything: as many entries as fit, the wheel scrolls. */
@@ -1777,46 +2274,119 @@ static void draw_dropdown(void)
     float y0 = s_dd_at.bottom + 4;
     if (y0 + show * ih > WIN_H - 8) y0 = s_dd_at.top - 4 - show * ih;
     const D2D1_RECT_F box = R(s_dd_at.left, y0, w, show * ih + 8);
-    fill_rr(R(box.left + 2, box.top + 4, w, box.bottom - box.top), 10, 0x000000, 0.45f);
-    fill_rr(box, 10, C_CARD_HI);
-    stroke_rr(box, 10, C_LINE);
+    fill(R(box.left + 4, box.top + 4, w, box.bottom - box.top), 0x000000, 0.5f);   /* a hard shadow */
+    fill(box, C_CARD_HI);
+    frame(box, C_GOLD, 1.0f, 2.0f);
     const int sel = opt_index(o, o.cur);
     for (int k = 0; k < show; k++) {
         const int i = s_dd_top + k;
         const D2D1_RECT_F r = R(box.left + 4, y0 + 4 + ih * (float)k, w - 8, ih);
-        if (hovered(H_DDITEM + i)) fill_rr(r, 6, 0x34343C);
-        if (i == sel) fill_rr(R(r.left + 2, r.top + 8, 3, ih - 16), 1.5f, C_RED);
-        text(W(o.names[i]), i == sel ? s_tf_ui_b : s_tf_ui, R(r.left + 14, r.top, r.right - r.left - 20, ih),
+        if (hovered(H_DDITEM + i)) fill(r, C_CTL_HI);
+        if (i == sel) fill(R(r.left + 6, r.top + 12, 8, 8), C_GOLD);
+        text(W(o.names[i]), i == sel ? s_tf_ui_b : s_tf_ui, R(r.left + 22, r.top, r.right - r.left - 28, ih),
              i == sel ? C_TEXT : C_TEXT2);
         hit(r, H_DDITEM + i);
     }
     if (o.n > show) {   /* where the shown part is */
         const float th = (show * ih) * (float)show / (float)o.n;
         const float ty = y0 + 4 + (show * ih - th) * (float)s_dd_top / (float)(o.n - show);
-        fill_rr(R(box.right - 6, ty, 3, th), 1.5f, 0x55555E);
+        fill(R(box.right - 8, ty, 4, th), C_DIM);
     }
 }
 
-static void paint(void)
+/* All but the scene, on s_d. */
+static void ui_draw(void)
 {
     s_nhit = 0;
-    s_rt->BeginDraw();
-    s_rt->SetTransform(D2D1::Matrix3x2F::Identity());
-    s_rt->Clear(col(C_BG));
+    s_nglow = 0;
+    s_nhole = 0;
+    s_d->SetAntialiasMode(D2D1_ANTIALIAS_MODE_ALIASED);
     if (s_tab == T_PLAY) draw_play();
     else draw_settings(s_tab);
     draw_sidebar();
     draw_footer();
     if (s_dd >= 0) {
-        /* Under an open list only the list counts. */
+        /* Under an open list only the list counts, and what glows under it glows less. */
         s_nhit = 0;
-        fill(R(0, 0, WIN_W, WIN_H), 0x000000, 0.25f);
+        for (int i = 0; i < s_nglow; i++) s_glows[i].a *= 0.35f;
+        fill(R(0, 0, WIN_W, WIN_H), 0x000000, 0.35f);
         draw_dropdown();
+    }
+}
+
+/* The layer, drawn again, and what glows. */
+static void layer_draw(void)
+{
+    s_d = s_layer;
+    s_layer->BeginDraw();
+    s_layer->SetTransform(D2D1::Matrix3x2F::Identity());
+    s_layer->Clear(D2D1::ColorF(0, 0, 0, 0));
+    ui_draw();
+    s_layer->EndDraw();   /* a lost device shows in the frame's EndDraw too */
+    s_d = s_rt;
+    s_layer_old = 0;
+    if (effects_on()) glow_draw();
+}
+
+/* The scene in the header, each of its pixels k x k device pixels: the smallest k at which it fills the header's
+ * width, its right edge (the temple) at the header's right, about the temple's middle at the header's. */
+static void scene_draw(void)
+{
+    if (!s_bm_scene) return;
+    const D2D1_RECT_F h = SR(hero_rect());
+    const float pw = floorf((h.right - h.left) * s_px + 0.5f), ph = floorf((h.bottom - h.top) * s_px + 0.5f);
+    if (pw < 1.0f || ph < 1.0f) return;
+    int k = (int)ceilf(pw / (float)GOWA_SCENE_W - 0.001f);
+    if (k < 1) k = 1;
+    while (ph / (float)k > (float)GOWA_SCENE_H) k++;
+    const float sw = pw / (float)k, sh = ph / (float)k;
+    const float sx = floorf((float)GOWA_SCENE_W - sw);
+    float sy = floorf(110.0f - sh * 0.5f);
+    if (sy > (float)GOWA_SCENE_H - sh) sy = floorf((float)GOWA_SCENE_H - sh);
+    if (sy < 0.0f) sy = 0.0f;
+    s_rt->DrawBitmap(s_bm_scene, h, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR,
+                     D2D1::RectF(sx, sy, sx + sw, sy + sh));
+}
+
+/* A frame: the scene, the layer (drawn again first if something changed), the glow added and the scanlines. */
+static void frame_draw(void)
+{
+    if (s_layer && s_layer_old) layer_draw();
+    s_d = s_rt;
+    s_rt->BeginDraw();
+    s_rt->SetTransform(D2D1::Matrix3x2F::Identity());
+    s_rt->Clear(col(C_BG));
+    scene_draw();
+    ID2D1Bitmap* b = NULL;
+    if (s_layer && SUCCEEDED(s_layer->GetBitmap(&b))) {
+        s_rt->DrawBitmap(b, NULL, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
+        b->Release();
+    } else {
+        ui_draw();   /* no layer: all of it every time, without the glow */
+    }
+    if (effects_on()) {
+        if (s_dc && s_glow && SUCCEEDED(s_glow->GetBitmap(&b))) {
+            s_dc->DrawImage(b, D2D1_INTERPOLATION_MODE_NEAREST_NEIGHBOR, D2D1_COMPOSITE_MODE_PLUS);
+            b->Release();
+        }
+        if (s_bm_fx) s_rt->DrawBitmap(s_bm_fx, NULL, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
     }
     if (s_rt->EndDraw() == D2DERR_RECREATE_TARGET) {   /* the GPU was reset: a new target, drawn again */
         rt_release();
         if (s_main) InvalidateRect(s_main, NULL, FALSE);
     }
+}
+
+/* The scene moves at 30 frames a second while the window is up, not while it is minimised or when Windows'
+ * "Show animations in Windows" is off. */
+static void anim(int on)
+{
+    BOOL ok = TRUE;
+    if (on && SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, &ok, 0) && !ok) on = 0;
+    if (on == s_anim || !s_main) return;
+    s_anim = on;
+    if (on) SetTimer(s_main, 3, 33, NULL);
+    else KillTimer(s_main, 3);
 }
 
 /* ---------------------------------------------------------------------------
@@ -1879,7 +2449,6 @@ static int game_use(const wchar_t* dir)
     }
     game_paths_fill();
     game_refresh();
-    art_reload();
     return 1;
 }
 
@@ -1972,7 +2541,6 @@ static void prepare_done(void)
     }
     game_paths_fill();
     game_refresh();
-    art_reload();
 #ifdef PORT_GAME_MODULE
     if (s_kit.state == 1 || s_kit.state == 2) {   /* the game's code next, built here once */
         kit_start();
@@ -2692,7 +3260,12 @@ static int hit_at(float x, float y)
     return -1;
 }
 
-static void redraw(void) { InvalidateRect(s_main, NULL, FALSE); }
+/* Something changed: the layer is drawn again in the next frame. */
+static void redraw(void)
+{
+    s_layer_old = 1;
+    InvalidateRect(s_main, NULL, FALSE);
+}
 
 #ifndef WM_DPICHANGED
 #define WM_DPICHANGED 0x02E0
@@ -2754,7 +3327,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
             }
         }
         if (s_rt) {
-            paint();
+            frame_draw();
             /* What is under the mouse now that the window has changed under it. */
             const int now = s_mx >= 0 ? hit_at(s_mx, s_my) : -1;
             if (now != s_hover) { s_hover = now; redraw(); }
@@ -2768,8 +3341,14 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         redraw();
         return 0;
     case WM_SIZE:
-        if (s_rt && LOWORD(l) && HIWORD(l))
-            static_cast<ID2D1HwndRenderTarget*>(s_rt)->Resize(D2D1::SizeU(LOWORD(l), HIWORD(l)));
+        anim(w != SIZE_MINIMIZED);
+        if (s_rt && LOWORD(l) && HIWORD(l)) {   /* a new size: a new target, and layers of that size */
+            const D2D1_SIZE_U z = static_cast<ID2D1HwndRenderTarget*>(s_rt)->GetPixelSize();
+            if (z.width != LOWORD(l) || z.height != HIWORD(l)) {
+                rt_release();
+                redraw();
+            }
+        }
         return 0;
     case WM_ERASEBKGND:
         return 1;
@@ -2797,7 +3376,8 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         s_mx = (float)(short)LOWORD(l) * 96.0f / s_ui;
         s_my = (float)(short)HIWORD(l) * 96.0f / s_ui;
         s_press = hit_at(s_mx, s_my);
-        if (s_dd >= 0 && s_press < 0) { s_dd = -1; redraw(); }   /* a click outside closes the list */
+        if (s_dd >= 0 && s_press < 0) s_dd = -1;   /* a click outside closes the list */
+        redraw();   /* a button pressed is drawn sunk */
         SetCapture(h);
         return 0;
     case WM_LBUTTONUP: {
@@ -2805,8 +3385,10 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         s_mx = (float)(short)LOWORD(l) * 96.0f / s_ui;
         s_my = (float)(short)HIWORD(l) * 96.0f / s_ui;
         const int at = hit_at(s_mx, s_my);
-        if (s_press >= 0 && s_press == at) { act(s_press); redraw(); }
+        const int pressed = s_press;
         s_press = -1;
+        if (pressed >= 0 && pressed == at) act(pressed);
+        redraw();
         return 0;
     }
     case WM_MOUSEWHEEL:
@@ -2849,6 +3431,11 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         return 0;
 #endif
     case WM_TIMER: {
+        if (w == 3) {   /* the scene's next frame: the layer stays as it is */
+            scene_tick();
+            InvalidateRect(h, NULL, FALSE);
+            return 0;
+        }
         if (w == 2) { redraw(); return 0; }
         if (s_toast[0] && GetTickCount64() >= s_toast_until) { s_toast[0] = 0; redraw(); }   /* the toast goes */
         if (s_find.thread) redraw();   /* the folder it is in */
@@ -2877,11 +3464,16 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
 
 /* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open,
  * the System tab during a search, and the Cheats and Graphics tabs scrolled to
- * their end, into PNG files at the window's size times 1.25 (a 125% display). */
+ * their end, into PNG files at the window's size times 1.25 (a 125% display),
+ * or at GOWA_LAUNCHER_SHOT_DPI. The scene stands still in them. */
 static void shots(const char* dir)
 {
-    const float dpi = 120.0f;
-    const UINT pw = (UINT)(WIN_W * dpi / 96.0f), ph = (UINT)(WIN_H * dpi / 96.0f);
+    float dpi = 120.0f;
+    if (const char* d = getenv("GOWA_LAUNCHER_SHOT_DPI")) {
+        const float v = (float)atof(d);
+        if (v >= 48.0f && v <= 480.0f) dpi = v;
+    }
+    const UINT pw = (UINT)(WIN_W * dpi / 96.0f + 0.5f), ph = (UINT)(WIN_H * dpi / 96.0f + 0.5f);
     IWICBitmap* bmp = NULL;
     if (!s_wic || FAILED(s_wic->CreateBitmap(pw, ph, GUID_WICPixelFormat32bppPBGRA, WICBitmapCacheOnLoad, &bmp))) return;
     if (FAILED(s_d2d->CreateWicBitmapRenderTarget(bmp, D2D1::RenderTargetProperties(D2D1_RENDER_TARGET_TYPE_DEFAULT,
@@ -2901,14 +3493,16 @@ static void shots(const char* dir)
             swprintf(s_find.now, GAME_PATH_MAX, L"D:\\Games\\PS3\\RPCS3\\dev_hdd0\\game");
         }
         if (t == T_N) {   /* the window size list, open */
-            paint();
+            s_layer_old = 1;
+            frame_draw();
             for (int i = 0; i < s_nhit; i++)
                 if (s_hit[i].id == H_DD + (int)(opt_find("display", "window_size") - s_opt)) {
                     s_dd = s_hit[i].id - H_DD;
                     s_dd_at = s_hit[i].r;
                 }
         }
-        paint();
+        s_layer_old = 1;
+        frame_draw();
         char path[1200];
         snprintf(path, sizeof path, "%s\\launcher_%d.png", dir, t);
         IWICStream* st = NULL;
@@ -2933,18 +3527,21 @@ static void shots(const char* dir)
 static void ui_release(void)
 {
     rt_release();
-    IUnknown* all[] = { s_tf_ui, s_tf_ui_b, s_tf_small, s_tf_cap, s_tf_head, s_tf_title, s_tf_play, s_tf_icon,
-                        s_tf_desc, s_tf_path, s_img_bg, s_img_logo, s_wic, s_dw, s_d2d };
-    for (size_t i = 0; i < sizeof all / sizeof all[0]; i++) if (all[i]) all[i]->Release();
-    s_tf_ui = s_tf_ui_b = s_tf_small = s_tf_cap = s_tf_head = s_tf_title = s_tf_play = s_tf_icon = s_tf_desc = s_tf_path = NULL;
-    s_img_bg = s_img_logo = NULL;
-    s_wic = NULL;
-    s_dw = NULL;
-    s_d2d = NULL;
+    IDWriteTextFormat** f[] = { &s_tf_ui, &s_tf_ui_b, &s_tf_small, &s_tf_cap, &s_tf_head, &s_tf_btn, &s_tf_title,
+                                &s_tf_play, &s_tf_desc, &s_tf_path };
+    for (size_t i = 0; i < sizeof f / sizeof f[0]; i++) drop(*f[i]);
+    drop(s_fonts);
+    if (s_dw5 && s_font_mem) s_dw5->UnregisterFontFileLoader(s_font_mem);
+    drop(s_font_mem);
+    drop(s_dw5);
+    drop(s_wic);
+    drop(s_dw);
+    drop(s_d2d);
 }
 
 extern "C" int gowa_launcher(void)
 {
+    s_t0 = GetTickCount64();
     {
         typedef UINT (WINAPI *get_dpi_fn)(void);
         HMODULE user = GetModuleHandleA("user32.dll");
@@ -3019,8 +3616,10 @@ extern "C" int gowa_launcher(void)
     ShowWindow(s_main, SW_SHOW);
     SetForegroundWindow(s_main);
     SetTimer(s_main, 1, 500, NULL);
+    anim(1);
     if (!s_rc.elf_ok) find_start(NULL);   /* no game yet: look for it */
     report_offer();
+    redraw();   /* what the offer's answer did (a toast) */
 
     MSG msg;
     while (!s_done && GetMessageA(&msg, NULL, 0U, 0U) > 0) {
@@ -3039,6 +3638,7 @@ extern "C" int gowa_launcher(void)
     }
     KillTimer(s_main, 1);
     KillTimer(s_main, 2);
+    anim(0);
     if (s_prep.thread) game_progress_stop(&s_prep.progress);
     prepare_end();
     if (s_pc.running) {   /* the window closed under a precompile: it stops (the cache drops a cut record) */

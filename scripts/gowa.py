@@ -1716,6 +1716,8 @@ def cmd_package(args):
                     (os.path.join(third, "smaa", "LICENSE.txt"), "SMAA.txt"),
                     (os.path.join(third, "zstd", "LICENSE"), "Zstandard.txt"),
                     (os.path.join(ROOT, "third_party", "zlib", "LICENSE"), "zlib.txt"),
+                    (os.path.join(ROOT, "third_party", "silkscreen", "OFL.txt"), "Silkscreen.txt"),
+                    (os.path.join(ROOT, "third_party", "pixelify-sans", "OFL.txt"), "Pixelify-Sans.txt"),
                     (os.path.join(ff, "COPYING.LGPLv2.1"), "FFmpeg-LGPL-2.1.txt"),
                     (os.path.join(sdl3, "LICENSE.txt"), "SDL3.txt"),
                     (os.path.join(ff, "FFmpeg-build.txt"), "FFmpeg-build.txt")):

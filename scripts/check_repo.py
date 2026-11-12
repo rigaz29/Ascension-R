@@ -18,6 +18,7 @@ BAD_TYPES = {
     ".elf", ".self", ".sprx", ".prx", ".pkg", ".rap", ".rif", ".edat", ".sdat", ".psarc", ".iso", ".pup",  # game, firmware
     ".exe", ".dll", ".lib", ".obj", ".o", ".a", ".pdb", ".map", ".bin", ".zip", ".7z", ".rar",             # builds, archives
     ".bik", ".pam", ".mp4", ".at3", ".png", ".jpg", ".jpeg", ".dds", ".gtf", ".pad",                       # media, recordings
+    ".ttf", ".otf", ".woff", ".woff2",                                                                      # fonts
 }
 BAD_NAMES = {"eboot.bin", "param.sfo", "local.json"}
 # The port's own pictures, by path and SHA-256: scripts/brand/brand.py draws them from the precompile screen's scene, and
@@ -25,6 +26,13 @@ BAD_NAMES = {"eboot.bin", "param.sfo", "local.json"}
 OWN_PICTURES = {
     "docs/images/banner.png": "90f7745d759e8ec44c58387e2504d25b0f2eb1a13194b2d1a17a3902a4e1ee42",
     "docs/images/icon.png": "0fc50d06490490a9819497f4c2c040e6f4d5d26e7cc3516af1c0155038b001d8",
+}
+# The launcher's fonts, unchanged from google/fonts, under the SIL Open Font License (THIRD_PARTY_NOTICES.md).
+FONTS = {
+    "third_party/silkscreen/Silkscreen-Regular.ttf": "c845473330b94c2079ce9af01c51ac8ba2d99c24f4d14c039843bbb8e642ebd8",
+    "third_party/silkscreen/Silkscreen-Bold.ttf": "768476aa712d4f5c3e18d3bce80f980a8bd3f72b7094d22ec5e768df3acfed61",
+    "third_party/pixelify-sans/PixelifySans-VariableFont_wght.ttf":
+        "9ba86cd010a4de309d263ceff8e8044092c9db7efda869620cb9ff1c4389e8a5",
 }
 MAGIC = ((b"\x7fELF", "an ELF"), (b"SCE\0", "a SELF"), (b"PSAR", "a PSARC archive"), (b"NPD\0", "an EDAT"), (b"\x7fPKG", "a PKG"))
 MAX_BYTES = 1024 * 1024
@@ -74,7 +82,8 @@ def problems(path, data):
     if len(parts) > 1 and (top in BAD_FOLDERS or top.startswith("build")):
         out.append("in %s/, which stays on your machine" % parts[0])
     name = parts[-1].lower()
-    own = OWN_PICTURES.get(path) == hashlib.sha256(data).hexdigest()
+    digest = hashlib.sha256(data).hexdigest()
+    own = OWN_PICTURES.get(path) == digest or FONTS.get(path) == digest
     if name in BAD_NAMES or (os.path.splitext(name)[1] in BAD_TYPES and not own):
         out.append("a file type that stays out of git")
     for magic, what in MAGIC:

@@ -9,6 +9,8 @@ AMD FidelityFX FSR 1            MIT            AMD-FSR1.txt
 SMAA                            MIT            SMAA.txt
 zlib 1.3.1                      zlib           zlib.txt
 Zstandard 1.5.7                 BSD            Zstandard.txt
+Silkscreen font                 SIL OFL 1.1    Silkscreen.txt
+Pixelify Sans font              SIL OFL 1.1    Pixelify-Sans.txt
 stb_image 2.30                  public domain
 stb_image_write 1.16            public domain
 stb_truetype 1.26               public domain

@@ -64,6 +64,16 @@ inflate needs, unchanged, from `zlib-1.3.1.tar.gz` (SHA-256
 `zutil.c`, `zutil.h`, `LICENSE` and `README`. `port/precompile.cpp` reads the game's PSARC archives with it. zlib
 license, Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler; the full text is in that folder's `LICENSE`.
 
+## Silkscreen and Pixelify Sans
+
+The launcher draws its text with two pixel fonts, unchanged from [google/fonts](https://github.com/google/fonts) and
+carried in the exe as resources (`port/app.rc`):
+`third_party/silkscreen/` holds `Silkscreen-Regular.ttf` and `Silkscreen-Bold.ttf` (from `ofl/silkscreen`; source
+[googlefonts/silkscreen](https://github.com/googlefonts/silkscreen), Copyright 2001 The Silkscreen Project Authors), and
+`third_party/pixelify-sans/` holds `PixelifySans-VariableFont_wght.ttf` (`ofl/pixelifysans`, there named
+`PixelifySans[wght].ttf`; source [eifetx/Pixelify-Sans](https://github.com/eifetx/Pixelify-Sans), Copyright 2021 The
+Pixelify Sans Project Authors). Both are under the SIL Open Font License 1.1; the full text is in each folder's `OFL.txt`.
+
 ## Zstandard
 
 The runtime carries the library sources of [Zstandard 1.5.7](https://github.com/facebook/zstd/releases/tag/v1.5.7),
