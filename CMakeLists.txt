@@ -95,6 +95,13 @@ endif()
 # leaves the decryption out: no keys in the exe and nothing written beside the
 # game's files.
 option(PS3RECOMP_NO_DECRYPT "Build without EDAT/SDATA decryption or its keys" ON)
+# PORT_ANR (experimental, branch exp/anr-fg): graphics.frame_generation = anr has the player's own ANR FG DLL make
+# the generated frames (docs/notes/2026-11-12-anr-fg.md). ps3recomp's PS3RECOMP_ANR, which downloads NVIDIA's NGX
+# headers into the build. No release is built with it.
+option(PORT_ANR "ANR frame generation, experimental (downloads NVIDIA's NGX headers)" OFF)
+if(PORT_ANR)
+    set(PS3RECOMP_ANR ON CACHE BOOL "ANR frame generation, experimental (downloads NVIDIA's NGX headers)" FORCE)
+endif()
 add_subdirectory("${PS3RECOMP_DIR}" "${CMAKE_BINARY_DIR}/ps3recomp_sdk"
                  EXCLUDE_FROM_ALL)
 # The lifted SPU code takes it with its other definitions (spu_defs below); the

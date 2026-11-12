@@ -14,6 +14,10 @@ is drawn with Direct3D 12, so no emulator runs while you play.
 > [!IMPORTANT]
 > This repository holds no game files. You build the port from your own copy of the game. See [Legal](#legal).
 
+> [!NOTE]
+> Branch `exp/anr-fg`: an experiment with ANR frame generation, [below](#anr-frame-generation-experimental). The releases
+> are built from `main`.
+
 ## Contents
 
 - [Status](#status)
@@ -21,6 +25,7 @@ is drawn with Direct3D 12, so no emulator runs while you play.
 - [Download](#download)
 - [What you need](#what-you-need)
 - [Building from source](#building-from-source)
+- [ANR frame generation (experimental)](#anr-frame-generation-experimental)
 - [Playing](#playing)
 - [Reporting a problem](#reporting-a-problem)
 - [How it works](#how-it-works)
@@ -103,6 +108,24 @@ python -m venv ..\.venv
 
 `doctor` lists anything that is missing. The lift and the first build take about 13 minutes on a Ryzen 5 4600H. `run` starts the
 game straight away, with its log in `logs\`.
+
+## ANR frame generation (experimental)
+
+This branch can have the frames that frame generation adds made by [Apex Neural Rendering](https://github.com/apex-compute/ANR)'s
+frame generation (ANR FG, in beta) instead of FSR 3.1's, while FSR 3.1's swap chain still presents and paces them. On the
+Grotto run its frames kept Kratos whole where FSR 3.1's tore his legs, at the same 60 frames a second
+([notes](docs/notes/2026-11-12-anr-fg.md)). No release has it.
+
+1. Build with it: `..\.venv\Scripts\python scripts\gowa.py build -D PORT_ANR=ON`. The build downloads three of NVIDIA's NGX
+   headers (NVIDIA RTX SDK license) from NVIDIA's DLSS repository into `build\`.
+2. Download ANR FG from its [releases](https://github.com/apex-compute/ANR/releases) and copy the folder that holds
+   `nvngx_dlssg.dll` (`OptiScaler\custom\Apex Neural Rendering FG\dlssg` in the zip) to `build\anr\`. ANR is not part
+   of this project and comes with no license of its own.
+3. In `build\ascension-r.ini`, under `[graphics]`, set `frame_generation = anr`. `anr_dll` can name another place for
+   the DLL.
+
+The launcher's Frame generation switch shows off for `anr`: leave it alone, or it writes on or off. If ANR cannot start,
+the game uses FSR 3.1's frame generation and its log says why.
 
 ## Playing
 
