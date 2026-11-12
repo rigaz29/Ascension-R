@@ -1,0 +1,139 @@
+# Problem reports. A new one made with the template that has no report zip gets a comment asking for
+# it and the needs-info label. Its author's comment or edit takes the label off. An issue that has
+# waited on needs-info for 30 days is closed, and a comment from its author opens it again if the
+# workflow closed it. No job reads the repository; issue text reaches the scripts only through env.
+name: Issues
+
+on:
+  issues:
+    types: [opened, edited]
+  issue_comment:
+    types: [created]
+  schedule:
+    - cron: '23 4 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Only say what would be closed
+        type: boolean
+        default: true
+
+permissions:
+  issues: write
+
+env:
+  GH_TOKEN: ${{ github.token }}
+  GH_REPO: ${{ github.repository }}
+  LABEL: needs-info
+  DAYS: '30'
+
+jobs:
+  report:
+    name: A new report without its zip
+    if: >-
+      github.event_name == 'issues' && github.event.action == 'opened' &&
+      !contains(fromJSON('["OWNER", "MEMBER", "COLLABORATOR"]'), github.event.issue.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Look for the zip
+        env:
+          NUMBER: ${{ github.event.issue.number }}
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          set -euo pipefail
+          body=$(printf '%s\n' "$BODY" | tr -d '\r')
+          # the template's issues only: its headings
+          if ! grep -q '^### What happened?' <<<"$body" || ! grep -q '^### The report' <<<"$body"; then
+            echo "not made with the template"; exit 0
+          fi
+          # a file attached anywhere (the zip, or logs on their own; pictures are assets, not files),
+          # or a zip linked from elsewhere
+          if grep -Fq 'github.com/user-attachments/files/' <<<"$body" ||
+             grep -Eiq '\.(zip|7z|rar)([^[:alnum:]]|$)' <<<"$body"; then
+            echo "has a file attached"; exit 0
+          fi
+          # the template takes a build's output in its place: something pasted under The report
+          pasted=$(awk '/^### The report/ { f = 1; next } /^### / { f = 0 } f' <<<"$body" |
+                   grep -v -e '^[[:space:]]*$' -e '^_No response_$' | wc -l)
+          if [ "$pasted" -ge 3 ]; then
+            echo "$pasted lines under The report"; exit 0
+          fi
+          gh label create "$LABEL" --color FBCA04 \
+            --description "Waiting for more information from the reporter" 2>/dev/null || true
+          gh issue comment "$NUMBER" --body-file - <<'EOF'
+          Thanks for the report. It has no problem report zip yet, and that zip is what finding the cause needs most.
+
+          In the launcher, press **Report a problem** (down the sidebar) and drag the zip it makes into a comment here. It goes in the `logs` folder beside the settings: `%LOCALAPPDATA%\Ascension-R\logs`, or next to the exe in a portable copy. If the launcher does not open, run `Ascension-R --report` from the folder of the exe. The zip holds the logs of your last sessions, your settings and your hardware, with your folder paths hidden, and no game files.
+
+          If it happens at one place in the game, tick **Include my saves, so the problem can be loaded where it happened** before you press it.
+
+          Please don't attach any of the game's own files.
+
+          This issue is marked `needs-info` until then. If nothing comes in 30 days it is closed, and a comment from you opens it again.
+          EOF
+          gh issue edit "$NUMBER" --add-label "$LABEL"
+
+  answered:
+    name: The author answered
+    if: >-
+      (github.event_name == 'issue_comment' && !github.event.issue.pull_request) ||
+      (github.event_name == 'issues' && github.event.action == 'edited')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Take needs-info off
+        env:
+          NUMBER: ${{ github.event.issue.number }}
+          AUTHOR: ${{ github.event.issue.user.login }}
+          SENDER: ${{ github.event.sender.login }}
+          STATE: ${{ github.event.issue.state }}
+          LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+        run: |
+          set -euo pipefail
+          case ",$LABELS," in
+            *",$LABEL,"*) ;;
+            *) echo "not waiting"; exit 0 ;;
+          esac
+          if [ "$SENDER" != "$AUTHOR" ]; then
+            echo "not the author"; exit 0
+          fi
+          if [ "$STATE" = closed ]; then
+            closer=$(gh api "repos/$GH_REPO/issues/$NUMBER/events" --paginate \
+                       --jq '.[] | select(.event == "closed") | .actor.login' | tail -n 1)
+            if [ "$closer" != "github-actions[bot]" ]; then
+              echo "closed by $closer: left closed"; exit 0
+            fi
+            gh issue reopen "$NUMBER"
+          fi
+          gh issue edit "$NUMBER" --remove-label "$LABEL"
+
+  quiet:
+    name: Waited 30 days
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close what has waited
+        env:
+          DRY: ${{ inputs.dry_run && '1' || '' }}
+        run: |
+          set -euo pipefail
+          now=$(date -u +%s)
+          for n in $(gh issue list --state open --label "$LABEL" --limit 200 --json number --jq '.[].number'); do
+            since=$(gh api "repos/$GH_REPO/issues/$n/events" --paginate \
+                      --jq ".[] | select(.event == \"labeled\" and .label.name == \"$LABEL\") | .created_at" | tail -n 1)
+            if [ -z "$since" ]; then echo "#$n: no label event"; continue; fi
+            author=$(gh issue view "$n" --json author --jq .author.login)
+            last=$(gh api "repos/$GH_REPO/issues/$n/comments" --paginate \
+                     --jq ".[] | select(.user.login == \"$author\") | .created_at" | tail -n 1)
+            if [ -n "$last" ] && [[ "$last" > "$since" ]]; then
+              echo "#$n: the author answered on $last"
+              [ -n "$DRY" ] || gh issue edit "$n" --remove-label "$LABEL"
+              continue
+            fi
+            days=$(( (now - $(date -u -d "$since" +%s)) / 86400 ))
+            echo "#$n: waiting $days days"
+            if [ "$days" -ge "$DAYS" ]; then
+              echo "#$n: closing"
+              [ -n "$DRY" ] || gh issue close "$n" --reason "not planned" --comment \
+                "Closing this for now: it has waited $DAYS days for more information. A comment from you with it opens the issue again."
+            fi
+          done
