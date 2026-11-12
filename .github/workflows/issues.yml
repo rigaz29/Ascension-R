@@ -1,5 +1,6 @@
 # Problem reports. A new one made with the template that has no report zip gets a comment asking for
-# it and the needs-info label. Its author's comment or edit takes the label off. An issue that has
+# it and the needs-info label. Its author's comment, or an edit that brings the report, takes the
+# label off. An issue that has
 # waited on needs-info for 30 days is closed, and a comment from its author opens it again if the
 # workflow closed it. No job reads the repository; issue text reaches the scripts only through env.
 name: Issues
@@ -53,8 +54,9 @@ jobs:
             echo "has a file attached"; exit 0
           fi
           # the template takes a build's output in its place: something pasted under The report
-          pasted=$(awk '/^### The report/ { f = 1; next } /^### / { f = 0 } f' <<<"$body" |
-                   grep -v -e '^[[:space:]]*$' -e '^_No response_$' | wc -l)
+          # (counted in awk: a grep that keeps no line would end the script under pipefail)
+          pasted=$(awk '/^### The report/ { f = 1; next } /^### / { f = 0 }
+                        f && !/^[[:space:]]*$/ && $0 != "_No response_" { n++ } END { print n + 0 }' <<<"$body")
           if [ "$pasted" -ge 3 ]; then
             echo "$pasted lines under The report"; exit 0
           fi
@@ -87,6 +89,8 @@ jobs:
           SENDER: ${{ github.event.sender.login }}
           STATE: ${{ github.event.issue.state }}
           LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          EVENT: ${{ github.event_name }}
+          BODY: ${{ github.event.issue.body }}
         run: |
           set -euo pipefail
           case ",$LABELS," in
@@ -95,6 +99,17 @@ jobs:
           esac
           if [ "$SENDER" != "$AUTHOR" ]; then
             echo "not the author"; exit 0
+          fi
+          # an edit answers only when it brings the report, as the first job looks for it: the author
+          # fixing the text or a picture right after opening the issue does not
+          if [ "$EVENT" = issues ]; then
+            body=$(printf '%s\n' "$BODY" | tr -d '\r')
+            pasted=$(awk '/^### The report/ { f = 1; next } /^### / { f = 0 }
+                          f && !/^[[:space:]]*$/ && $0 != "_No response_" { n++ } END { print n + 0 }' <<<"$body")
+            if ! grep -Fq 'github.com/user-attachments/files/' <<<"$body" &&
+               ! grep -Eiq '\.(zip|7z|rar)([^[:alnum:]]|$)' <<<"$body" && [ "$pasted" -lt 3 ]; then
+              echo "an edit without the report"; exit 0
+            fi
           fi
           if [ "$STATE" = closed ]; then
             closer=$(gh api "repos/$GH_REPO/issues/$NUMBER/events" --paginate \
