@@ -45,6 +45,24 @@ The same run after it (`VTX_RESIDENT_MB=8`, 3,462 restarts): Kratos as usual in 
 a draw the resident part turns down, so the default settings met this where a level fills the resident part, as the
 temple did. The video memory errors are not explained by it.
 
+## Their save, and the cache off (later the same day)
+
+The reporter sent two more reports, with their saves: one more session at the temple, and one started from a `test.bat`
+with `GOWA_EDGE_RESIDENT=0`, which froze.
+
+- **The resident part is not the cause.** With it off (no `[vtx-kept]` line at all) the game printed the same errors.
+- **It is the same every time.** All three sessions at the temple print one `invalid size` and then 482 `CopyLocalMemory`
+  errors: one loop, a copy every 16 MB from offset `0x6000000` up to `0xF7000000`, which is a block whose size went
+  negative. The offsets differ from session to session, the count does not.
+- **Main memory is damaged too.** The frozen session's threads call through a function descriptor of the game's own
+  data, at `0x00833908`, that now holds `A0F800F8 55550000 7F7E0000 00499224`.
+- **It does not happen here.** Their save, their settings and their pad recording of the session before (`PAD_REPLAY`),
+  one run each: this tree's build, 0 errors; the 0.1.0-alpha.6 Kit itself, its DLL built here by `kit-build` as the
+  launcher does, 0 errors. Both reached the temple's level.
+- **So it is their machine's.** The SPU workers are the same (six, audio on a lane of its own). What differs: a Ryzen 7
+  5700X3D, 8 cores and 16 threads, against 6 and 12 here; a Radeon RX 7900 XT; a 165 Hz display with VSync on.
+
 ## Still open
 
-- The temple's damage: with the reporter's save and the pad recording in their reports it can be played back here.
+- What on their machine brings it about. A run held to 12 threads (`start /affinity FFF`), one without VSync and one
+  without the render thread would tell the CPU's part from the display's and the backend's.
