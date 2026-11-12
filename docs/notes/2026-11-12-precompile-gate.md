@@ -65,6 +65,11 @@ At 125% the window's client is 1600x900: the canvas at 2.5x to fit, and the scre
   a moment the first time: the gate takes the vertex shaders' part of that away.
 - The Kit's player has a build of the game's code first (about ten minutes) and then this, on the first Play.
 
+## Music
+
+Since 2026-11-13 the screen plays music made by code as it opens, with the sea, the brazier and thunder after its
+lightning: [2026-11-13-precompile-music.md](2026-11-13-precompile-music.md).
+
 ## The launcher's button, taken out
 
 With the gate, every first start of a version builds the vertex shaders, so the launcher's Precompile shaders only

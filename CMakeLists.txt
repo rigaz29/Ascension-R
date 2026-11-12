@@ -280,6 +280,7 @@ add_executable(${PROJECT_NAME}
     port/ultrawide.cpp
     port/precompile.cpp
     port/loading_screen.cpp
+    port/precompile_music.cpp
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${PORT_GAME_SOURCES}

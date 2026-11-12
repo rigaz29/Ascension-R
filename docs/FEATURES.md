@@ -36,6 +36,9 @@ on disk; the programs it finds are kept beside the cache, so after an update it 
 level then compiled 4 vertex shaders where it had compiled 212. Fragment shaders are still compiled as the game reaches
 them: their text depends on the textures and state of each draw, which the files do not say. Clear shaders makes the
 next start do it again. `GOWA_PRECOMPILE_FIRST=0` leaves it out (the benches do).
+The screen has music of its own: an original theme over the sea, the brazier and thunder after the scene's lightning,
+made by the program as the screen opens (`port/precompile_music.cpp`, [note](notes/2026-11-13-precompile-music.md)).
+Precompile music, in the System tab, sets it to Off, Low (the default), Medium or High.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 Each session started from the launcher (not from a script) writes its output to `logs\session-<date>-<time>.log` beside

@@ -23,6 +23,9 @@
  * stroke of lightning now and then, far mountains with ruins on a peak, the sea and the sun on it, birds, a cliff
  * with a temple and two waterfalls, and before it all broken columns and a brazier whose fire flickers and sends up
  * embers. The layers move a little apart as a slow camera sways.
+ *
+ * It has music, made by code too (precompile_music.cpp): from 2.5 s after the screen opens until it goes, with the
+ * sea, the brazier and thunder after its lightning. [system] precompile_music turns it down or off.
  */
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -39,6 +42,7 @@
 #include "ps3emu/ps3_settings.h"
 #include "version.h"
 #include "loading_screen.h"
+#include "precompile_music.h"
 
 /* ---------------------------------------------------------------------------
  * The pixel font: 5x7 in a cell of 6x8, upper case (lower case is drawn as upper)
@@ -1041,6 +1045,7 @@ int gowa_precompile_gate(void)
     s_ui_ready = CreateEventW(NULL, TRUE, FALSE, NULL);
     s_ui_thread = CreateThread(NULL, 0, ui_main, NULL, 0, NULL);
     if (s_ui_thread) WaitForSingleObject(s_ui_ready, 10000);
+    if (s_hwnd) gowa_music_begin(s_t0);   /* the screen's clock: its thunder follows the lightning */
 
     HANDLE pipe = NULL;
     s_child = start_build(&pipe);
@@ -1096,6 +1101,7 @@ int gowa_precompile_gate(void)
 void gowa_loading_screen_close(void)
 {
     InterlockedExchange(&s_close_now, 1);   /* the next tick destroys it, on its own thread */
+    gowa_music_end();
 }
 
 /* ---------------------------------------------------------------------------

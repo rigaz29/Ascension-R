@@ -42,6 +42,7 @@
 #include "report.h"               /* what a session leaves behind */
 #include "game_find.h"            /* game_file_needed: the files the game cannot start without */
 #include "loading_screen.h"       /* the precompile gate: the vertex shaders first, on a screen of their own */
+#include "precompile_music.h"     /* its music: --music-preview */
 #include "ps3emu/ps3_settings.h"  /* ascension-r.ini: the player's settings and this machine's paths */
 
 #include <stdint.h>
@@ -1601,6 +1602,8 @@ int main(int argc, char** argv)
 #ifdef _WIN32
     if (argc == 4 && !strcmp(argv[1], "--end-process")) return end_process_cli(argv[2], argv[3]);
     if (argc == 3 && !strcmp(argv[1], "--loading-preview")) return gowa_loading_preview(argv[2]);
+    if ((argc == 3 || argc == 4) && !strcmp(argv[1], "--music-preview"))
+        return gowa_music_preview(argv[2], argc == 4 ? atof(argv[3]) : 100.0);
 #endif
     const char* elf = NULL;
     const char* settings = NULL;
