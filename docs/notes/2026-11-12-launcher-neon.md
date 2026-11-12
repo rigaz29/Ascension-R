@@ -2,7 +2,7 @@
 
 - **What:** `port/launcher.cpp` drawn in the look picked from four mockups: deep purple and gold, 8-bit bevels,
   magenta and cyan neon, and the precompile screen's scene moving in the header. First the Play tab and the widgets
-  every tab shares, then the other tabs; the keyboard window comes last.
+  every tab shares, then the other tabs, then the keyboard keys.
 - **Fonts:** Silkscreen for headings, buttons and captions, unchanged from google/fonts, in `third_party/silkscreen/`
   with its `OFL.txt`. `app.rc` carries it as RCDATA 101 and 102 and `fonts_load` reads it from memory into a collection
   of its own (IDWriteFactory5, Windows 10 1709 on). `check_repo.py` turns fonts away and lets these two in by path and
@@ -29,8 +29,20 @@
   a DIP, filled aliased: whole pixels at 100% and 200%; at 150% a two-dot line is 3 pixels and a one-dot detail 1 or 2.
 - **Retro effects:** `[launcher] effects`, a switch on the Display tab, on by default: the glow and the scanlines. The
   scene stands still while the window is minimised or when Windows' "Show animations" is off.
-- **Cost:** one 10 s measurement of the window left open on the Play tab, on AC power, 12 threads: 0.67 s of CPU, 6.7%
-  of one core or 0.56% of the processor, and a 55 MB working set. Most of it is the scene, drawn whole each frame.
+- **The keyboard keys:** no longer a window of Win32 controls but a sheet over the launcher (`kb_draw`), with the same
+  widgets: the 24 bindings in two columns, each a sunk box. A box clicked waits, gold, for a key (the message loop
+  hands it every key while it waits, as before) or a mouse button pressed on it; Backspace clears it, Esc gives up.
+  Esc otherwise is Cancel and Enter OK; OK puts the bindings into the settings, which Save or Play write. The window's
+  close button closes the sheet first. Only the sheet's boxes and buttons can be clicked while it is up.
+- **Cost:** one 10 s measurement of the window left open on the Play tab, on AC power, 12 threads, with the keyboard
+  sheet done: 0.52 s of CPU, 5.1% of one core or 0.43% of the processor, and a 47 MB working set (the first, before the
+  other tabs, 6.7% and 55 MB). Most of it is the scene, drawn whole each frame.
+- **Tried in the window itself:** the sheet driven by posted clicks and keys, a picture of the window after each step
+  (PrintWindow): a binding waits and takes G, another takes the right mouse button, Esc keeps neither, Backspace and
+  Enter keep a cleared one, the close button closes the sheet and then the launcher, and the settings file is
+  unchanged after. At 125% Windows hands a DPI-unaware sender the window's size and clicks in its own pixels.
+- **DPI:** the tabs, the open list and the sheet drawn at 100%, 125%, 150% and 200%; at 200% the scene's pixels are 3
+  device pixels, Silkscreen's 4, the icons' 2.
 - **The other tabs:** the tab's icon at twice its size beside its name in the header; segmented buttons as wide as their
   longest name; the open list framed in gold with a hard shadow; the decrypting's buttons as wide as their names; a toast
   a badge in the bar, green or red, with its glow. Where the view cuts a card that scrolls, an edge is drawn and the
@@ -38,8 +50,8 @@
   the edge; the scrollbar is a frame with a thumb.
 - **Looking at it:** `GOWA_LAUNCHER_SHOT=<folder>` draws the tabs into PNG files, the scene standing still, and the
   states that are hard to reach by hand: a list open, a search, the end of a scrolled tab, a toast, the System tab
-  asking for what the decrypting needs, a precompile under way, and in the Kit the game's code being built (on the Play
-  and System tabs) and not built yet. Each state is set only while its shot is drawn. `GOWA_LAUNCHER_SHOT_DPI` sets the
+  asking for what the decrypting needs, a precompile under way, the keyboard keys with one waiting for a key, and in the
+  Kit the game's code being built (on the Play and System tabs) and not built yet. Each state is set only while its shot is drawn. `GOWA_LAUNCHER_SHOT_DPI` sets the
   DPI (120 by default). The Kit's exe for this: `GOWA_BUILD_DIR=build-kit gowa.py build -D PORT_GAME_MODULE=ON`, as
   `package kit` builds it.
 - **Also:** on Windows 11 the title bar takes the window's colours (DWMWA_BORDER_COLOR, _CAPTION_COLOR, _TEXT_COLOR;

@@ -15,7 +15,7 @@
  * and lists, and a bar with Play. Its fonts are Silkscreen, from the exe
  * (app.rc), and Windows' Bahnschrift. Retro effects (Display tab) is its glow
  * and scanlines.
- * The keyboard keys are set in a window of their own.
+ * The keyboard keys are set on a sheet over the window (Controls, Edit keys).
  * GOWA_LAUNCHER_SHOT=<folder> draws every tab into PNG files there and quits,
  * to look at the window without opening it; GOWA_LAUNCHER_SHOT_DPI sets their
  * DPI (120, a 125% display, by default).
@@ -49,7 +49,7 @@
 #include <wctype.h>
 
 #ifdef _WIN32
-#include <commctrl.h>   /* SetWindowSubclass: the keyboard window's buttons */
+#include <commctrl.h>   /* TASKDIALOGCONFIG: the offers after a session that did not end well */
 #include <shellapi.h>   /* ShellExecuteA: Open save folder */
 #include <objbase.h>
 #include <shobjidl.h>   /* IFileOpenDialog: Browse */
@@ -59,7 +59,6 @@
 #include <wincodec.h>
 #include <dxgi1_6.h>   /* IDXGIFactory6: which GPU is which */
 #include <dwmapi.h>
-#pragma comment(lib, "comctl32.lib")
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "windowscodecs.lib")
@@ -372,28 +371,19 @@ static const char* opt_short(const Opt* o)
 
 #ifdef _WIN32
 /* ---------------------------------------------------------------------------
- * The keyboard window (Win32 controls)
+ * The window, and the keyboard keys: a sheet over it (kb_draw), each binding a
+ * box that, clicked, waits for a key or a mouse button
  * -----------------------------------------------------------------------*/
-enum { ID_KOK = 150, ID_KCANCEL, ID_KDEFAULTS, ID_KEY = 200 };
-
 static int   s_dpi = 96;      /* the monitor's */
 static float s_ui = 96.0f;   /* what the launcher is drawn at: s_dpi, less if it would not fit */
-static HFONT s_font;
 static int   s_done;          /* 1 play, 2 quit */
-static HWND  s_main, s_keys;
-static char  s_kb[N_KB][64];  /* the keyboard window's bindings while it is open */
-static HWND  s_kb_btn[N_KB];
-static int   s_capture = -1;  /* the binding waiting for a key, or -1 */
+static HWND  s_main;
+static int   s_kb_open;       /* the keyboard keys are over the window */
+static char  s_kb[N_KB][64];  /* their bindings while they are */
+static int   s_capture = -1;  /* the binding waiting for a key or a mouse button, or -1 */
 
 static int S(int v) { return MulDiv(v, s_dpi, 96); }
-
-static HWND add(HWND parent, const char* cls, const char* text, DWORD style, int x, int y, int w, int h, int id)
-{
-    HWND c = CreateWindowExA(0, cls, text, WS_CHILD | WS_VISIBLE | style, S(x), S(y), S(w), S(h),
-                             parent, (HMENU)(INT_PTR)id, GetModuleHandleA(NULL), NULL);
-    SendMessageA(c, WM_SETFONT, (WPARAM)s_font, TRUE);
-    return c;
-}
+static void redraw(void);
 
 static void dark_caption(HWND h)
 {
@@ -407,16 +397,29 @@ static void dark_caption(HWND h)
     DwmSetWindowAttribute(h, 36, &title, sizeof title);
 }
 
-static void kb_label(int i)
+/* The sheet opens with the bindings the settings have. */
+static void kb_open(void)
 {
-    SetWindowTextA(s_kb_btn[i], s_capture == i ? "Press a key or a mouse button..." : (s_kb[i][0] ? s_kb[i] : "(none)"));
+    for (int i = 0; i < N_KB; i++)
+        snprintf(s_kb[i], sizeof s_kb[i], "%s", ps3_settings_str("keyboard", k_kb[i][0], NULL, k_kb[i][2]));
+    s_capture = -1;
+    s_kb_open = 1;
+}
+
+/* OK: the bindings into the settings (written with Save or Play). Cancel: as they were. */
+static void kb_close(int ok)
+{
+    if (ok)
+        for (int i = 0; i < N_KB; i++) ps3_settings_set("keyboard", k_kb[i][0], s_kb[i]);
+    s_capture = -1;
+    s_kb_open = 0;
 }
 
 static void kb_set(int i, const char* name)
 {
     snprintf(s_kb[i], sizeof s_kb[i], "%s", name ? name : "");
     s_capture = -1;
-    kb_label(i);
+    redraw();
 }
 
 /* A key pressed while a binding waits for one. Esc gives up, Backspace and
@@ -424,7 +427,7 @@ static void kb_set(int i, const char* name)
 static void kb_key(WPARAM vk, LPARAM lp)
 {
     const int i = s_capture;
-    if (vk == VK_ESCAPE) { s_capture = -1; kb_label(i); return; }
+    if (vk == VK_ESCAPE) { s_capture = -1; redraw(); return; }
     if (vk == VK_BACK || vk == VK_DELETE) { kb_set(i, ""); return; }
     if (vk == VK_MENU) return;
     if (vk == VK_SHIFT) vk = MapVirtualKeyA((UINT)((lp >> 16) & 0xFF), MAPVK_VSC_TO_VK_EX);
@@ -434,78 +437,11 @@ static void kb_key(WPARAM vk, LPARAM lp)
     else MessageBeep(MB_OK);
 }
 
-static LRESULT CALLBACK kb_btn_proc(HWND h, UINT m, WPARAM w, LPARAM l, UINT_PTR, DWORD_PTR idx)
+/* A mouse button pressed on the binding that waits: that button is its key. */
+static void kb_mouse(UINT m, WPARAM w)
 {
-    const int i = (int)idx;
-    if (s_capture == i) {
-        switch (m) {
-        case WM_LBUTTONDOWN: kb_set(i, "MouseLeft"); return 0;
-        case WM_RBUTTONDOWN: kb_set(i, "MouseRight"); return 0;
-        case WM_MBUTTONDOWN: kb_set(i, "MouseMiddle"); return 0;
-        case WM_XBUTTONDOWN: kb_set(i, HIWORD(w) == XBUTTON1 ? "Mouse4" : "Mouse5"); return TRUE;
-        case WM_LBUTTONUP: case WM_RBUTTONUP: case WM_MBUTTONUP: case WM_XBUTTONUP: return 0;
-        }
-    }
-    return DefSubclassProc(h, m, w, l);
-}
-
-static LRESULT CALLBACK kb_proc(HWND h, UINT m, WPARAM w, LPARAM l)
-{
-    switch (m) {
-    case WM_COMMAND: {
-        const int id = LOWORD(w);
-        if (id >= ID_KEY && id < ID_KEY + N_KB) {
-            const int prev = s_capture;
-            s_capture = id - ID_KEY;
-            if (prev >= 0 && prev != s_capture) kb_label(prev);
-            kb_label(s_capture);
-            SetFocus(s_kb_btn[s_capture]);
-        } else if (id == ID_KDEFAULTS) {
-            for (int i = 0; i < N_KB; i++) { s_capture = -1; kb_set(i, k_kb[i][2]); }
-        } else if (id == ID_KOK || id == ID_KCANCEL) {
-            if (id == ID_KOK)
-                for (int i = 0; i < N_KB; i++) ps3_settings_set("keyboard", k_kb[i][0], s_kb[i]);
-            DestroyWindow(h);
-        }
-        return 0;
-    }
-    case WM_CLOSE:
-        DestroyWindow(h);
-        return 0;
-    case WM_DESTROY:
-        s_capture = -1;
-        s_keys = NULL;
-        EnableWindow(s_main, TRUE);
-        SetForegroundWindow(s_main);
-        return 0;
-    }
-    return DefWindowProcA(h, m, w, l);
-}
-
-static void open_keys(void)
-{
-    RECT r = { 0, 0, S(580), S(470) };
-    AdjustWindowRect(&r, WS_CAPTION | WS_SYSMENU, FALSE);
-    s_keys = CreateWindowExA(WS_EX_CONTROLPARENT | WS_EX_DLGMODALFRAME, "gowa_keys", "Keyboard keys",
-                             WS_CAPTION | WS_SYSMENU | WS_POPUP, CW_USEDEFAULT, CW_USEDEFAULT,
-                             r.right - r.left, r.bottom - r.top, s_main, NULL, GetModuleHandleA(NULL), NULL);
-    if (!s_keys) return;
-    add(s_keys, "STATIC", "Click an action, then press a key or a mouse button. Backspace clears it, "
-        "Esc gives up. Edit ascension-r.ini to give an action more than one key.", 0, 12, 10, 556, 34, -1);
-    for (int i = 0; i < N_KB; i++) {
-        const int col = i % 2, row = i / 2, x = 12 + col * 286, y = 52 + row * 30;
-        add(s_keys, "STATIC", k_kb[i][1], SS_CENTERIMAGE, x, y, 110, 24, -1);
-        s_kb_btn[i] = add(s_keys, "BUTTON", "", WS_TABSTOP | BS_PUSHBUTTON, x + 112, y, 160, 24, ID_KEY + i);
-        SetWindowSubclass(s_kb_btn[i], kb_btn_proc, 1, (DWORD_PTR)i);
-        snprintf(s_kb[i], sizeof s_kb[i], "%s", ps3_settings_str("keyboard", k_kb[i][0], NULL, k_kb[i][2]));
-        kb_label(i);
-    }
-    add(s_keys, "BUTTON", "Defaults", WS_TABSTOP | BS_PUSHBUTTON, 12, 432, 90, 28, ID_KDEFAULTS);
-    add(s_keys, "BUTTON", "OK", WS_TABSTOP | BS_DEFPUSHBUTTON, 382, 432, 90, 28, ID_KOK);
-    add(s_keys, "BUTTON", "Cancel", WS_TABSTOP | BS_PUSHBUTTON, 478, 432, 90, 28, ID_KCANCEL);
-    dark_caption(s_keys);
-    EnableWindow(s_main, FALSE);
-    ShowWindow(s_keys, SW_SHOW);
+    kb_set(s_capture, m == WM_LBUTTONDOWN ? "MouseLeft" : m == WM_RBUTTONDOWN ? "MouseRight"
+                    : m == WM_MBUTTONDOWN ? "MouseMiddle" : HIWORD(w) == XBUTTON1 ? "Mouse4" : "Mouse5");
 }
 
 /* The folder the game keeps its saves in -- /dev_hdd0/home/00000001/savedata
@@ -1462,6 +1398,11 @@ static const char k_ic_down[16][17] = {
     "..##........##..", "..###......###..", "...###....###...", "....###..###....", ".....######.....",
     "......####......", ".......##.......", "................", "................", "................",
     "................" };
+static const char k_ic_keys[16][17] = {
+    "................", "................", "################", "################", "##............##",
+    "##.#.#.#.#.#..##", "##............##", "##..#.#.#.#.#.##", "##............##", "##..########..##",
+    "##............##", "################", "################", "................", "................",
+    "................" };
 static const char k_ic_search[16][17] = {
     "................", "....####........", "..########......", ".###....###.....", ".##......##.....",
     ".##......##.....", ".##......##.....", ".###....###.....", "..########......", "....####.##.....",
@@ -1503,10 +1444,11 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
     H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_PRECOMPILE, H_REPORT,
-    H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP,
+    H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP, H_KB_OK, H_KB_CANCEL, H_KB_DEFAULTS,
 #ifdef PORT_GAME_MODULE
     H_KIT_BUILD, H_KIT_STOP, H_KIT_LOG,
 #endif
+    H_KBIND = 8500,   /* the keyboard keys' bindings */
     H_DDITEM = 9000,
 };
 struct Hit { D2D1_RECT_F r; int id; };
@@ -1705,7 +1647,8 @@ static void w_dropdown(Opt& o, int oi, float x, float y, float w)
     hit(box, id);
 }
 
-enum { B_PLAIN, B_PLAY, B_BAR };   /* a button in a card; Play; Defaults, Save and Quit in the bar */
+/* A button in a card; Play; Defaults, Save and Quit in the bar; a gold one in the bar's letters (OK). */
+enum { B_PLAIN, B_PLAY, B_BAR, B_GOLD };
 static void w_button(const wchar_t* label, D2D1_RECT_F r, int id, int kind)
 {
     const int hov = hovered(id), down = s_press == id && hov;
@@ -1720,6 +1663,12 @@ static void w_button(const wchar_t* label, D2D1_RECT_F r, int id, int kind)
         const float tw = text_w(label, s_tf_play), x = snap(r.left + (r.right - r.left - 28.0f - tw) * 0.5f) + o;
         icon(k_ic_play, x, (r.top + r.bottom) * 0.5f - 8.0f + o, C_INK);
         text(label, s_tf_play, D2D1::RectF(x + 28.0f, r.top + o, x + 36.0f + tw, r.bottom + o), C_INK);
+    } else if (kind == B_GOLD) {
+        bevel(r, hov ? C_GOLD_HI : C_GOLD, 0xFFFFFF, 0x000000, 3.0f, 0.45f, 0.28f, down);
+        glow_rect(r, C_GOLD, 0.4f);
+        glow_hole(r);
+        text(label, s_tf_btn, D2D1::RectF(r.left + o, r.top + o, r.right + o, r.bottom + o), C_INK, 1.0f,
+             DWRITE_TEXT_ALIGNMENT_CENTER);
     } else {
         bevel(r, hov ? C_CTL_HI : C_CTL, C_HI, C_LO, kind == B_BAR ? 3.0f : 2.0f, 1.0f, 1.0f, down);
         text(label, kind == B_BAR ? s_tf_btn : s_tf_ui_b, D2D1::RectF(r.left + o, r.top + o, r.right + o, r.bottom + o),
@@ -2350,6 +2299,45 @@ static void draw_dropdown(void)
     }
 }
 
+/* The keyboard keys, over the window: what each PS3 button is on the keyboard and the mouse, in two columns. A
+ * binding clicked waits, gold, for a key or a mouse button. */
+static void kb_draw(void)
+{
+    const float pw = 720.0f, ph = 600.0f, px = snap((WIN_W - pw) * 0.5f), py = snap((WIN_H - ph) * 0.5f);
+    const D2D1_RECT_F panel = R(px, py, pw, ph);
+    fill(R(px + 6, py + 6, pw, ph), 0x000000, 0.5f);   /* a hard shadow */
+    fill(panel, C_CARD);
+    frame(panel, C_NEON, 1.0f, 2.0f);
+    glow_rect(panel, C_NEON, 0.8f, 2.0f);
+    icon(k_ic_keys, px + 24, py + 22, C_GOLD);
+    const D2D1_RECT_F t = R(px + 50, py + 21, 400, 18);
+    text(L"KEYBOARD KEYS", s_tf_head, t, C_GOLD);
+    glow_text(L"KEYBOARD KEYS", s_tf_head, t, C_GOLD, 0.5f);
+    text(L"Click an action, then press a key or a mouse button. Backspace clears it, Esc gives up. Edit "
+         L"ascension-r.ini to give an action more than one key.", s_tf_desc, R(px + 24, py + 52, pw - 48, 40), C_MUTED);
+    const float colw = (pw - 48.0f - 24.0f) * 0.5f, lw = 130.0f;
+    for (int i = 0; i < N_KB; i++) {
+        const float x = px + 24.0f + (float)(i % 2) * (colw + 24.0f), y = py + 100.0f + (float)(i / 2) * 36.0f;
+        const int id = H_KBIND + i, wait = s_capture == i;
+        text(W(k_kb[i][1]), s_tf_ui, R(x, y, lw, 30), C_TEXT2);
+        const D2D1_RECT_F box = R(x + lw + 8.0f, y, colw - lw - 8.0f, 30);
+        bevel(box, wait || hovered(id) ? C_CARD_HI : C_BG, C_LO, C_EDGE, 2.0f, 1.0f, 1.0f, 0);
+        if (wait) {
+            frame(box, C_GOLD, 1.0f, 2.0f);
+            glow_rect(box, C_GOLD, 0.5f, 2.0f);
+        }
+        text(wait ? L"Press a key or button" : s_kb[i][0] ? W(s_kb[i]) : L"(none)", s_tf_ui,
+             R(box.left + 10, box.top, box.right - box.left - 20, 30), wait ? C_GOLD : s_kb[i][0] ? C_TEXT : C_DIM);
+        hit(box, id);
+    }
+    /* Defaults on the left; Cancel and OK on the right. */
+    const float by = py + ph - 24.0f - 40.0f;
+    const float dw = snap(text_w(L"DEFAULTS", s_tf_btn) + 32.0f), cw = snap(text_w(L"CANCEL", s_tf_btn) + 32.0f);
+    w_button(L"DEFAULTS", R(px + 24, by, dw, 40), H_KB_DEFAULTS, B_BAR);
+    w_button(L"OK", R(px + pw - 24 - 96, by, 96, 40), H_KB_OK, B_GOLD);
+    w_button(L"CANCEL", R(px + pw - 24 - 96 - 10 - cw, by, cw, 40), H_KB_CANCEL, B_BAR);
+}
+
 /* All but the scene, on s_d. */
 static void ui_draw(void)
 {
@@ -2367,6 +2355,12 @@ static void ui_draw(void)
         for (int i = 0; i < s_nglow; i++) s_glows[i].a *= 0.35f;
         fill(R(0, 0, WIN_W, WIN_H), 0x000000, 0.35f);
         draw_dropdown();
+    }
+    if (s_kb_open) {   /* the same under the keyboard keys, darker */
+        s_nhit = 0;
+        for (int i = 0; i < s_nglow; i++) s_glows[i].a *= 0.25f;
+        fill(R(0, 0, WIN_W, WIN_H), 0x000000, 0.6f);
+        kb_draw();
     }
 }
 
@@ -3230,6 +3224,10 @@ static void act(int id)
         s_dd = -1;
         return;
     }
+    if (id >= H_KBIND) {   /* a binding of the keyboard keys: it waits for a key */
+        s_capture = id - H_KBIND;
+        return;
+    }
     if (id >= H_PLAY) {
         if (s_pc.running && (id == H_PLAY || id == H_SHADERS || id == H_PRECOMPILE)) {
             toast("Precompiling shaders: a moment");
@@ -3255,7 +3253,13 @@ static void act(int id)
             break;
         case H_SAVE: if (save_all()) toast("Saved"); break;
         case H_QUIT: s_done = 2; break;
-        case H_KEYS: if (!s_keys) open_keys(); break;
+        case H_KEYS: s_dd = -1; kb_open(); break;
+        case H_KB_OK: kb_close(1); break;
+        case H_KB_CANCEL: kb_close(0); break;
+        case H_KB_DEFAULTS:
+            for (int i = 0; i < N_KB; i++) snprintf(s_kb[i], sizeof s_kb[i], "%s", k_kb[i][2]);
+            s_capture = -1;
+            break;
         case H_SAVES: open_saves(); break;
         case H_REPORT: report_make(NULL); break;
         case H_SHADERS: clear_shaders(); break;
@@ -3320,7 +3324,7 @@ static int hit_at(float x, float y)
 static void redraw(void)
 {
     s_layer_old = 1;
-    InvalidateRect(s_main, NULL, FALSE);
+    if (s_main) InvalidateRect(s_main, NULL, FALSE);   /* NULL would be every window there is */
 }
 
 #ifndef WM_DPICHANGED
@@ -3432,10 +3436,24 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         s_mx = (float)(short)LOWORD(l) * 96.0f / s_ui;
         s_my = (float)(short)HIWORD(l) * 96.0f / s_ui;
         s_press = hit_at(s_mx, s_my);
+        if (s_capture >= 0 && s_press == H_KBIND + s_capture) {   /* on the binding that waits: the left button */
+            kb_mouse(m, w);
+            s_press = -1;
+            return 0;
+        }
         if (s_dd >= 0 && s_press < 0) s_dd = -1;   /* a click outside closes the list */
         redraw();   /* a button pressed is drawn sunk */
         SetCapture(h);
         return 0;
+    case WM_RBUTTONDOWN:
+    case WM_MBUTTONDOWN:
+    case WM_XBUTTONDOWN:   /* the other buttons count only on the binding that waits */
+        if (s_capture >= 0 && hit_at((float)(short)LOWORD(l) * 96.0f / s_ui, (float)(short)HIWORD(l) * 96.0f / s_ui) ==
+                                  H_KBIND + s_capture) {
+            kb_mouse(m, w);
+            return m == WM_XBUTTONDOWN ? TRUE : 0;
+        }
+        break;
     case WM_LBUTTONUP: {
         ReleaseCapture();
         s_mx = (float)(short)LOWORD(l) * 96.0f / s_ui;
@@ -3448,6 +3466,7 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         return 0;
     }
     case WM_MOUSEWHEEL:
+        if (s_kb_open) return 0;
         if (s_dd >= 0) {
             s_dd_top += GET_WHEEL_DELTA_WPARAM(w) > 0 ? -2 : 2;
             redraw();
@@ -3457,6 +3476,13 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         }
         return 0;
     case WM_KEYDOWN:
+        if (s_kb_open) {   /* over the keyboard keys: Esc is Cancel, Enter OK, the rest waits for them */
+            if (w == VK_ESCAPE || w == VK_RETURN) {
+                kb_close(w == VK_RETURN);
+                redraw();
+            }
+            return 0;
+        }
         if (w == VK_ESCAPE && s_dd >= 0) { s_dd = -1; redraw(); return 0; }
         if (w == VK_RETURN && s_dd < 0) { act(H_PLAY); return 0; }
         if (w == 'S' && (GetKeyState(VK_CONTROL) & 0x8000)) { act(H_SAVE); redraw(); return 0; }
@@ -3512,6 +3538,11 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         return 0;
     }
     case WM_CLOSE:
+        if (s_kb_open) {   /* the keyboard keys go first, as their own window's close did */
+            kb_close(0);
+            redraw();
+            return 0;
+        }
         s_done = 2;
         return 0;
     }
@@ -3521,15 +3552,18 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
 /* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open,
  * the System tab during a search, the Cheats and Graphics tabs scrolled to
  * their end, a toast, the System tab asking for what the decrypting needs, a
- * precompile under way, and in the Kit the game's code being built and not
- * built yet, into PNG files at the window's size times 1.25 (a 125% display),
+ * precompile under way, the keyboard keys (one waiting for a key), and in the
+ * Kit the game's code being built and not built yet, into PNG files at the
+ * window's size times 1.25 (a 125% display),
  * or at GOWA_LAUNCHER_SHOT_DPI. The scene stands still in them, and nothing
  * runs: each state is only set while its shot is drawn, then put back. */
-enum { S_TAB, S_LIST, S_SEARCH, S_END, S_TOAST, S_DECRYPT, S_PRECOMPILE, S_KIT_RUN, S_KIT_NEED, S_KIT_ROW };
+enum { S_TAB, S_LIST, S_SEARCH, S_END, S_TOAST, S_DECRYPT, S_PRECOMPILE, S_KEYS, S_KEYS_WAIT, S_KIT_RUN, S_KIT_NEED,
+       S_KIT_ROW };
 static const int k_shots[][2] = {
     { T_PLAY, S_TAB }, { T_GRAPHICS, S_TAB }, { T_DISPLAY, S_TAB }, { T_CONTROLS, S_TAB }, { T_PATCHES, S_TAB },
     { T_CHEATS, S_TAB }, { T_SYSTEM, S_TAB }, { T_DISPLAY, S_LIST }, { T_SYSTEM, S_SEARCH }, { T_CHEATS, S_END },
     { T_GRAPHICS, S_END }, { T_PLAY, S_TOAST }, { T_SYSTEM, S_DECRYPT }, { T_PLAY, S_PRECOMPILE },
+    { T_CONTROLS, S_KEYS }, { T_CONTROLS, S_KEYS_WAIT },
 #ifdef PORT_GAME_MODULE
     { T_PLAY, S_KIT_RUN }, { T_PLAY, S_KIT_NEED }, { T_SYSTEM, S_KIT_ROW },
 #endif
@@ -3556,6 +3590,11 @@ static void shot_state(int what, int on)
         s_pc.phase = on ? 2 : 0;
         s_pc.done = on ? 2310 : 0;
         s_pc.total = on ? 3000 : 0;
+    }
+    if (what == S_KEYS || what == S_KEYS_WAIT) {   /* the keyboard keys, and one waiting for a key; never kept */
+        if (on) kb_open();
+        else kb_close(0);
+        if (on && what == S_KEYS_WAIT) s_capture = 9;
     }
 #ifdef PORT_GAME_MODULE
     if (what == S_KIT_RUN || what == S_KIT_ROW) {
@@ -3656,10 +3695,6 @@ extern "C" int gowa_launcher(void)
         s_dpi = get_dpi ? (int)get_dpi() : 96;
         if (s_dpi < 96) s_dpi = 96;
     }
-    NONCLIENTMETRICSA ncm;
-    ncm.cbSize = sizeof ncm;
-    if (SystemParametersInfoA(SPI_GETNONCLIENTMETRICS, sizeof ncm, &ncm, 0)) s_font = CreateFontIndirectA(&ncm.lfMessageFont);
-    if (!s_font) s_font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 
     for (int i = 0; i < N_OPT; i++) opt_set(s_opt[i], ps3_settings_str(s_opt[i].section, s_opt[i].key, NULL, s_opt[i].def));
     popt_init();
@@ -3687,16 +3722,11 @@ extern "C" int gowa_launcher(void)
     wc.cbSize = sizeof wc;
     wc.hInstance = GetModuleHandleA(NULL);
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
     /* The program's icon (app.rc), and its 16-pixel drawing for the title bar; Windows' own if there is none. */
     wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1));
     wc.hIconSm = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
                                    GetSystemMetrics(SM_CYSMICON), 0);
     if (!wc.hIcon) wc.hIcon = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
-    wc.lpfnWndProc = kb_proc;
-    wc.lpszClassName = "gowa_keys";
-    RegisterClassExA(&wc);
-    wc.hbrBackground = NULL;
     wc.lpfnWndProc = main_proc;
     wc.lpszClassName = "gowa_launcher";
     RegisterClassExA(&wc);
@@ -3739,7 +3769,6 @@ extern "C" int gowa_launcher(void)
         if (s_capture >= 0 && (msg.message == WM_CHAR || msg.message == WM_SYSCHAR ||
                                msg.message == WM_KEYUP || msg.message == WM_SYSKEYUP))
             continue;
-        if (s_keys && IsDialogMessageA(s_keys, &msg)) continue;
         TranslateMessage(&msg);
         DispatchMessageA(&msg);
     }
@@ -3761,7 +3790,6 @@ extern "C" int gowa_launcher(void)
 #endif
     s_find.stop = 1;
     find_end();
-    if (s_keys) DestroyWindow(s_keys);
     DestroyWindow(s_main);
     /* Let the destroy messages through before the game opens its window. */
     while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }
