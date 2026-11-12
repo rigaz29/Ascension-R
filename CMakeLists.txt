@@ -458,7 +458,7 @@ endif()
 if(WIN32 AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
     target_sources(${PROJECT_NAME} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc")
     set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/port/app.rc" PROPERTIES
-                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/port/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/port/version.h;${CMAKE_CURRENT_SOURCE_DIR}/port/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/third_party/silkscreen/Silkscreen-Regular.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/silkscreen/Silkscreen-Bold.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/pixelify-sans/PixelifySans-VariableFont_wght.ttf")
+                                OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/port/gowa.manifest;${CMAKE_CURRENT_SOURCE_DIR}/port/version.h;${CMAKE_CURRENT_SOURCE_DIR}/port/app.ico;${CMAKE_CURRENT_SOURCE_DIR}/third_party/silkscreen/Silkscreen-Regular.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/silkscreen/Silkscreen-Bold.ttf")
     # The manifest comes from app.rc; the linker's own would be a second one.
     if(MSVC)
         target_link_options(${PROJECT_NAME} PRIVATE "/MANIFEST:NO")

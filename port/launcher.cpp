@@ -12,8 +12,9 @@
  * of tabs (Play, Graphics, Display, Controls, Game patches, Cheats, System), a
  * header with the precompile screen's scene moving in it (loading_screen.cpp,
  * all of it this port's own), cards of settings as segmented buttons, switches
- * and lists, and a bar with Play. Its fonts are Silkscreen and Pixelify Sans,
- * from the exe (app.rc). Retro effects (Display tab) is its glow and scanlines.
+ * and lists, and a bar with Play. Its fonts are Silkscreen, from the exe
+ * (app.rc), and Windows' Bahnschrift. Retro effects (Display tab) is its glow
+ * and scanlines.
  * The keyboard keys are set in a window of their own.
  * GOWA_LAUNCHER_SHOT=<folder> draws every tab into PNG files there and quits,
  * to look at the window without opening it; GOWA_LAUNCHER_SHOT_DPI sets their
@@ -956,7 +957,7 @@ static void preset_apply(int k)
  * Drawing: Direct2D and DirectWrite, 8-bit and neon
  *
  * Square edges a whole number of device pixels wide, buttons with a bevel, 16x16 pixel icons, the pixel fonts
- * Silkscreen (headings, buttons) and Pixelify Sans (the rest), and in the header the precompile screen's scene with
+ * Silkscreen (headings, buttons, captions) with Bahnschrift for the rest, and in the header the precompile screen's scene with
  * each of its pixels a whole number of device pixels. All but the scene is drawn into a layer (layer_draw), again only
  * when something changes; a frame (frame_draw) is the scene, the layer over it and, with Retro effects, the glow added
  * and the scanlines over all. So the scene moves 30 times a second for next to nothing.
@@ -980,7 +981,7 @@ static IDWriteFactory* s_dw;
 static IWICImagingFactory* s_wic;
 static IDWriteFactory5* s_dw5;                      /* Windows 10 1709 on: the fonts read from memory */
 static IDWriteInMemoryFontFileLoader* s_font_mem;
-static IDWriteFontCollection1* s_fonts;             /* Silkscreen and Pixelify Sans; NULL, Segoe UI */
+static IDWriteFontCollection1* s_fonts;             /* Silkscreen; NULL: none */
 static IDWriteTextFormat *s_tf_ui, *s_tf_ui_b, *s_tf_small, *s_tf_cap, *s_tf_head, *s_tf_btn, *s_tf_title, *s_tf_play;
 static IDWriteTextFormat* s_tf_desc;   /* s_tf_small from the top of its box: the lines under labels */
 static IDWriteTextFormat* s_tf_path;   /* s_tf_small on one line, cut before its last two folders */
@@ -1014,11 +1015,11 @@ static const wchar_t* W(const char* s)
     return b;
 }
 
-/* The fonts in the exe (app.rc), read from memory into a collection of their own. Without it (Windows 10 before
- * 1709, a resource missing) the text is Segoe UI. */
-enum { RES_SILKSCREEN = 101, RES_SILKSCREEN_BOLD = 102, RES_PIXELIFY = 103 };
+/* Silkscreen, in the exe (app.rc), read from memory into a collection of its own. Without it (Windows 10 before
+ * 1709, a resource missing) headings are in the body's font too. The body is Windows' own Bahnschrift, DIN-like
+ * and easy to read at 14 and 15 (a pixel font there makes a 5 an S); Segoe UI before Windows 10 1709. */
+enum { RES_SILKSCREEN = 101, RES_SILKSCREEN_BOLD = 102 };
 static const wchar_t* s_f_pixel = L"Segoe UI";   /* Silkscreen, once read */
-static const wchar_t* s_f_body = L"Segoe UI";    /* Pixelify Sans */
 
 static void fonts_load(void)
 {
@@ -1028,8 +1029,8 @@ static void fonts_load(void)
     if (FAILED(s_dw->QueryInterface(__uuidof(IDWriteFactory5), (void**)&s_dw5))) s_dw5 = NULL;
     if (s_dw5 && SUCCEEDED(s_dw5->CreateInMemoryFontFileLoader(&s_font_mem)) &&
         SUCCEEDED(s_dw5->RegisterFontFileLoader(s_font_mem)) && SUCCEEDED(s_dw5->CreateFontSetBuilder(&b))) {
-        const int ids[] = { RES_SILKSCREEN, RES_SILKSCREEN_BOLD, RES_PIXELIFY };
-        for (int i = 0; i < 3; i++) {
+        const int ids[] = { RES_SILKSCREEN, RES_SILKSCREEN_BOLD };
+        for (int i = 0; i < 2; i++) {
             HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(ids[i]), MAKEINTRESOURCEW(10));   /* RT_RCDATA */
             HGLOBAL g = r ? LoadResource(NULL, r) : NULL;
             const void* p = g ? LockResource(g) : NULL;
@@ -1041,21 +1042,34 @@ static void fonts_load(void)
                 f->Release();
             }
         }
-        if (n == 3 && SUCCEEDED(b->CreateFontSet(&set)) && SUCCEEDED(s_dw5->CreateFontCollectionFromFontSet(set, &s_fonts))) {
+        if (n == 2 && SUCCEEDED(b->CreateFontSet(&set)) && SUCCEEDED(s_dw5->CreateFontCollectionFromFontSet(set, &s_fonts)))
             s_f_pixel = L"Silkscreen";
-            s_f_body = L"Pixelify Sans";
-        } else {
+        else
             s_fonts = NULL;
-        }
     }
     if (set) set->Release();
     if (b) b->Release();
 }
 
+/* Whether Windows has a font family. */
+static int system_font(const wchar_t* family)
+{
+    IDWriteFontCollection* c = NULL;
+    UINT32 idx = 0;
+    BOOL ok = FALSE;
+    if (SUCCEEDED(s_dw->GetSystemFontCollection(&c, FALSE)) && c) {
+        c->FindFamilyName(family, &idx, &ok);
+        c->Release();
+    }
+    return ok;
+}
+
+/* A text format; Silkscreen's from the exe's collection, the rest from Windows'. */
 static IDWriteTextFormat* tf(const wchar_t* family, float px, DWRITE_FONT_WEIGHT wt)
 {
     IDWriteTextFormat* f = NULL;
-    s_dw->CreateTextFormat(family, s_fonts, wt, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, L"en-us", &f);
+    IDWriteFontCollection* c = s_fonts && family == s_f_pixel ? s_fonts : NULL;
+    s_dw->CreateTextFormat(family, c, wt, DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, px, L"en-us", &f);
     if (f) f->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     return f;
 }
@@ -1068,7 +1082,7 @@ static int ui_init(void)
     CoCreateInstance(CLSID_WICImagingFactory, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&s_wic));
     fonts_load();
     /* Silkscreen's dots are an eighth of its size: at 8, 16 and 24 they are whole pixels at 100%, 150% and 200%. */
-    const wchar_t *pix = s_f_pixel, *body = s_f_body;
+    const wchar_t *pix = s_f_pixel, *body = system_font(L"Bahnschrift") ? L"Bahnschrift" : L"Segoe UI";
     s_tf_ui = tf(body, 15.0f, DWRITE_FONT_WEIGHT_NORMAL);
     s_tf_ui_b = tf(body, 15.0f, DWRITE_FONT_WEIGHT_SEMI_BOLD);
     s_tf_small = tf(body, 14.0f, DWRITE_FONT_WEIGHT_NORMAL);
@@ -1317,6 +1331,13 @@ static int sharp(IDWriteTextFormat* f)
     const float dot = f->GetFontSize() * s_px / 8.0f;
     return fabsf(dot - floorf(dot + 0.5f)) < 0.01f;
 }
+/* A layout of s in f, in a box w x h. */
+static IDWriteTextLayout* layout(const wchar_t* s, IDWriteTextFormat* f, float w, float h)
+{
+    IDWriteTextLayout* l = NULL;
+    if (FAILED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, w, h, &l))) return NULL;
+    return l;
+}
 /* Text in a box, its first pixel on a whole device pixel. */
 static void text(const wchar_t* s, IDWriteTextFormat* f, D2D1_RECT_F r, unsigned rgb, float a = 1.0f,
                  DWRITE_TEXT_ALIGNMENT al = DWRITE_TEXT_ALIGNMENT_LEADING)
@@ -1325,7 +1346,7 @@ static void text(const wchar_t* s, IDWriteTextFormat* f, D2D1_RECT_F r, unsigned
     IDWriteTextLayout* l = NULL;
     if (!s || !*s || w <= 0.0f || h <= 0.0f) return;
     f->SetTextAlignment(al);
-    if (FAILED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, w, h, &l)) || !l) return;
+    if (!(l = layout(s, f, w, h))) return;
     DWRITE_TEXT_METRICS m;
     float x = snap(r.left);
     if (SUCCEEDED(l->GetMetrics(&m))) x = snap(r.left + m.left) - m.left;
@@ -1337,9 +1358,9 @@ static void text(const wchar_t* s, IDWriteTextFormat* f, D2D1_RECT_F r, unsigned
 /* How wide a text is on one line. */
 static float text_w(const wchar_t* s, IDWriteTextFormat* f)
 {
-    IDWriteTextLayout* l = NULL;
+    IDWriteTextLayout* l = layout(s, f, 4096.0f, 256.0f);
     float w = 0.0f;
-    if (SUCCEEDED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, 4096.0f, 256.0f, &l)) && l) {
+    if (l) {
         DWRITE_TEXT_METRICS m;
         if (SUCCEEDED(l->GetMetrics(&m))) w = m.widthIncludingTrailingWhitespace;
         l->Release();
@@ -1447,8 +1468,9 @@ static const char k_ic_search[16][17] = {
     ".........###....", "..........###...", "...........###..", "............##..", "................",
     "................" };
 
-/* An icon in the 16-DIP box at (x, y), its runs of dots filled unsmoothed (the targets draw aliased). */
-static void icon(Icon rows, float x, float y, unsigned rgb, float a = 1.0f)
+/* An icon with its top left at (x, y), k DIPs a dot (16 x 16 DIPs at 1), its runs of dots filled unsmoothed (the
+ * targets draw aliased). */
+static void icon(Icon rows, float x, float y, unsigned rgb, float a = 1.0f, float k = 1.0f)
 {
     const float ox = snap(x), oy = snap(y);
     s_br->SetColor(col(rgb, a));
@@ -1457,7 +1479,7 @@ static void icon(Icon rows, float x, float y, unsigned rgb, float a = 1.0f)
             if (rows[r][c] != '#') { c++; continue; }
             int e = c;
             while (e < 16 && rows[r][e] == '#') e++;
-            s_d->FillRectangle(D2D1::RectF(ox + (float)c, oy + (float)r, ox + (float)e, oy + (float)(r + 1)), s_br);
+            s_d->FillRectangle(D2D1::RectF(ox + (float)c * k, oy + (float)r * k, ox + (float)e * k, oy + (float)(r + 1) * k), s_br);
             c = e;
         }
 }
@@ -1465,9 +1487,9 @@ static void icon(Icon rows, float x, float y, unsigned rgb, float a = 1.0f)
 /* How tall a text is, wrapped at a width. */
 static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
 {
-    IDWriteTextLayout* l = NULL;
+    IDWriteTextLayout* l = layout(s, f, w, 1000.0f);
     float h = 0.0f;
-    if (SUCCEEDED(s_dw->CreateTextLayout(s, (UINT32)wcslen(s), f, w, 1000.0f, &l)) && l) {
+    if (l) {
         DWRITE_TEXT_METRICS m;
         if (SUCCEEDED(l->GetMetrics(&m))) h = m.height;
         l->Release();
@@ -2130,18 +2152,18 @@ static void draw_game_row(float x, float y, float w)
         w_button(L"Stop", R(x + w - 96, y + 98, 96, SEG_H), H_KIT_STOP, B_PLAIN);
     }
 #endif
-    if (prep_asks()) {
+    if (prep_asks()) {   /* what the decrypting needs, left to right, each button as wide as its name */
         const float by = y + 106;
         float bx = x;
-        w_button(L"Choose rpcs3.exe\x2026", R(bx, by, 164, SEG_H), H_PICK_RPCS3, 0);
-        bx += 174;
-        if (!s_prep.rpcs3[0]) {
-            w_button(L"Download RPCS3", R(bx, by, 150, SEG_H), H_GET_RPCS3, 0);
-            bx += 160;
+        const wchar_t* name[4] = { L"Choose rpcs3.exe\x2026", L"Download RPCS3", L"Choose .rap\x2026", L"Try again" };
+        const int id[4] = { H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY };
+        const int shown[4] = { 1, !s_prep.rpcs3[0], 1, s_prep.err[0] && s_prep.rpcs3[0] && s_prep.rap[0] };
+        for (int i = 0; i < 4; i++) {
+            if (!shown[i]) continue;
+            const float bw = snap(text_w(name[i], s_tf_ui_b) + 32.0f);
+            w_button(name[i], R(bx, by, bw, SEG_H), id[i], B_PLAIN);
+            bx += bw + 10;
         }
-        w_button(L"Choose .rap\x2026", R(bx, by, 132, SEG_H), H_PICK_RAP, 0);
-        bx += 142;
-        if (s_prep.err[0] && s_prep.rpcs3[0] && s_prep.rap[0]) w_button(L"Try again", R(bx, by, 110, SEG_H), H_PREP_RETRY, 0);
     }
 }
 
@@ -2149,12 +2171,13 @@ static void draw_settings(int tab)
 {
     const float x0 = SIDE_W + 16, hh = HERO_TAB;
     draw_hero(1);
-    {
-        const D2D1_RECT_F t = R(SIDE_W + 28, 30, 600, 32);
+    {   /* the tab's icon twice its size, its name, and what is in it */
+        icon(k_tab_icon[tab], SIDE_W + 28, 30, C_GOLD, 1.0f, 2.0f);
+        const D2D1_RECT_F t = R(SIDE_W + 72, 30, 600, 32);
         text(UP(k_tab_name[tab]), s_tf_title, t, C_GOLD);
         glow_text(UP(k_tab_name[tab]), s_tf_title, t, C_NEON, 0.7f);
     }
-    text(k_tab_desc[tab], s_tf_ui, R(SIDE_W + 28, 68, 640, 24), C_TEXT);
+    text(k_tab_desc[tab], s_tf_ui, R(SIDE_W + 72, 68, 640, 24), C_TEXT);
     const float cw = WIN_W - SIDE_W - 48, cy = hh + 14, rx = x0 + 24, rw = cw - 48;
     /* The rows of the tab, then what follows them. */
     Opt* rows[MAX_POPT + N_OPT];
@@ -2176,7 +2199,11 @@ static void draw_settings(int tab)
     const float off = s_scroll[tab];
     const int scrolls = s_scroll_max[tab] > 0.0f;
     if (scrolls) {
-        s_clip = SR(R(SIDE_W, cy - 1, WIN_W - SIDE_W, view + 1));   /* the card's neon line, a DIP out */
+        /* Where the card is cut, the rows stop under the edge drawn there; where it is not, its own edge shows, and the
+         * neon line a DIP out of it. */
+        const float top = off > 0.5f ? cy + 2.0f : cy - 1.0f;
+        const float bottom = off < s_scroll_max[tab] - 0.5f ? cy + view - 2.0f : cy + view + 1.0f;
+        s_clip = SR(D2D1::RectF(SIDE_W, top, WIN_W, bottom));
         s_d->PushAxisAlignedClip(s_clip, D2D1_ANTIALIAS_MODE_ALIASED);
     }
     w_card(R(x0, cy - off, cw, ch), NULL);
@@ -2207,10 +2234,32 @@ static void draw_settings(int tab)
     if (scrolls) {
         s_d->PopAxisAlignedClip();
         s_clip = NO_CLIP;
+        /* Where the card is cut by the view: an edge, and the rows fading into it. */
+        ID2D1GradientStopCollection* gs = NULL;
+        ID2D1LinearGradientBrush* g = NULL;
+        D2D1_GRADIENT_STOP st[3] = { { 0.0f, col(C_CARD, 1.0f) }, { 0.25f, col(C_CARD, 1.0f) }, { 1.0f, col(C_CARD, 0.0f) } };
+        const float fade = 24.0f;
+        if (SUCCEEDED(s_d->CreateGradientStopCollection(st, 3, &gs))) {
+            for (int end = 0; end < 2; end++) {
+                if (end ? off >= s_scroll_max[tab] - 0.5f : off <= 0.5f) continue;   /* nothing cut there */
+                const float ey = end ? cy + view - 2.0f : cy, fy = end ? ey - fade : ey + 2.0f;
+                if (SUCCEEDED(s_d->CreateLinearGradientBrush(
+                        D2D1::LinearGradientBrushProperties(D2D1::Point2F(0, end ? ey : fy), D2D1::Point2F(0, end ? fy : fy + fade)),
+                        gs, &g))) {
+                    s_d->FillRectangle(SR(R(x0 + 2, fy, cw - 4, fade)), g);
+                    g->Release();
+                    g = NULL;
+                }
+                fill(R(x0, ey, cw, 2), C_EDGE);
+            }
+            gs->Release();
+        }
         /* Where in the card the window is, beside it. */
         const float bx = x0 + cw + 6, thumb = view * view / ch < 40.0f ? 40.0f : view * view / ch;
-        fill(R(bx, cy, 6, view), C_CARD);
-        fill(R(bx, cy + (view - thumb) * off / s_scroll_max[tab], 6, thumb), C_OFF);
+        const D2D1_RECT_F track = R(bx, cy, 10, view);
+        fill(track, C_BG);
+        frame(track, C_EDGE, 1.0f, 2.0f);
+        fill(R(bx + 3, cy + 3 + (view - 6 - thumb) * off / s_scroll_max[tab], 4, thumb), C_DIM);
     }
 }
 
@@ -2246,10 +2295,17 @@ static void draw_footer(void)
     wchar_t sum[300];
     summary(sum, 300);
     const int pn = preset_now();
-    if (s_toast[0] && GetTickCount64() < s_toast_until) {
+    if (s_toast[0] && GetTickCount64() < s_toast_until) {   /* a badge in its colour: green done, red not */
         const unsigned c = s_toast_bad ? C_BAD : C_OK;
-        icon(s_toast_bad ? k_ic_cross : k_ic_check, SIDE_W + 20, y + (FOOT_H - 16.0f) * 0.5f, c);
-        text(W(s_toast), s_tf_ui_b, R(SIDE_W + 46, y, tw - 26, FOOT_H), c);
+        const wchar_t* msg = W(s_toast);
+        float bw = snap(text_w(msg, s_tf_ui_b) + 58.0f);
+        if (bw > tw) bw = tw;
+        const D2D1_RECT_F box = R(SIDE_W + 20, y + (FOOT_H - 40.0f) * 0.5f, bw, 40);
+        fill(box, C_BG);
+        frame(box, c, 1.0f, 2.0f);
+        glow_rect(box, c, 0.6f, 2.0f);
+        icon(s_toast_bad ? k_ic_cross : k_ic_check, box.left + 14, y + (FOOT_H - 16.0f) * 0.5f, c);
+        text(msg, s_tf_ui_b, R(box.left + 40, box.top, bw - 50, 40), C_TEXT);
     } else {
         wchar_t p[80];
         if (pn >= 0) swprintf(p, 80, L"%ls preset", W(k_presets[pn].name));
@@ -3463,9 +3519,62 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
 }
 
 /* GOWA_LAUNCHER_SHOT=<folder>: every tab, the Display tab with its list open,
- * the System tab during a search, and the Cheats and Graphics tabs scrolled to
- * their end, into PNG files at the window's size times 1.25 (a 125% display),
- * or at GOWA_LAUNCHER_SHOT_DPI. The scene stands still in them. */
+ * the System tab during a search, the Cheats and Graphics tabs scrolled to
+ * their end, a toast, the System tab asking for what the decrypting needs, a
+ * precompile under way, and in the Kit the game's code being built and not
+ * built yet, into PNG files at the window's size times 1.25 (a 125% display),
+ * or at GOWA_LAUNCHER_SHOT_DPI. The scene stands still in them, and nothing
+ * runs: each state is only set while its shot is drawn, then put back. */
+enum { S_TAB, S_LIST, S_SEARCH, S_END, S_TOAST, S_DECRYPT, S_PRECOMPILE, S_KIT_RUN, S_KIT_NEED, S_KIT_ROW };
+static const int k_shots[][2] = {
+    { T_PLAY, S_TAB }, { T_GRAPHICS, S_TAB }, { T_DISPLAY, S_TAB }, { T_CONTROLS, S_TAB }, { T_PATCHES, S_TAB },
+    { T_CHEATS, S_TAB }, { T_SYSTEM, S_TAB }, { T_DISPLAY, S_LIST }, { T_SYSTEM, S_SEARCH }, { T_CHEATS, S_END },
+    { T_GRAPHICS, S_END }, { T_PLAY, S_TOAST }, { T_SYSTEM, S_DECRYPT }, { T_PLAY, S_PRECOMPILE },
+#ifdef PORT_GAME_MODULE
+    { T_PLAY, S_KIT_RUN }, { T_PLAY, S_KIT_NEED }, { T_SYSTEM, S_KIT_ROW },
+#endif
+};
+
+static void shot_state(int what, int on)
+{
+    static GameInfo game;
+    static int elf_ok;
+    if (what == S_SEARCH) {   /* a search under way: the row only says so */
+        s_find.thread = on ? GetCurrentThread() : NULL;
+        swprintf(s_find.now, GAME_PATH_MAX, L"%ls", on ? L"D:\\Games\\PS3\\RPCS3\\dev_hdd0\\game" : L"");
+    }
+    if (what == S_TOAST) {
+        if (on) toast("Saved");
+        else s_toast[0] = 0;
+    }
+    if (what == S_DECRYPT) {
+        if (on) { game = s_game.g; s_game.g.state = GAME_NO_ELF; }
+        else s_game.g = game;
+    }
+    if (what == S_PRECOMPILE) {
+        s_pc.running = on;
+        s_pc.phase = on ? 2 : 0;
+        s_pc.done = on ? 2310 : 0;
+        s_pc.total = on ? 3000 : 0;
+    }
+#ifdef PORT_GAME_MODULE
+    if (what == S_KIT_RUN || what == S_KIT_ROW) {
+        s_kit.running = on;
+        s_kit.permille = on ? 420 : 0;
+        s_kit.left = on ? 360 : -1;
+        s_kit.started = GetTickCount64();
+        swprintf(s_kit.what, 200, L"%ls", on ? L"Compiling the game's code" : L"");
+    }
+    if (what == S_KIT_NEED) {
+        static int state;
+        if (on) { state = s_kit.state; elf_ok = s_rc.elf_ok; s_kit.state = 1; s_rc.elf_ok = 1; }
+        else { s_kit.state = state; s_rc.elf_ok = elf_ok; }
+    }
+#else
+    (void)elf_ok;
+#endif
+}
+
 static void shots(const char* dir)
 {
     float dpi = 120.0f;
@@ -3483,16 +3592,14 @@ static void shots(const char* dir)
     }
     rt_resources();
     CreateDirectoryA(dir, NULL);
-    for (int t = 0; t <= T_N + 3; t++) {
-        s_tab = t < T_N ? t : t == T_N ? T_DISPLAY : t == T_N + 1 ? T_SYSTEM : t == T_N + 2 ? T_CHEATS : T_GRAPHICS;
-        s_scroll[s_tab] = t >= T_N + 2 ? 1e9f : 0.0f;   /* the last two: the cheats and the graphics, scrolled to their end */
+    for (int t = 0; t < (int)(sizeof k_shots / sizeof k_shots[0]); t++) {
+        const int what = k_shots[t][1];
+        s_tab = k_shots[t][0];
+        s_scroll[s_tab] = what == S_END ? 1e9f : 0.0f;   /* to its end */
         s_dd = -1;
         s_hover = -1;
-        if (t == T_N + 1) {   /* a search under way: nothing runs, the row only says so */
-            s_find.thread = GetCurrentThread();
-            swprintf(s_find.now, GAME_PATH_MAX, L"D:\\Games\\PS3\\RPCS3\\dev_hdd0\\game");
-        }
-        if (t == T_N) {   /* the window size list, open */
+        shot_state(what, 1);
+        if (what == S_LIST) {   /* the window size list, open */
             s_layer_old = 1;
             frame_draw();
             for (int i = 0; i < s_nhit; i++)
@@ -3518,8 +3625,8 @@ static void shots(const char* dir)
         if (fr) fr->Release();
         if (enc) enc->Release();
         if (st) st->Release();
+        shot_state(what, 0);
     }
-    s_find.thread = NULL;
     rt_release();
     bmp->Release();
 }
