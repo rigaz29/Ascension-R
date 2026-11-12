@@ -168,3 +168,20 @@ status table. README.md points at the releases page now.
   three files GitHub gave the SHA-256 of the ones here. Issue #7 got the link, and the reporter the Grotto to try again.
 - **Not done:** the zip unpacked and played as a player has it; the tree's own build played the Grotto (three replays
   of the reporter's session) and the first fight.
+
+## The release 0.1.0-alpha.7 (2026-11-12)
+
+- **What it is for:** issue #9, the Delphi temple's broken textures and freeze on one PC: the VRAM guards (`523875d`,
+  fork `8d34fda7`; docs/notes/2026-11-12-temple-textures.md has the cause as far as it is known, and the runs). With
+  it the skinned fill's rounding (`8b6bd74`), and the vertex shaders built before the first start of a version
+  (`97294b1`) behind a screen drawn in code (`69af2d7`).
+- **The package**, from `3026645` and fork `8d34fda7`: a zip of 144.7 MB, 464 files and 328.8 MB unpacked, SHA-256
+  `fc5e4923d2e501b27d67e17f51031e59abc07a713903493e8748d4e8f9e56aa7`. Its audit found what alpha.6's had. Its build
+  check made the DLL in 475 s, SHA-256 `d686e28434f0d4b13b9abd8528b8f7e846ac599a423fedf002194e316a58f309`; its map
+  has the three VRAM hooks. The Prebuilt, 88.9 MB, stays here.
+- **Published** the same day as `v0.1.0-alpha.7`, a pre-release, the tag at the version's commit, from a draft whose
+  three files GitHub gave the SHA-256 of the ones here. Issue #9 got the link and the cause as far as it is known,
+  and its reporter the temple to play again. A reply cannot carry the Kit itself: a comment takes files of 25 MB at
+  most, and only from the web page.
+- **Not done:** the zip unpacked and played as a player has it. The tree's own build played the temple replay with
+  the guards, and with one allocation's size made negative on purpose.
