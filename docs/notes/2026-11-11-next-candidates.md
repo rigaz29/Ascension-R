@@ -288,3 +288,42 @@ From [the plan](2026-10-29-performance-plan.md), [the audit](2026-10-31-techniqu
 - **The sampler** made run 1 the slowest. Its shares are used, its milliseconds only as a guide.
 - **The estimates** are ranges. The worker review's ran high by a factor of four, and S+J's range is of that kind.
 - **The millisecond's worth** spans 0.18-0.57% by three measurements, the highest from runs with heat in them.
+
+## Step 1: the probe (2026-11-12)
+
+One fight run with temporary counters, taken out again after it: port `fdc6bf7`, the setup above, 31.30 flips/s. The
+counts are the last 48.8 s of it, 1,528 frames. The memo found a result for 92.6% of the jobs it looked up.
+
+The jobs a frame, 2,487: position 777, position skinned 119, lit 816, lit skinned 128, velocity 358, velocity skinned 92,
+not read 198, other 1.
+
+**D, the late binormals.**
+
+| kind | run late a frame | ms a frame |
+|---|---|---|
+| velocity | 332.6, every job | 1.43 |
+| velocity, skinned | 85.5, every job | 0.45 |
+| the others | none (other: 0.9) | 0.01 |
+
+- Every velocity job runs them late, and nothing reads them: 1.88 SPU-ms a frame to leave out. The time is the late
+  run's own, the lifted `0xA880` with its native loop.
+- A velocity job goes through the normals loop (`0xA950`) a second time, outside the late run: 665 calls a frame for
+  333 jobs, 2.38 ms with the late ones, and the skinned 171 calls and 0.77 ms. What that call is for is not looked at
+  yet. If nothing reads it either, D comes to about 3.5 ms.
+
+**C, the layouts not read.** All 198 a frame fail one check: slot 13 is 16 bytes, but its first byte is `0x86` or `0x83`
+where the reader takes `0x87` alone. The byte is likely EDGE's flags and uniform table count: 7, 6 or 3.
+
+| output piece | input pieces | method piece | first byte | a frame |
+|---|---|---|---|---|
+| `756DE0` | `75AA50`, `760F30` | `7613D0` | `0x86` | 115.0 |
+| `764040` | `75AA50`, `760F30` | `766080` | `0x83` | 39.8 |
+| `765B70`, position | `75E180`, `764520` | `7661C0` | `0x86`, `0x83` | 24.8 |
+| `762120` | `75AA50` | `764FB0` | `0x86` | 2.8 |
+
+- Only the position output is a known class here: about 25 jobs a frame, ~0.5 ms if they were kept at a position job's
+  26.6 µs against the 47.9 of one not read.
+- The rest have output pieces the memo does not take (`764040` is not even in the reader's list): new classes, not a
+  known one with one slot different.
+
+So D is worth doing, 1.9 ms for certain and 3.5 if the second call goes too. C is small unless its pieces are learned.
