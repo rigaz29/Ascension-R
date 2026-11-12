@@ -2984,7 +2984,11 @@ extern "C" int gowa_launcher(void)
     wc.hInstance = GetModuleHandleA(NULL);
     wc.hCursor = LoadCursorA(NULL, (LPCSTR)IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
-    wc.hIcon = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
+    /* The program's icon (app.rc), and its 16-pixel drawing for the title bar; Windows' own if there is none. */
+    wc.hIcon = LoadIconA(wc.hInstance, MAKEINTRESOURCEA(1));
+    wc.hIconSm = (HICON)LoadImageA(wc.hInstance, MAKEINTRESOURCEA(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                   GetSystemMetrics(SM_CYSMICON), 0);
+    if (!wc.hIcon) wc.hIcon = LoadIconA(NULL, (LPCSTR)IDI_APPLICATION);
     wc.lpfnWndProc = kb_proc;
     wc.lpszClassName = "gowa_keys";
     RegisterClassExA(&wc);

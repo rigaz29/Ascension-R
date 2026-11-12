@@ -853,6 +853,9 @@ static DWORD WINAPI ui_main(LPVOID)
     wc.hInstance = GetModuleHandleW(NULL);
     wc.hCursor = LoadCursor(NULL, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)GetStockObject(BLACK_BRUSH);
+    wc.hIcon = LoadIconW(wc.hInstance, MAKEINTRESOURCEW(1));   /* the program's (app.rc) */
+    wc.hIconSm = (HICON)LoadImageW(wc.hInstance, MAKEINTRESOURCEW(1), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON),
+                                   GetSystemMetrics(SM_CYSMICON), 0);
     wc.lpszClassName = L"ascension_r_loading";
     RegisterClassExW(&wc);
     UINT dpi = 96;

@@ -20,6 +20,12 @@ BAD_TYPES = {
     ".bik", ".pam", ".mp4", ".at3", ".png", ".jpg", ".jpeg", ".dds", ".gtf", ".pad",                       # media, recordings
 }
 BAD_NAMES = {"eboot.bin", "param.sfo", "local.json"}
+# The port's own pictures, by path and SHA-256: scripts/brand/brand.py draws them from the precompile screen's scene, and
+# prints these when they change. Any other picture, or these changed, is turned away like the rest.
+OWN_PICTURES = {
+    "docs/images/banner.png": "90f7745d759e8ec44c58387e2504d25b0f2eb1a13194b2d1a17a3902a4e1ee42",
+    "docs/images/icon.png": "0fc50d06490490a9819497f4c2c040e6f4d5d26e7cc3516af1c0155038b001d8",
+}
 MAGIC = ((b"\x7fELF", "an ELF"), (b"SCE\0", "a SELF"), (b"PSAR", "a PSARC archive"), (b"NPD\0", "an EDAT"), (b"\x7fPKG", "a PKG"))
 MAX_BYTES = 1024 * 1024
 # Lifted code touches guest registers on nearly every line; the hand-written routines in native/ stay near a hundred.
@@ -68,7 +74,8 @@ def problems(path, data):
     if len(parts) > 1 and (top in BAD_FOLDERS or top.startswith("build")):
         out.append("in %s/, which stays on your machine" % parts[0])
     name = parts[-1].lower()
-    if name in BAD_NAMES or os.path.splitext(name)[1] in BAD_TYPES:
+    own = OWN_PICTURES.get(path) == hashlib.sha256(data).hexdigest()
+    if name in BAD_NAMES or (os.path.splitext(name)[1] in BAD_TYPES and not own):
         out.append("a file type that stays out of git")
     for magic, what in MAGIC:
         if data.startswith(magic):

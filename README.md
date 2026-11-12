@@ -1,3 +1,5 @@
+<p align="center"><img src="docs/images/banner.png" alt="Ascension-R: a temple on a cliff and ruins over the sea at sunset, in pixel art" width="100%"></p>
+
 # Ascension-R
 
 [![CI](https://github.com/rigaz29/Ascension-R/actions/workflows/ci.yml/badge.svg)](https://github.com/rigaz29/Ascension-R/actions/workflows/ci.yml)
