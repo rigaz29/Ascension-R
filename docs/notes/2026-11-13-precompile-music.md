@@ -29,8 +29,11 @@
   on three source voices: the theme, the sea, the thunder. Not before 2.5 s on the screen, so a start that only checks
   (about a second) ends in silence; in over 2.5 s; when the screen goes (`gowa_loading_screen_close`), out over a
   second, as the game's own sound opens.
-- **Setting:** `[system] precompile_music` (`GOWA_PRECOMPILE_MUSIC`): off, low (the default), medium, high, the master
-  voice at 0.3, 0.55 and 0.85. In the launcher: Precompile music, in the System tab.
+- **Setting:** `[system] precompile_music` (`GOWA_PRECOMPILE_MUSIC`): off, low, normal (the default), high, the
+  master voice at 0.5, 1 and 1.25. Normal is the level it was made and listened to at (-17.2 LUFS with the sea, its
+  true peak with the thunder -4.6 dBFS); high stays under -2.5 dBFS. The first version had low as the default, at 0.3:
+  too quiet, and the default became normal the same day; `medium`, its name for 0.55, now reads as normal. In the
+  launcher: Precompile music, in the System tab.
 - **Tried:** the gate on a test folder (`logs\music-gate`: a copy of the shader cache without its mark, the game's
   folder through a junction), started with `--no-launcher`:
 

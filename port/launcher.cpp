@@ -146,8 +146,8 @@ static const char* const k_enter_n[] = { "Cross", "Circle" };
 static const char* const k_bak[] = { "0", "3", "5", "10" };
 static const char* const k_bak_n[] = { "Off", "Keep 3", "Keep 5", "Keep 10" };
 static const char* const k_bak_s[] = { "Off", "3", "5", "10" };
-static const char* const k_music[] = { "off", "low", "medium", "high" };
-static const char* const k_music_n[] = { "Off", "Low", "Medium", "High" };
+static const char* const k_music[] = { "off", "low", "normal", "high" };
+static const char* const k_music_n[] = { "Off", "Low", "Normal", "High" };
 static const char* const k_spk[] = { "auto", "stereo", "5.1", "7.1" };
 static const char* const k_spk_n[] = { "As Windows has the output device", "Stereo", "5.1", "7.1" };
 static const char* const k_spk_s[] = { "Auto", "Stereo", "5.1", "7.1" };
@@ -240,7 +240,7 @@ static Opt s_opt[] = {
     { T_SYSTEM, "system", "raw_audio", "off", "Bypass sound effects", 1, SW,
       "The game's sound skips Windows' and the sound card's effects (equalizers, loudness, virtual "
       "surround), where the device has a way past them." },
-    { T_SYSTEM, "system", "precompile_music", "low", "Precompile music", 0, LIST(k_music, k_music_n), k_music_n,
+    { T_SYSTEM, "system", "precompile_music", "normal", "Precompile music", 0, LIST(k_music, k_music_n), k_music_n,
       "Music on the screen that builds the shaders at a version's first start, made by the program." },
     { T_SYSTEM, "launcher", "show", "on", "Show this window at start", 1, SW,
       "When off, hold Shift while the game starts to bring it back." },

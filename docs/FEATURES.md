@@ -38,7 +38,7 @@ them: their text depends on the textures and state of each draw, which the files
 next start do it again. `GOWA_PRECOMPILE_FIRST=0` leaves it out (the benches do).
 The screen has music of its own: an original theme over the sea, the brazier and thunder after the scene's lightning,
 made by the program as the screen opens (`port/precompile_music.cpp`, [note](notes/2026-11-13-precompile-music.md)).
-Precompile music, in the System tab, sets it to Off, Low (the default), Medium or High.
+Precompile music, in the System tab, sets it to Off, Low, Normal (the default) or High.
 Clear shaders, in the launcher's sidebar, moves both to the Recycle Bin.
 
 Each session started from the launcher (not from a script) writes its output to `logs\session-<date>-<time>.log` beside

@@ -18,7 +18,7 @@
  *
  * It plays only on the precompile screen, from 2.5 s after the screen opens (a start that finds the shaders built
  * ends sooner, in silence), fading in, until the game's window is up, fading out over a second. [system]
- * precompile_music (GOWA_PRECOMPILE_MUSIC): off, low (the default), medium, high. XAudio2 2.9, Windows 10's own, is
+ * precompile_music (GOWA_PRECOMPILE_MUSIC): off, low, normal (the default), high. XAudio2 2.9, Windows 10's own, is
  * loaded when it plays: without it there is none.
  *
  * Ascension-R.exe --music-preview <file.wav> [seconds] writes what the screen plays from its start, at full level.
@@ -932,7 +932,7 @@ DWORD WINAPI music_main(LPVOID)
         while (s_t0 + THUNDER_MS + k * THUNDER_EVERY_MS < start) k++;
         unsigned rolls = 0;
         float vol = 0.0f;
-        printf("[music] playing (%s)\n", ps3_settings_str("system", "precompile_music", "GOWA_PRECOMPILE_MUSIC", "low"));
+        printf("[music] playing (%s)\n", ps3_settings_str("system", "precompile_music", "GOWA_PRECOMPILE_MUSIC", "normal"));
         for (;;) {
             const ULONGLONG now = GetTickCount64();
             vol = (float)fmin(1.0, (now - start) / 2500.0);   /* in over 2.5 s */
@@ -1001,11 +1001,13 @@ void write_wav(const char* path, const std::vector<int16_t>& pcm)
 void gowa_music_begin(uint64_t t0_ms)
 {
     if (s_thread) return;
-    const char* v = ps3_settings_str("system", "precompile_music", "GOWA_PRECOMPILE_MUSIC", "low");
-    double level = 0.3;
+    /* Normal is the level it was made at (MUSIC_RMS, -17.2 LUFS with the sea): full, its true peak with the thunder
+     * -4.6 dBFS. Low is half that, high 2 dB over it and still under -2.5 dBFS. medium, from before, is normal. */
+    const char* v = ps3_settings_str("system", "precompile_music", "GOWA_PRECOMPILE_MUSIC", "normal");
+    double level = 1.0;
     if (ps3_settings_ieq(v, "off")) level = 0.0;
-    else if (ps3_settings_ieq(v, "medium")) level = 0.55;
-    else if (ps3_settings_ieq(v, "high")) level = 0.85;
+    else if (ps3_settings_ieq(v, "low")) level = 0.5;
+    else if (ps3_settings_ieq(v, "high")) level = 1.25;
     if (level <= 0.0) {
         printf("[music] off (system.precompile_music)\n");
         return;
