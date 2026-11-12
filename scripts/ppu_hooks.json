@@ -1,6 +1,12 @@
 {
-  "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops, the launcher's cheats (cheats.cpp) on a creature's damage",
+  "note": "ppu_lifter.py --insn-hooks: gowa_poll_wait (poll_wait.cpp) at the heads of the main thread's polling loops, the launcher's cheats (cheats.cpp) on a creature's damage, the VRAM manager's guards (vram_guard.cpp)",
   "hooks": [
+    {"addr": "0x0039B984", "fn": "gowa_vram_texture",
+     "note": "func_0039B93C: r3 the size of the texture in r31's data, [+0x20] - [+0x1C], about to be allocated (issue #9)"},
+    {"addr": "0x0039E3F8", "fn": "gowa_vram_alloc",
+     "note": "func_0039E3F8, the VRAM pool's allocator, on entry: r4 the size, from a texture, func_0039F7C8 or the defragmenter"},
+    {"addr": "0x003A2ADC", "fn": "gowa_vram_move",
+     "note": "MoveLocalMemory (func_003A2ADC) on entry: r3 the destination, r4 the source, r5 the size, offsets in local memory"},
     {"addr": "0x003A3F90", "fn": "gowa_wide_aspect",
      "note": "func_003A3DD8: r4 holds 16:9, about to go to +32 of the render settings (display.ultrawide)"},
     {"addr": "0x003B05A4", "fn": "gowa_wide_fov",

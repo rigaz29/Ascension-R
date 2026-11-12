@@ -275,6 +275,7 @@ add_executable(${PROJECT_NAME}
     port/stubs.cpp
     port/poll_wait.cpp
     port/cheats.cpp
+    port/vram_guard.cpp
     port/patches.cpp
     port/ultrawide.cpp
     port/precompile.cpp
