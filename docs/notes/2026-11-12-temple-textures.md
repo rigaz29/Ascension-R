@@ -257,3 +257,36 @@ Nth upload right after its decode, as the title would. The temple replay, three 
   texture read while it is written, now lasts one frame.
 - The reporter's next run tells which it was: no break, the cache; a break F9 mends, the cache by another way; a break
   it does not mend, the game's memory, and the `[vram]` lines with it.
+
+## Here at last, with #7's save (2026-11-14)
+
+#7's reporter sent a 0.1.0-alpha.7 report with saves after a broken cinematic in HRTN (the Sparta illusion,
+`HRTN100IGC`): Kratos's skin flat and far too bright, his beard, belt and armour right, the others' skin right, and
+a garbled many-coloured texture in a corner. Its log has nothing about it, but 0.1.0-alpha.7 had no `[vram]` lines yet.
+
+### The replay
+
+- Their manual save of that session (slot 16), put in slot 31, the one Continue loads; the game took it.
+- `PAD_REPLAY` of a spliced recording: their menus up to Continue, 35 s with nothing pressed for the load, then their
+  session from the save on. The pad's buttons word is `(DIGITAL2 << 8) | DIGITAL1`: 0x0800 is R1, not START.
+- The cinematic itself opens `HRTN100IGC.TS.PATCH`, 85 ms after an R1; its WAD is read ahead at the checkpoint
+  before. The replay never got there: with their damage the fight before the gate outlasted their inputs, and from a
+  checkpoint Kratos starts where their inputs do not take him to the Amulet of Uroborus and that R1.
+- Their settings, render scale 1, Kratos taking no damage.
+
+### What it gave
+
+Four runs. One, through the Cerberus fight before the gate with "One hit" damage, broke as #9 does, and the textures
+broke on screen:
+
+- 16 `[vram]` lines: `a run of blocks 887..888, size 0xFE70AB00, from 0x003A0A04: a block's size went bad after it
+  was allocated`, then 878..879, 858..859, 816..817 (0xFD4EAB00, from 0x0039F5B0), each with moves of about 4 GB
+  from 0x003A135C left out.
+- Then three uploads changed while they were read: 2048x2048 textures, formats 0x88 and 0x86, read again.
+- The first `[vram]` line came before the first `[vtx-kept] resident part full: started over`: the resident part's
+  restart is not what sets it off.
+
+The other three: one upload changed while read (32x32, 0xA5), and nothing.
+
+So the break happens on a GTX 1650 too (#7 an RTX 3080, #9 an RX 7900 XT), one run in four here, about four minutes
+in. #7's cinematic, with nothing in an 0.1.0-alpha.7 log, fits the same failure; the replay did not show it.
