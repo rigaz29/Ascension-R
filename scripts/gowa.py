@@ -1447,8 +1447,10 @@ def release_problems(stage, env):
                 continue
             with open(path, "rb") as f:
                 low = f.read().lower()
-            for own in ("github.com/rigaz29".encode(), "github.com/rigaz29".encode("utf-16-le")):  # the project's public address
-                low = low.replace(own, b"")
+            # the project's public address, on GitHub and in GitHub's API (the launcher's update notice)
+            for own in ("github.com/rigaz29", "repos/rigaz29"):
+                for enc in ("ascii", "utf-16-le"):
+                    low = low.replace(own.encode(enc), b"")
             bad += ["%s holds %r" % (rel, n) for n in sorted(set(n for k, n in needles.items() if k in low))]
     return bad
 
