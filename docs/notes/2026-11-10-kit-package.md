@@ -186,6 +186,24 @@ status table. README.md points at the releases page now.
 - **Not done:** the zip unpacked and played as a player has it. The tree's own build played the temple replay with
   the guards, and with one allocation's size made negative on purpose.
 
+## The release 0.1.0-alpha.8 (2026-11-13)
+
+- **What it is for:** issue #10's saves (`8b3226e`, fork `88ac02a4`), issue #9's texture mover and the precompile's
+  archives (`4dcaf60`), the update notice (`f21d70c`), the Kit's file list (`8bd77f8`), the launcher's new look
+  (`409b2fd`, `fccf215`, `0f760b2`) without Precompile shaders (`90f3e12`), the precompile screen's music (`bd43d4f`,
+  `73cfe2e`), and the program's icon (`89c8dc5`, fork `9cce29f1`).
+- **The package**, from `e2d5d31` and fork `88ac02a4`: a zip of 144.7 MB, 466 files and 329.0 MB unpacked, SHA-256
+  `e79bb9355f1173a70d4bf8ef254bc604f30a234eea999fb878202e45db94855d`. Its audit found what alpha.7's had. Its build
+  check made the DLL in 531 s, SHA-256 `a58ee18bf2feecf920caaaa30b6ee3147e26a7b6d425089b7b41627a943290a0`. Two runs
+  came before it. The first was stopped to set the update text right: it said a new folder was best and the old one
+  could go, which would have lost #10's reporter's saves (`4cbad7d`). The second stopped at the check for this PC's
+  names: the update notice's API address, `/repos/rigaz29/...`, holds the Windows user name as the GitHub one does,
+  and the check now leaves it out as it does `github.com/rigaz29` (`e2d5d31`). No Prebuilt this time.
+- **Published** the same day as `v0.1.0-alpha.8`, a pre-release, the tag at `e2d5d31`, from a draft whose three files
+  GitHub gave the SHA-256 of the ones here. The tree's own launcher, still saying 0.1.0-alpha.7, then found it
+  through GitHub's API. Issue #9 got the link, its reporter named in it.
+- **Not done:** the zip unpacked and played as a player has it.
+
 ## A Kit unpacked over an older one (2026-11-13)
 
 A player who unpacks a new Kit over the old folder keeps the old Kit's files the new one no longer has. The DLL
