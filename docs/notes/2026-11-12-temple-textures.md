@@ -194,3 +194,66 @@ Neither went on to hundreds of moves: there was nothing more to defragment then.
 
 - What gives a streamed texture a range that ends before it starts on their PC. The next report's
   `[vram] streamed texture` line says which texture, its range and both blocks.
+
+## The two tests, and the texture cache (2026-11-14)
+
+The reporter ran the two tests asked for, on 0.1.0-alpha.8, then 0.1.0-alpha.9 as it was (RX 7900 XT, Ryzen 7
+5700X3D, a 165 Hz display, VSync on, no cap; FSR 3.1 at 1.5x, SMAA).
+
+| session | build | | the picture | `[vram]` lines |
+|---|---|---|---|---|
+| 14:47 | alpha.8 | render thread off | broken within three minutes | after TEM300 |
+| 14:52 | alpha.8 | render thread on, `TEX_NOCACHE=1` | right | none |
+| 15:07 | alpha.9 | as it is | broken | right after R_BRUTE10, in TEM400 |
+
+- The `TEX_NOCACHE` session went the furthest: TEM350, TEM700, TEMBAS, TEM300, TEM400 with the brute, TEM450 and
+  TEM500, every place the two others broke in.
+- The pictures broke further than before: nearly every texture, the menus' font, icons and HUD among them, and Kratos
+  teal. The `[vram]` lines are #9's own: a descriptor of 0x2AAB0 bytes, a 512x512 DXT1 chain, less another texture's
+  start.
+- `TEX_NOCACHE=1` reads every texture again from the game's memory at every frame. That the picture was right through
+  the whole session says the game's bytes were right then; what broke was the copy the cache holds. The render thread
+  is not it.
+
+### The cache's check
+
+`vp_upload_tex_slot` uploads a texture again only when `tex_changed` finds its source bytes changed. Three things in it:
+
+- The checksum was taken after the decode. A texture the title wrote while it was decoded was held half old and half
+  new, with the checksum of the new bytes, so every later bind found it unchanged. The title does write textures the RSX
+  is still to read: the port lets label 0x4E go (`TEXTURE_READ_SEMAPHORE_RELEASE`) before every draw ahead has
+  uploaded its textures (1.9% of the releases in the texture probe above), and the streaming refills those blocks.
+- It covered level 0 of face 0 only: the other levels of a chain, the other faces of a cube, were never compared.
+- It is sparse, 1,024 words at most, one eighth of them at each frame's first bind. Kept: a whole new image shows in any
+  part.
+
+### What changed (fork)
+
+- The checksum is taken before the decode, over all it reads: the chain to its last level, the six pyramids of a cube,
+  every slice of a volume. After the decode it is taken again; when the two differ, the slot's `again` makes its next
+  bind upload it, whatever part that bind compares, and the log says so: `[tex] <address> <size> format <f> changed while
+  it was read (<n> so far): read again at its next bind`, the first eight and then every power of two.
+- **F9** in the game's window marks every held texture to be read again at its next bind, with a note on screen and
+  `[tex] F9: the <n> textures held are read again at their next bind` in the log. A broken picture that F9 mends was the
+  held copy; one it does not mend is in the game's memory.
+
+### Tried here
+
+The race does not happen on this PC, so a probe (`TEX_TORN_TEST=N`, not committed) changed the first source byte of every
+Nth upload right after its decode, as the title would. The temple replay, three runs:
+
+- Every changed upload was seen and read again at its next bind: 33 changed, 32 rebinds that found `again`; 65 and 64,
+  the last one each time not bound again yet when counted. F9 marked 2,869 textures; the picture after it was right.
+- One of the probe runs froze before the probe had changed anything: the FIFO walk met a jump to itself (`0x202FF4A8`
+  at IO 0x2FF4A8) and parked, as in #7. One temple run of 45 so far; the next one did not.
+- The build without the probe, 40 s of the level, one run against one before the change: 53.5 flips a second on average
+  against 52.6, median 55.5 against 54.7, the least 40.5 against 34.7. No upload changed while it was read.
+
+### Still open
+
+- Why `TEX_NOCACHE` also took the `[vram]` lines away: the game's own bookkeeping, not the cache. It makes each frame's
+  RSX work heavier, which moves the timing.
+- Label 0x4E itself: it should wait for the textures of the draws before it. Left as it is: what it lets happen, a
+  texture read while it is written, now lasts one frame.
+- The reporter's next run tells which it was: no break, the cache; a break F9 mends, the cache by another way; a break
+  it does not mend, the game's memory, and the `[vram]` lines with it.
