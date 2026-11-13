@@ -797,7 +797,8 @@ def lift_jobmods(elf):
     # SPU_IJMP_LOCAL=0 turns it off (plan 2.17, 2.18). --loop-locals: loop_locals_args.
     if run([sys.executable, os.path.join(TOOLS, "lift_jobmods.py"), "--engine-elf", elf,
             "--out", JOBMODS_DIR, "--register", os.path.join(JOBMODS_DIR, "jobmods_register.c"),
-            "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local"] + extra + loop_locals_args()):
+            "--float-spec", str(SPU_FLOAT_SPEC), "--ijmp-local", "--jobs", str(free_jobs("auto", SPU_LIFT_MB))]
+           + extra + loop_locals_args()):
         die("lift_jobmods failed")
     n = len(json.load(open(os.path.join(JOBMODS_DIR, "jobmods_manifest.json"))))
     say("%d WWS job modules lifted to %s" % (n, shown(JOBMODS_DIR)))
@@ -899,7 +900,8 @@ PIC_LIST = os.path.join(ROOT, "scripts", "spu_pic_pieces.json")
 def lift_pic(elf):
     shutil.rmtree(PIC_DIR, ignore_errors=True)
     if run([sys.executable, os.path.join(TOOLS, "lift_spu_pic.py"), "--elf", elf,
-            "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC)] + loop_locals_args()):
+            "--list", PIC_LIST, "--out", PIC_DIR, "--float-spec", str(SPU_FLOAT_SPEC),
+            "--jobs", str(free_jobs("auto", SPU_LIFT_MB))] + loop_locals_args()):
         die("lift_spu_pic failed")
     n = len(json.load(open(os.path.join(PIC_DIR, "pic_manifest.json"))))
     say("%d position-independent SPU pieces lifted to %s" % (n, shown(PIC_DIR)))
@@ -1184,7 +1186,7 @@ def cmd_lift(args):
     shutil.rmtree(stage, ignore_errors=True)
     cmd = [sys.executable, os.path.join(TOOLS, "ppu_lifter.py"), elf,
            "--functions", funcs, "--hle-stubs", imports,
-           "--output", stage, "--jobs", args.jobs, "--chunks", args.chunks,
+           "--output", stage, "--jobs", str(free_jobs(args.jobs, PPU_LIFT_MB)), "--chunks", args.chunks,
            "--lazy-flags", args.lazy_flags, "--dead-saves", args.dead_saves]
     end = code_end(elf)
     if end:
@@ -1218,7 +1220,7 @@ def cmd_lift(args):
         % (len(files), size, written, total))
     PROGRESS.phase("lift_spu", "Translating the SPU programs")
     lift_wws_pm(elf)
-    PROGRESS.part(1, 90)   # the job modules take most of the SPU lift: 80 s of 90 here
+    PROGRESS.part(1, 90)   # the job modules take most of the SPU lift: 80 s of 90 here, lifted one at a time
     lift_jobmods(elf)
     PROGRESS.part(81, 90)
     lift_pic(elf)
@@ -1906,11 +1908,22 @@ def peak_mb(proc):
     return pmc.peak_ws // (1 << 20), pmc.peak_pagefile // (1 << 20)
 
 
-def module_jobs(arg):
-    """--jobs, or as many compiles as the cores and 1 GB of free memory each allow (the most one took was 325 MB)."""
+# The memory one lifter process is given, for free_jobs. At most, a worker of ppu_lifter.py's pool took 101 MB (its
+# main process 1.5 GB, whatever the workers) and a spu_lifter.py run 244 MB.
+PPU_LIFT_MB = 128
+SPU_LIFT_MB = 256
+
+
+def free_jobs(arg, each_mb):
+    """--jobs, or for "auto" as many as the cores and `each_mb` of free memory each allow, with 2 GB left over."""
     if arg != "auto":
         return max(1, int(arg))
-    return max(1, min(os.cpu_count() or 1, (bench.free_ram_mb() - 2048) // 1024))
+    return max(1, min(os.cpu_count() or 1, (bench.free_ram_mb() - 2048) // each_mb))
+
+
+def module_jobs(arg):
+    """--jobs, or as many compiles as the cores and 384 MB of free memory each allow (the most one took was 325 MB)."""
+    return free_jobs(arg, 384)
 
 
 def cmd_module(args):
@@ -2124,12 +2137,13 @@ def kit_id():
 
 class KitProgress(NoProgress):
     """kit-build's progress for the launcher: "@progress <per mille> <seconds left, or -1> <what>" on its own
-    stdout, at least once a second. Each phase's share is its time on a Ryzen 5 4600H at 6 compiles, the compiling's
-    scaled by the compiles at a time. The PPU lift and the compiling say how far they are; through the phases whose
-    tools say nothing, the bar moves by the time the phase is expected to take on this PC (the phases before it tell
-    how fast it is), up to 90% of it. The time left comes from how fast the last minute and a half went."""
+    stdout, at least once a second. Each phase's share is its time on a Ryzen 5 4600H, 12 threads (the lifts 12 and 7
+    at a time), the compiling's scaled by the compiles at a time. The PPU lift and the compiling say how far they are;
+    through the phases whose tools say nothing, the bar moves by the time the phase is expected to take on this PC (the
+    phases before it tell how fast it is), up to 90% of it. The time left comes from how fast the last minute and a half
+    went."""
     ORDER = ("check", "analyze", "lift_ppu", "lift_spu", "spu_programs", "compile", "link")
-    SECONDS = {"check": 1.0, "analyze": 2.0, "lift_ppu": 97.0, "lift_spu": 89.0, "spu_programs": 13.0, "compile": 1600.0,
+    SECONDS = {"check": 1.0, "analyze": 2.0, "lift_ppu": 72.0, "lift_spu": 31.0, "spu_programs": 14.0, "compile": 1600.0,
                "link": 2.0}
     QUIET = ("check", "analyze", "lift_spu", "spu_programs", "link")
     LIFTED = re.compile(r"lifted (\d+)/(\d+) functions")
@@ -2283,7 +2297,7 @@ def kit_build(out, jobs, args, t0):
         say("lifted before (%s): on to the compiling" % stamp)
     else:
         cmd_analyze(argparse.Namespace())
-        cmd_lift(argparse.Namespace(no_missed=True, jobmods_only=False, jobs="6", chunks=str(KIT_CHUNKS), lazy_flags="on",
+        cmd_lift(argparse.Namespace(no_missed=True, jobmods_only=False, jobs="auto", chunks=str(KIT_CHUNKS), lazy_flags="on",
                                     dead_saves="off"))
         with open(stamp, "w", encoding="ascii") as f:
             f.write(lifted)
@@ -2820,7 +2834,7 @@ def main():
     sub.add_parser("analyze", help="loader, SPU images, HLE coverage -> analysis/")
     sub.add_parser("patches", help="list the switchable title patches and check them against the ELF")
     p = sub.add_parser("lift", help="PPU -> C++ in recompiled/")
-    p.add_argument("--jobs", default="6", help="lifter worker processes (default 6)")
+    p.add_argument("--jobs", default="auto", help="lifter worker processes (default: the cores and free memory)")
     p.add_argument("--chunks", default="96",
                    help="number of source files to split into (default 96; more "
                         "files = less memory per compile job)")
@@ -2906,14 +2920,14 @@ def main():
     gametext.add_args(p)
     p = sub.add_parser("module", help="the game's DLL with clang-cl and lld-link alone, as the Kit builds it")
     p.add_argument("--out", help="where (default build-module/ in the work folder)")
-    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
+    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 384 MB of free memory each)")
     p = sub.add_parser("kit-tree", help="the Kit's folder: its Python, clang and lld, and what of this tree builds the DLL")
     p.add_argument("--out", required=True, help="where, e.g. build-kit/kit")
     p.add_argument("--replace", action="store_true", help="replace the folder if it is there")
     p = sub.add_parser("kit-build", help="the Kit's build on a player's PC, which the launcher runs: GOWA_ELF lifted and "
                                          "built into GOWA_WORK, the DLL put into --out")
     p.add_argument("--out", required=True, help="where the DLL goes, with build.log and ascension_game.ini")
-    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 1 GB of free memory each)")
+    p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 384 MB of free memory each)")
     p.add_argument("--keep-work", action="store_true", help="leave what it made in GOWA_WORK")
     p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
     p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
