@@ -50,6 +50,7 @@ jobs:
           python tests/test_kit_paths.py
           python tests/test_game_module_crt.py
           python tests/test_game_module_hooks.py
+          python tests/test_update_check.py
 
       # CI=1: a suite fails rather than skips if no compiler is reachable. The suites in
       # KNOWN_FAILING are red at this commit of the fork: each one is a bug to fix, and

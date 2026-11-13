@@ -269,6 +269,8 @@ add_executable(${PROJECT_NAME}
     port/lfqueue.cpp
     port/main.cpp
     port/launcher.cpp
+    port/update_check.cpp
+    port/update_feed.cpp
     port/report.cpp
     port/game_find.cpp
     port/game_prepare.cpp

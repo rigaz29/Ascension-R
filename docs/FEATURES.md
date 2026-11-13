@@ -14,6 +14,15 @@ RPCS3 of yours. `Ascension-R --prepare-game <folder> [--rpcs3 <rpcs3.exe>] [--ra
 The launcher shows the game's folder in its System tab. Browse picks another one, and Auto detect looks for the game
 on every disk; it starts by itself when the game is not where the settings say.
 
+At most every six hours the launcher asks GitHub for the repository's releases (`api.github.com`, saying only
+`Ascension-R/<version>` as its User-Agent) and says when one newer than itself is out, pre-releases too: a notice on the
+Play tab whose Download opens the release's page, and the number in gold under its own in the sidebar, which opens it
+too. Closing the notice hides it for that release; the sidebar's line stays until the update. What the last answer said
+is kept in `update_check.txt` beside the settings file, so the notice shows at once at the next start and the settings
+file is not written. Check for updates, in the System tab (`launcher.update_check`), turns it off; a PC with no network
+sees nothing. `GOWA_UPDATE_FEED=<file>` reads the list from a file instead, to try it
+([note](notes/2026-11-13-update-check.md)).
+
 Before it decrypts or builds anything, the launcher checks that the folder holds the whole game: USRDIR's 48 archives
 and the two lists that name them, each by its size and the SHA-256 of its first and last 64 KiB, as version 1.12 has
 them (`port/game_files.inc`, made by `gowa.py game-files`). A folder that lacks some, or has one of another size or

@@ -46,7 +46,7 @@ problems further in.
 ## Features
 
 - **Launcher:** a ready check, three presets (Smooth, Balanced, Faithful) and every setting below. It finds the game's folder by
-  itself.
+  itself, and says when a newer release is out, with a link to it.
 - **Picture:** internal resolution from 1x to 4x or native, AMD FSR 1 and FSR 3.1 scaling, FSR 3.1 frame generation, SMAA 1x and
   anisotropic filtering.
 - **Display:** windowed or borderless, ultrawide, VSync, a frame rate cap, and frame rate and load on screen.

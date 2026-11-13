@@ -40,6 +40,7 @@
 #include "game_prepare.h"
 #include "report.h"
 #include "version.h"
+#include "update_check.h"
 #include "loading_screen.h"   /* the header's scene and the pixel font */
 
 #include <math.h>
@@ -244,6 +245,8 @@ static Opt s_opt[] = {
       "Music on the screen that builds the shaders at a version's first start, made by the program." },
     { T_SYSTEM, "launcher", "show", "on", "Show this window at start", 1, SW,
       "When off, hold Shift while the game starts to bring it back." },
+    { T_SYSTEM, "launcher", "update_check", "on", "Check for updates", 1, SW,
+      "At most every six hours, asks GitHub whether a newer release is out, and says so here with a link to it." },
 };
 #undef SW
 #undef LIST
@@ -1408,6 +1411,11 @@ static const char k_ic_search[16][17] = {
     ".##......##.....", ".##......##.....", ".###....###.....", "..########......", "....####.##.....",
     ".........###....", "..........###...", "...........###..", "............##..", "................",
     "................" };
+static const char k_ic_up[16][17] = {   /* a newer release */
+    "................", ".......##.......", "......####......", ".....######.....", "....###..###....",
+    "...###.##.###...", "..###..##..###..", ".......##.......", ".......##.......", ".......##.......",
+    ".......##.......", "................", "..############..", "..############..", "................",
+    "................" };
 
 /* An icon with its top left at (x, y), k DIPs a dot (16 x 16 DIPs at 1), its runs of dots filled unsmoothed (the
  * targets draw aliased). */
@@ -1445,6 +1453,7 @@ enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500,
     H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_REPORT,
     H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP, H_KB_OK, H_KB_CANCEL, H_KB_DEFAULTS,
+    H_UPDATE_OPEN, H_UPDATE_CLOSE,
 #ifdef PORT_GAME_MODULE
     H_KIT_BUILD, H_KIT_STOP, H_KIT_LOG,
 #endif
@@ -1741,6 +1750,28 @@ static void side_link(Icon ic, const wchar_t* s, float y, int id)
 
 static void draw_progress(float x, float y, float w, float frac, int warn, float h = 10.0f);
 
+/* A newer release (update_check.cpp): in gold under the version in the sidebar, and on the Play tab a notice until it
+ * is closed for that release. Either opens its page. Check for updates off: neither. */
+static UpdateState s_upd;
+enum { WM_UPDATE = WM_APP + 30 };
+
+static int update_shown(void)
+{
+    const Opt* o = opt_find("launcher", "update_check");
+    return s_upd.known && (!o || opt_on(*o));
+}
+
+static int update_notice(void) { return update_shown() && strcmp(s_upd.dismissed, s_upd.rel.tag) != 0; }
+
+/* The release's number as the sidebar shows it: its tag without the v. */
+static const char* update_ver(void) { return s_upd.rel.tag[0] == 'v' ? s_upd.rel.tag + 1 : s_upd.rel.tag; }
+
+static void update_open(void)
+{
+    if (!strncmp(s_upd.rel.url, UPDATE_PAGE_PREFIX, sizeof UPDATE_PAGE_PREFIX - 1))
+        ShellExecuteW(s_main, L"open", W(s_upd.rel.url), NULL, NULL, SW_SHOWNORMAL);
+}
+
 static void draw_sidebar(void)
 {
     fill(R(0, 0, SIDE_W, WIN_H), C_SIDE);
@@ -1757,8 +1788,16 @@ static void draw_sidebar(void)
         s_d->DrawBitmap(s_bm_word, wr, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_NEAREST_NEIGHBOR);
         glow_bitmap(s_bm_word_glow, wr, 0.55f);
     }
-    text(W("v" AR_VERSION), s_tf_small, R(58, 38, SIDE_W - 72, 16), C_MUTED);
-    {
+    text(W("v" AR_VERSION), s_tf_small, R(58, 38, SIDE_W - 72, 16), hovered(H_UPDATE_OPEN) ? C_TEXT2 : C_MUTED);
+    if (update_shown()) {   /* in place of the day it was built: the newer release, a link to its page */
+        wchar_t b[80];
+        swprintf(b, 80, L"%ls available \x203A", W(update_ver()));
+        const D2D1_RECT_F t = R(18, 59, SIDE_W - 36, 16);
+        const int hov = hovered(H_UPDATE_OPEN);
+        text(b, s_tf_small, t, hov ? C_GOLD_HI : C_GOLD);
+        glow_text(b, s_tf_small, t, C_GOLD, hov ? 0.7f : 0.4f);
+        hit(R(14, 36, SIDE_W - 30, 42), H_UPDATE_OPEN);
+    } else {
         static const char d[] = __DATE__;   /* "Mmm dd yyyy", the day padded with a space */
         char b[40];
         snprintf(b, sizeof b, "Built %d %.3s %.4s", atoi(d + 4), d, d + 7);
@@ -1894,6 +1933,27 @@ static void draw_play(void)
         if (rs && ps3_settings_ieq(rs->cur, "native")) swprintf(b, 80, L"INTERNAL: WINDOW");
         else swprintf(b, 80, L"%ls INTERNAL", UP(W(rs ? opt_short(rs) : "720p")));
         draw_chip(b, cx, cy);
+    }
+    /* A newer release, over the scene on the right, until its notice is closed (then the sidebar's line stays). */
+    if (update_notice()) {
+        const float bw = 404, bh = 64, bx = WIN_W - 16 - bw, by = 24;
+        const D2D1_RECT_F p = R(bx, by, bw, bh);
+        fill(p, C_BG, 0.85f);
+        frame(p, C_GOLD, 1.0f, 2.0f);
+        glow_rect(p, C_GOLD, 0.6f, 2.0f);
+        icon(k_ic_up, bx + 16, by + 24, C_GOLD);
+        text(s_upd.rel.prerelease ? L"NEW PRE-RELEASE" : L"NEW RELEASE", s_tf_cap, R(bx + 44, by + 14, 180, 12), C_CYAN);
+        wchar_t b[80];
+        swprintf(b, 80, L"%ls is out", W(update_ver()));
+        const wchar_t* go = L"Download";   /* its release's page, where the downloads are */
+        const float gw = snap(text_w(go, s_tf_btn) + 32.0f), gx = bx + bw - 42 - gw;
+        text(b, s_tf_ui_b, R(bx + 44, by + 30, gx - bx - 52, 22), C_TEXT);
+        w_button(go, R(gx, by + 17, gw, 30), H_UPDATE_OPEN, B_GOLD);
+        const D2D1_RECT_F x = R(bx + bw - 34, by + 6, 26, 26);
+        const int hov = hovered(H_UPDATE_CLOSE);
+        if (hov) fill(x, C_CARD_HI);
+        icon(k_ic_cross, x.left + 5, x.top + 5, hov ? C_TEXT : C_MUTED);
+        hit(x, H_UPDATE_CLOSE);
     }
 
     /* Ready check */
@@ -3102,6 +3162,8 @@ static void act(int id)
             s_capture = -1;
             break;
         case H_SAVES: open_saves(); break;
+        case H_UPDATE_OPEN: update_open(); break;
+        case H_UPDATE_CLOSE: update_check_dismiss(&s_upd); break;
         case H_REPORT: report_make(NULL); break;
         case H_SHADERS: clear_shaders(); break;
         case H_GAME_BROWSE: game_browse(); break;
@@ -3342,6 +3404,10 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
         prepare_done();
         redraw();
         return 0;
+    case WM_UPDATE:
+        update_check_done(&s_upd, (unsigned long long)w);
+        redraw();
+        return 0;
 #ifdef PORT_GAME_MODULE
     case WM_KIT_BUILD:
         if (w == 1) kit_end();   /* it exited */
@@ -3388,11 +3454,13 @@ static LRESULT CALLBACK main_proc(HWND h, UINT m, WPARAM w, LPARAM l)
  * the System tab during a search, the Cheats, Graphics and System tabs scrolled
  * to their end, a toast, the System tab asking for what the decrypting needs, the
  * keyboard keys (one waiting for a key), and in the
- * Kit the game's code being built and not built yet, into PNG files at the
+ * Kit the game's code being built and not built yet, and last the Play tab
+ * with a newer release's notice, into PNG files at the
  * window's size times 1.25 (a 125% display),
  * or at GOWA_LAUNCHER_SHOT_DPI. The scene stands still in them, and nothing
  * runs: each state is only set while its shot is drawn, then put back. */
-enum { S_TAB, S_LIST, S_SEARCH, S_END, S_TOAST, S_DECRYPT, S_KEYS, S_KEYS_WAIT, S_KIT_RUN, S_KIT_NEED, S_KIT_ROW };
+enum { S_TAB, S_LIST, S_SEARCH, S_END, S_TOAST, S_DECRYPT, S_KEYS, S_KEYS_WAIT, S_KIT_RUN, S_KIT_NEED, S_KIT_ROW,
+       S_UPDATE };
 static const int k_shots[][2] = {
     { T_PLAY, S_TAB }, { T_GRAPHICS, S_TAB }, { T_DISPLAY, S_TAB }, { T_CONTROLS, S_TAB }, { T_PATCHES, S_TAB },
     { T_CHEATS, S_TAB }, { T_SYSTEM, S_TAB }, { T_DISPLAY, S_LIST }, { T_SYSTEM, S_SEARCH }, { T_CHEATS, S_END },
@@ -3401,6 +3469,7 @@ static const int k_shots[][2] = {
 #ifdef PORT_GAME_MODULE
     { T_PLAY, S_KIT_RUN }, { T_PLAY, S_KIT_NEED }, { T_SYSTEM, S_KIT_ROW },
 #endif
+    { T_PLAY, S_UPDATE },
 };
 
 static void shot_state(int what, int on)
@@ -3418,6 +3487,25 @@ static void shot_state(int what, int on)
     if (what == S_DECRYPT) {
         if (on) { game = s_game.g; s_game.g.state = GAME_NO_ELF; }
         else s_game.g = game;
+    }
+    if (what == S_UPDATE) {   /* the next pre-release (or release) after this one, known */
+        static UpdateState was;
+        if (on) {
+            was = s_upd;
+            memset(&s_upd, 0, sizeof s_upd);
+            ArVersion v;
+            update_version_parse(AR_VERSION, &v);
+            s_upd.known = 1;
+            s_upd.rel.prerelease = v.pre;
+            if (v.pre)
+                snprintf(s_upd.rel.tag, sizeof s_upd.rel.tag, "v%d.%d.%d-%s.%d", v.major, v.minor, v.patch, v.pre_label,
+                         v.pre_n + 1);
+            else
+                snprintf(s_upd.rel.tag, sizeof s_upd.rel.tag, "v%d.%d.%d", v.major, v.minor, v.patch + 1);
+            snprintf(s_upd.rel.url, sizeof s_upd.rel.url, "%stag/%s", UPDATE_PAGE_PREFIX, s_upd.rel.tag);
+        } else {
+            s_upd = was;
+        }
     }
     if (what == S_KEYS || what == S_KEYS_WAIT) {   /* the keyboard keys, and one waiting for a key; never kept */
         if (on) kb_open();
@@ -3583,6 +3671,8 @@ extern "C" int gowa_launcher(void)
     SetTimer(s_main, 1, 500, NULL);
     anim(1);
     if (!s_rc.elf_ok) find_start(NULL);   /* no game yet: look for it */
+    if (const Opt* u = opt_find("launcher", "update_check"))
+        if (opt_on(*u)) update_check_begin(s_main, WM_UPDATE, &s_upd);   /* a newer release on GitHub */
     report_offer();
     redraw();   /* what the offer's answer did (a toast) */
 
@@ -3610,6 +3700,7 @@ extern "C" int gowa_launcher(void)
 #endif
     s_find.stop = 1;
     find_end();
+    update_check_end();
     DestroyWindow(s_main);
     /* Let the destroy messages through before the game opens its window. */
     while (PeekMessageA(&msg, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&msg); DispatchMessageA(&msg); }

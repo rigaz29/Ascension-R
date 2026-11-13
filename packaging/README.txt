@@ -46,6 +46,9 @@ file named portable.txt beside Ascension-R.exe.
 
 TO UPDATE
 
+The launcher says when a new version is out, with a link to its page: it asks GitHub at most every six hours, and
+Check for updates, in its System tab, turns that off.
+
 Unpack the new version over this folder, or into a new one. Your settings and saves stay where they are.
 @KIT_UPDATE@
 
