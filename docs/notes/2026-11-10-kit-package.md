@@ -203,5 +203,7 @@ compiled every `native/spu_*.c` there was, so a source a later version takes out
   renamed: unpacking over alpha.7 would have been safe without this.
 - Tried: `tests/test_kit_files.py` (4 cases); a Kit folder made by `kit-tree`, read by its own `gowa.py`: fresh, 20
   native sources and nothing extra; with a `native\spu_old_kit.c` put in, still 20, that one left out and named.
-- `README.txt`, TO UPDATE: unpack into a new folder (or over the old one), keep `%LOCALAPPDATA%\Ascension-R` (the
-  saves are in it), and with `portable.txt` unpack over the old folder.
+- `README.txt`, TO UPDATE: unpack over the old folder, which is all it takes, and keep `%LOCALAPPDATA%\Ascension-R`
+  (the saves are in it). A folder with `ascension-r.ini` or `gamedata` beside the exe holds the player's files
+  itself: unpack over it and keep it. Issue #10's reporter had their saves in `D:\Ascension-R-0.1.0-alpha.7-kit\
+  gamedata`: a first wording that said a new folder was best, and the old one could go, would have lost them.
