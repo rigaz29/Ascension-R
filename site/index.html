@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>God of War: Ascension PC Port – Ascension-R</title>
+<meta name="description" content="An unofficial, native Windows PC port of God of War: Ascension (PS3) by static recompilation. No emulator, no game files: built from your own copy.">
+<link rel="canonical" href="https://rigaz29.github.io/Ascension-R/">
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="apple-touch-icon" href="icon.png">
+<meta name="theme-color" content="#120d1a">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Ascension-R">
+<meta property="og:title" content="God of War: Ascension PC Port – Ascension-R">
+<meta property="og:description" content="An unofficial, native Windows PC port of God of War: Ascension (PS3) by static recompilation. No emulator, no game files: built from your own copy.">
+<meta property="og:url" content="https://rigaz29.github.io/Ascension-R/">
+<meta property="og:image" content="https://rigaz29.github.io/Ascension-R/banner.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="A temple on a cliff and ruins over the sea at sunset, in pixel art">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="God of War: Ascension PC Port – Ascension-R">
+<meta name="twitter:description" content="An unofficial, native Windows PC port of God of War: Ascension (PS3) by static recompilation. No emulator, no game files.">
+<meta name="twitter:image" content="https://rigaz29.github.io/Ascension-R/banner.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "name": "Ascension-R",
+      "alternateName": "God of War: Ascension PC Port",
+      "description": "An unofficial, native Windows port of God of War: Ascension (PS3) made by static recompilation with ps3recomp. It holds no code or assets of the game: it builds the game's code on your PC from your own copy.",
+      "url": "https://rigaz29.github.io/Ascension-R/",
+      "image": "https://rigaz29.github.io/Ascension-R/banner.png",
+      "applicationCategory": "GameApplication",
+      "operatingSystem": "Windows 10, Windows 11 (64-bit)",
+      "downloadUrl": "https://github.com/rigaz29/Ascension-R/releases",
+      "license": "https://opensource.org/licenses/MIT",
+      "isAccessibleForFree": true,
+      "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+      "sameAs": ["https://github.com/rigaz29/Ascension-R"]
+    },
+    {
+      "@type": "FAQPage",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is there an official PC version of God of War: Ascension?",
+          "acceptedAnswer": { "@type": "Answer", "text": "No. God of War: Ascension came out on PlayStation 3 only. Ascension-R is an unofficial fan project, not affiliated with or endorsed by Sony." }
+        },
+        {
+          "@type": "Question",
+          "name": "How is Ascension-R different from playing on RPCS3?",
+          "acceptedAnswer": { "@type": "Answer", "text": "RPCS3 emulates the PS3 and runs the game's code as it goes. Ascension-R translates the game's PPU and SPU code to native x86-64 code ahead of time, on your PC, and draws the RSX with Direct3D 12, so no emulator runs while you play. RPCS3 is used only to decrypt your copy." }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need to own God of War: Ascension?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Yes. The download holds no code or assets of the game. Its launcher builds the game's code from your own copy: the digital US release NPUA80918 at version 1.12, with its license." }
+        },
+        {
+          "@type": "Question",
+          "name": "Which copies of the game work?",
+          "acceptedAnswer": { "@type": "Answer", "text": "Only the digital US release NPUA80918 at version 1.12, with every update from 1.04 installed in RPCS3. European and disc releases are not supported yet." }
+        },
+        {
+          "@type": "Question",
+          "name": "Does it run on Linux or the Steam Deck?",
+          "acceptedAnswer": { "@type": "Answer", "text": "One player plays it on Linux through Proton, in a Wine prefix made by Lutris. The Steam Deck has not been tried." }
+        },
+        {
+          "@type": "Question",
+          "name": "Is it safe to run?",
+          "acceptedAnswer": { "@type": "Answer", "text": "The code is open source under the MIT License and built in the open. Each release lists the SHA-256 of its download and what the package was checked for. The game's code is built on your own PC. The program is not signed, so Windows SmartScreen may warn the first time." }
+        }
+      ]
+    }
+  ]
+}
+</script>
+<style>
+:root {
+  --bg: #120d1a;
+  --panel: #1c1527;
+  --line: #33284a;
+  --text: #ece6f3;
+  --muted: #b3a8c4;
+  --gold: #f2b84b;
+  --gold-dark: #3a2a0c;
+  --teal: #5fd4c8;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--gold); }
+a:hover { color: #ffd27a; }
+main { max-width: 860px; margin: 0 auto; padding: 16px 16px 48px; }
+.hero { display: block; width: 100%; height: auto; aspect-ratio: 2 / 1; border-radius: 10px; border: 1px solid var(--line); }
+h1 { font-size: clamp(1.9rem, 5vw, 2.8rem); line-height: 1.15; margin: 28px 0 12px; letter-spacing: -0.01em; }
+h2 { font-size: 1.45rem; margin: 44px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
+h3 { font-size: 1.08rem; margin: 22px 0 6px; color: var(--teal); }
+.lead { font-size: 1.15rem; color: var(--text); margin: 0 0 20px; }
+.actions { display: flex; flex-wrap: wrap; gap: 12px; margin: 0 0 18px; }
+.button {
+  display: inline-block; padding: 11px 20px; border-radius: 8px; font-weight: 650; text-decoration: none;
+  border: 2px solid var(--gold);
+}
+.button.primary { background: var(--gold); color: var(--gold-dark); }
+.button.primary:hover { background: #ffd27a; color: var(--gold-dark); }
+.button.secondary { color: var(--gold); }
+.note {
+  background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--teal);
+  padding: 12px 16px; border-radius: 6px; color: var(--muted); margin: 18px 0;
+}
+.note strong { color: var(--text); }
+ul, ol { padding-left: 1.3em; }
+li { margin: 4px 0; }
+.muted { color: var(--muted); }
+code { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 1px 5px; font-size: 0.92em; }
+footer { border-top: 1px solid var(--line); margin-top: 48px; padding-top: 18px; color: var(--muted); font-size: 0.92rem; }
+@media (max-width: 520px) { body { font-size: 16px; } .button { width: 100%; text-align: center; } }
+</style>
+</head>
+<body>
+<main>
+  <img class="hero" src="banner.png" width="1280" height="640" alt="A temple on a cliff and ruins over the sea at sunset, in pixel art">
+  <h1>God of War: Ascension PC Port</h1>
+  <p class="lead"><strong>Ascension-R</strong> is an unofficial, native Windows port of <strong>God of War: Ascension</strong> (PS3),
+  made by static recompilation. The game's own code runs as x86-64 code and its graphics are drawn with Direct3D 12, with no
+  emulator running while you play.</p>
+  <div class="actions">
+    <a class="button primary" href="https://github.com/rigaz29/Ascension-R/releases">Download the Kit</a>
+    <a class="button secondary" href="https://github.com/rigaz29/Ascension-R">Source on GitHub</a>
+  </div>
+  <p class="note"><strong>No game files are included.</strong> You need your own copy of the game and its license: the launcher
+  builds the game's code on your PC from it. Ascension-R is still an alpha: it plays the opening of the game, but it has not
+  been played from start to finish.</p>
+
+  <h2>A native port, not an emulator</h2>
+  <p>An emulator such as RPCS3 imitates the PS3 and runs the game's code as it goes. Ascension-R translates that code once, ahead
+  of time: the PPU code to C++ and the SPU programs to C, compiled for x86-64 on your PC. The
+  <a href="https://github.com/sp00nznet/ps3recomp">ps3recomp</a> runtime stands in for the PS3's system, and the game's RSX
+  commands are drawn with Direct3D 12. RPCS3 is used only to decrypt your copy.</p>
+
+  <h2>Features</h2>
+  <ul>
+    <li><strong>A launcher</strong> with a ready check, three presets (Smooth, Balanced, Faithful) and every setting. It finds the
+    game's folder by itself and says when a newer release is out.</li>
+    <li><strong>Picture:</strong> internal resolution from 1x to 4x or native, AMD FSR 1 and FSR 3.1 scaling, FSR 3.1 frame
+    generation, SMAA and anisotropic filtering.</li>
+    <li><strong>Display:</strong> windowed or borderless, ultrawide, VSync, a frame rate cap, and frame rate and load on screen.</li>
+    <li><strong>Game patches:</strong> switch off MLAA, depth of field, motion blur, mesh trimming or dynamic shadows.</li>
+    <li><strong>Cheats:</strong> damage to and from Kratos, max red orbs, infinite magic and items, infinite rage and double jumps.</li>
+    <li><strong>Controls:</strong> keyboard and mouse, Xbox and other XInput pads, and through SDL3 the DualShock 4, the DualSense,
+    Switch controllers and many others.</li>
+    <li><strong>Saves</strong> with a backup before the game writes over one, and a button that makes a problem report.</li>
+  </ul>
+
+  <h2>Status</h2>
+  <ul>
+    <li>It boots, plays the cinematics and goes through the menus into the levels. The opening plays: the prison, the first fight
+    and the gate, at about 30 frames a second in the first fight with FSR 3.1 on a laptop with a Ryzen 5 4600H and a GTX 1650 Ti.</li>
+    <li>Further in it has been played in parts, not from start to finish, so expect problems.</li>
+    <li>Windows 10 or 11, 64-bit. On Linux, one player plays it through Proton.</li>
+    <li>Single player only: online is not supported.</li>
+  </ul>
+  <p class="muted">Each release's notes have the full status, the known issues and what changed:
+  <a href="https://github.com/rigaz29/Ascension-R/releases">releases</a>.</p>
+
+  <h2>What you need</h2>
+  <ul>
+    <li>Windows 10 or 11, 64-bit, a CPU with AVX2 and FMA, and a GPU with Direct3D 12.</li>
+    <li>Your own copy of God of War: Ascension: the digital US release <code>NPUA80918</code>, installed in RPCS3 with its license
+    and all of its updates from 1.04 to 1.12, in that order.</li>
+    <li>About 1.5 GB free on the disk while the launcher builds the game's code.</li>
+  </ul>
+
+  <h2>How to install</h2>
+  <ol>
+    <li>Download the Kit zip from the <a href="https://github.com/rigaz29/Ascension-R/releases">releases page</a> and unpack all of
+    it into a folder of its own.</li>
+    <li>Start <code>Ascension-R.exe</code>. It is not signed, so Windows SmartScreen may stop it the first time: <em>More info</em>,
+    then <em>Run anyway</em>.</li>
+    <li>The launcher looks for the game on every disk. If your copy still has to be decrypted, it says what is missing and can
+    download RPCS3 for it.</li>
+    <li>Press <strong>Build</strong>: the launcher builds the game's code on your PC, once for each version, in about five to ten
+    minutes.</li>
+    <li>Pick a preset and press <strong>Play</strong>.</li>
+  </ol>
+
+  <h2>FAQ</h2>
+  <h3>Is there an official PC version of God of War: Ascension?</h3>
+  <p>No. God of War: Ascension came out on PlayStation 3 only. Ascension-R is an unofficial fan project, not affiliated with or
+  endorsed by Sony.</p>
+  <h3>How is Ascension-R different from playing on RPCS3?</h3>
+  <p>RPCS3 emulates the PS3 and runs the game's code as it goes. Ascension-R translates the game's code to native x86-64 code
+  ahead of time, on your PC, and draws with Direct3D 12, so no emulator runs while you play. RPCS3 is used only to decrypt your
+  copy.</p>
+  <h3>Do I need to own God of War: Ascension?</h3>
+  <p>Yes. The download holds no code or assets of the game. Its launcher builds the game's code from your own copy, with its
+  license.</p>
+  <h3>Which copies of the game work?</h3>
+  <p>Only the digital US release <code>NPUA80918</code> at version 1.12, with every update from 1.04 installed in RPCS3. European
+  and disc releases are not supported yet.</p>
+  <h3>Does it run on Linux or the Steam Deck?</h3>
+  <p>One player plays it on Linux through Proton, in a Wine prefix made by Lutris. The Steam Deck has not been tried.</p>
+  <h3>Is it safe to run?</h3>
+  <p>The code is open source under the MIT License and built in the open. Each release lists the SHA-256 of its download and what
+  the package was checked for. The game's code is built on your own PC. The program is not signed, so Windows SmartScreen may warn
+  the first time.</p>
+  <h3>Where do I report a problem?</h3>
+  <p><strong>Report a problem</strong>, in the launcher, makes a zip of the logs to attach to an
+  <a href="https://github.com/rigaz29/Ascension-R/issues">issue on GitHub</a>.</p>
+
+  <footer>
+    <p>Ascension-R's own code is under the <a href="https://github.com/rigaz29/Ascension-R/blob/main/LICENSE">MIT License</a>. It
+    is built on <a href="https://github.com/sp00nznet/ps3recomp">ps3recomp</a> by sp00nznet.</p>
+    <p>God of War is a trademark of Sony Interactive Entertainment. This project is not affiliated with or endorsed by it. No game
+    files are hosted here.</p>
+  </footer>
+</main>
+</body>
+</html>

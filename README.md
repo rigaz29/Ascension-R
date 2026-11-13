@@ -1,15 +1,17 @@
 <p align="center"><img src="docs/images/banner.png" alt="Ascension-R: a temple on a cliff and ruins over the sea at sunset, in pixel art" width="100%"></p>
 
-# Ascension-R
+# Ascension-R: a God of War: Ascension PC port
 
 [![CI](https://github.com/rigaz29/Ascension-R/actions/workflows/ci.yml/badge.svg)](https://github.com/rigaz29/Ascension-R/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 ![Platform: Windows x64](https://img.shields.io/badge/platform-Windows%20x64-lightgrey.svg)
 ![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
-A native Windows port of **God of War: Ascension** (PS3), made by static recompilation with
+An unofficial, native PC port of **God of War: Ascension** (PS3) for Windows, made by static recompilation with
 [ps3recomp](https://github.com/sp00nznet/ps3recomp). The game's PPU and SPU code is translated to x86-64 ahead of time and the RSX
 is drawn with Direct3D 12, so no emulator runs while you play.
+
+Website: [rigaz29.github.io/Ascension-R](https://rigaz29.github.io/Ascension-R/)
 
 > [!IMPORTANT]
 > This repository holds no game files. You build the port from your own copy of the game. See [Legal](#legal).
@@ -26,6 +28,7 @@ is drawn with Direct3D 12, so no emulator runs while you play.
 - [How it works](#how-it-works)
 - [Project layout](#project-layout)
 - [Contributing](#contributing)
+- [FAQ](#faq)
 - [Legal](#legal)
 - [Credits](#credits)
 - [License](#license)
@@ -161,6 +164,36 @@ ps3recomp/     the toolkit and runtime, as a submodule (fork rigaz29/ps3recomp, 
 
 Anyone can help: by playing and reporting, or with changes to the port or to the runtime under it.
 [CONTRIBUTING.md](CONTRIBUTING.md) says where help is most useful, where a change goes, and what must never be committed.
+
+## FAQ
+
+### Is there an official PC version of God of War: Ascension?
+
+No. It came out on PlayStation 3 only. Ascension-R is an unofficial fan project, not affiliated with or endorsed by Sony.
+
+### How is this different from playing on RPCS3?
+
+RPCS3 emulates the PS3 and runs the game's code as it goes. Ascension-R translates that code to native x86-64 code ahead of time,
+on your PC, and draws with Direct3D 12, so no emulator runs while you play. RPCS3 is used only to decrypt your copy.
+
+### Do I need to own the game?
+
+Yes. The download holds no code or assets of the game: its launcher builds the game's code from your own copy, with its license.
+
+### Which copies of the game work?
+
+Only the digital US release NPUA80918 at version 1.12, with every update from 1.04 installed. European and disc releases are not
+supported yet ([#4](https://github.com/rigaz29/Ascension-R/issues/4)).
+
+### Does it run on Linux or the Steam Deck?
+
+One player plays it on Linux through Proton, in a Wine prefix made by Lutris
+([#12](https://github.com/rigaz29/Ascension-R/issues/12)). The Steam Deck has not been tried.
+
+### Is it safe to run?
+
+The code is open source and built in the open. Each release lists the SHA-256 of its download and what the package was checked
+for, and the game's code is built on your own PC. The program is not signed, so Windows SmartScreen may warn the first time.
 
 ## Legal
 
