@@ -59,3 +59,12 @@ the frames without a scene, the overlay, the vertex pass. One run each.
   spread, not the compiles.
 - **Not tried:** Wine. Whether this brings back the reporter's picture, only their PC can say: with this, nothing of the
   port's goes through vkd3d-shader any more, and what remains is the path tried here.
+
+## The reporter's answer
+
+- Later the same day the reporter found it on their side: the prefix Quiver launcher had made, which also kept
+  winetricks and Lutris from opening it. In a new prefix made by Lutris, 0.1.0-alpha.7 plays, with no variable and
+  without Microsoft's `d3dcompiler_47`: no stop after the logos, and the 3D is there. They told Quiver launcher.
+- What that prefix had that the new one lacks is not known here: its `D3DCompile` did not finish the vertex pass, and
+  its 3D was black. The changes stand on their own: the port neither waits on a prefix's `D3DCompile` nor compiles
+  its own shaders with it under Wine any more. 0.1.0-alpha.9 has them.

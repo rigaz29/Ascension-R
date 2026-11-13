@@ -225,3 +225,21 @@ compiled every `native/spu_*.c` there was, so a source a later version takes out
   (the saves are in it). A folder with `ascension-r.ini` or `gamedata` beside the exe holds the player's files
   itself: unpack over it and keep it. Issue #10's reporter had their saves in `D:\Ascension-R-0.1.0-alpha.7-kit\
   gamedata`: a first wording that said a new folder was best, and the old one could go, would have lost them.
+
+## The release 0.1.0-alpha.9 (2026-11-13)
+
+- **What it is for:** issue #12, Linux through Proton: nothing waits for the vertex pass's program (`0b04a1e`, fork
+  `af3187d3`), and the port's own shaders come from DXC under Wine (`d82c490`, fork `70ea258c`); and the Kit's build on
+  more cores (`4dbdd0d`, fork `7209091a`). docs/notes/2026-11-13-vertex-pass-compile.md, 2026-11-13-proton-own-shaders.md
+  and 2026-11-13-kit-build-speed.md have the causes and the runs.
+- **The package**, from `a4963ae` and fork `70ea258c`: a zip of 144.7 MB, 466 files and 329.0 MB unpacked, SHA-256
+  `dfe3dfcc69d9b313e943de581d2cb0f7813361ffff5e39bbbd2c3b4e5fd5b748`. Its audit found what alpha.8's had. Its build
+  check made the DLL in 334 s, against alpha.8's 531 s: 12 compiles at a time with 9.3 GB free. Its SHA-256,
+  `a58ee18bf2feecf920caaaa30b6ee3147e26a7b6d425089b7b41627a943290a0`, is alpha.8's: the code the Kit makes did not
+  change, the Kit did, so a player's launcher builds it once again. No Prebuilt.
+- **The notes** were written as #12's reporter answered: the black 3D was their prefix's, made by another launcher; a
+  new one made by Lutris plays alpha.7 with no variable. The notes say so, and no longer that this version may bring
+  the 3D back.
+- **Published** the same day as `v0.1.0-alpha.9`, a pre-release, the tag at `a4963ae`, from a draft whose three files
+  GitHub gave the SHA-256 of the ones here. GitHub's release list has it first, where the update notice looks.
+- **Not done:** the zip unpacked and played as a player has it.
