@@ -14,10 +14,16 @@
  * What gives a block such a size there is not known yet. These say it in the log, with what a texture held, and keep
  * the damage from spreading: such a texture or allocation gets an empty block, and a move past local memory does not
  * happen. A size made negative on purpose (one replay of the temple) printed one line and nothing else.
+ *
+ * With 0.1.0-alpha.7 the same came the other way in: the texture mover (func_003A0000), which grows a streamed texture
+ * into a larger block, took a size of -15 MB from a range that ends before it starts, and the bytes the frame had
+ * moved went down by as much, past its budget. Its size is checked now too, and the run compactor's said
+ * (docs/notes/2026-11-12-temple-textures.md).
  */
 #include "ppu_recomp.h"
 #include <stdint.h>
 #include <stdio.h>
+#include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
 
@@ -63,6 +69,66 @@ extern "C" void gowa_vram_alloc(ppu_context* ctx, uint32_t)
         fflush(stderr);
     }
     ctx->gpr[4] = 0;
+}
+
+/* func_003A0000 (and func_0039FFFC, the same code a word earlier) moves a streamed texture's data into the larger block
+ * it grows into: the texture at the head of [0x9B26AC] (r28), its range [+0x1C, +0x20), out of its block (r30) into
+ * [0x9B1DEC] (r31). Here r6 is the range's size, about to be added to the bytes the frame has moved ([0x9AF4BC]) and
+ * queued, or moved at once. Nothing checked it: a range that ends before it starts took a negative size into the
+ * frame's 16 MB budget, after which the defragmenter moved without a limit (issue #9, 0.1.0-alpha.7: four moves of
+ * -15 to -105 MB, then hundreds past local memory). Past local memory or negative, it is made 0, and said with the
+ * texture and both blocks. GOWA_VRAM_STREAM_GUARD=0 leaves it as the game has it, to try the guard. */
+extern "C" void gowa_vram_stream(ppu_context* ctx, uint32_t)
+{
+    const uint32_t size = (uint32_t)ctx->gpr[6];
+    if (size < 0x10000000u) return;
+    static int on = -1;
+    if (on < 0) {
+        const char* e = getenv("GOWA_VRAM_STREAM_GUARD");
+        on = !(e && e[0] == '0');
+    }
+    static volatile LONG said;
+    if (InterlockedIncrement(&said) <= 8) {
+        const uint32_t tex = (uint32_t)ctx->gpr[28], from = (uint32_t)ctx->gpr[30], into = (uint32_t)ctx->gpr[31];
+        fprintf(stderr, "[vram] streamed texture 0x%08X: its range 0x%08X..0x%08X ends before it starts or is past local "
+                        "memory, size 0x%08X, from 0x%08X: %s\n", tex, (uint32_t)ctx->gpr[26],
+                (uint32_t)ctx->gpr[26] + size, size, (uint32_t)ctx->lr, on ? "moved as 0 bytes" : "left as it is");
+        for (int k = 0; k < 2; k++) {
+            const uint32_t b = k ? into : from;
+            if (is_there(b, 0x20))
+                fprintf(stderr, "[vram]   %s block 0x%08X: offset 0x%08X, size 0x%08X\n", k ? "into" : "from", b,
+                        vm_read32(b + 0x8), vm_read32(b + 0xC));
+        }
+        if (is_there(tex, 0x50)) {
+            fprintf(stderr, "[vram]   0x%08X:", tex);
+            for (uint32_t k = 0; k < 0x50; k += 4) fprintf(stderr, "%s %08X", k && !(k & 0xF) ? " |" : "", vm_read32(tex + k));
+            fprintf(stderr, "\n");
+        }
+        fflush(stderr);
+    }
+    if (on) ctx->gpr[6] = 0;
+}
+
+/* func_0039F3C4 packs a run of blocks up against the one above: r3 the run's size, the sum of its blocks' sizes, r29
+ * its first block's index and r30 the one past its last, in the table at 0x9AF51C. A block's size is checked when it
+ * is allocated (gowa_vram_alloc), so a bad sum is a block whose size went bad after: said with the run's blocks, and
+ * left as it is (the moves that follow are guarded, and the blocks' new places come from it). */
+extern "C" void gowa_vram_runs(ppu_context* ctx, uint32_t)
+{
+    const uint32_t size = (uint32_t)ctx->gpr[3];
+    if (size < 0x10000000u) return;
+    static volatile LONG said;
+    if (InterlockedIncrement(&said) > 4) return;
+    const uint32_t first = (uint32_t)ctx->gpr[29], end = (uint32_t)ctx->gpr[30];
+    fprintf(stderr, "[vram] a run of blocks %u..%u, size 0x%08X, from 0x%08X: a block's size went bad after it was "
+                    "allocated\n", first, end, size, (uint32_t)ctx->lr);
+    for (uint32_t i = first; i < end && i < first + 8 && i < 0xA28; i++) {
+        const uint32_t b = vm_read32(0x009AF51C + 4 * i);
+        if (b && is_there(b, 0x20))
+            fprintf(stderr, "[vram]   block %u 0x%08X: offset 0x%08X, size 0x%08X, +0x18 0x%08X, +0x1C 0x%08X\n", i, b,
+                    vm_read32(b + 0x8), vm_read32(b + 0xC), vm_read32(b + 0x18), vm_read32(b + 0x1C));
+    }
+    fflush(stderr);
 }
 
 /* MoveLocalMemory (func_003A2ADC) on entry: r3 the destination, r4 the source, r5 the size, as offsets in local

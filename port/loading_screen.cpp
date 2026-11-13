@@ -1001,9 +1001,11 @@ static HANDLE start_build(HANDLE* out)
         swprintf(buf, 2200, L" --settings \"%hs\"", sp);
         cmd += buf;
     }
-    /* What this run takes from its command line too: the cache and the game it builds for, the GPU it picks. */
+    /* What this run takes from its command line too: the cache and the game it builds for, where its archives are, the
+     * GPU it picks. */
     static const struct { const char* sec; const char* key; } keep[] = {
-        { "graphics", "shader_cache" }, { "paths", "elf" }, { "graphics", "gpu" } };
+        { "graphics", "shader_cache" }, { "paths", "elf" }, { "paths", "hdd0" }, { "paths", "vfs" },
+        { "graphics", "gpu" } };
     for (const auto& k : keep) {
         const char* v = ps3_settings_str(k.sec, k.key, NULL, NULL);
         if (v && *v && !strchr(v, '"')) {

@@ -229,26 +229,44 @@ extern "C" int gowa_precompile(void)
      * (loading_screen.cpp) the player is waiting for it. */
     if (!getenv("GOWA_PRECOMPILE_FOREGROUND")) SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
     const DWORD t0 = GetTickCount();
+    /* The archives where the game opens them, /dev_hdd0/game/NPUA80918/USRDIR, then through the vfs link, then beside
+     * the ELF. Not the ELF's folder first: a game folder with only GOWA.SELF has it decrypted into the port's own
+     * folder (launcher.cpp, game_refresh), and paths.elf names that copy, beside no archive (issue #9's Kit). */
+    const char* hdd0 = ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL);
+    const char* vfs = ps3_settings_str("paths", "vfs", "PS3_VFS_ROOT", NULL);
     const char* elf = ps3_settings_str("paths", "elf", NULL, NULL);
-    if (!elf || !*elf) {
+    std::vector<std::string> dirs;
+    if (hdd0 && *hdd0) dirs.push_back(std::string(hdd0) + "\\game\\NPUA80918\\USRDIR");
+    if (vfs && *vfs) dirs.push_back(std::string(vfs) + "\\PS3_GAME\\USRDIR");
+    if (elf && *elf) {
+        const std::string e(elf);
+        const size_t slash = e.find_last_of("/\\");
+        dirs.push_back(slash == std::string::npos ? std::string(".") : e.substr(0, slash));
+    }
+    if (dirs.empty()) {
         printf("precompile: error the game's folder is not set\n");
         return 1;
     }
-    std::string dir(elf);
-    const size_t slash = dir.find_last_of("/\\");
-    dir = slash == std::string::npos ? std::string(".") : dir.substr(0, slash);
+    std::string dir;
     std::vector<std::string> arcs;
-    WIN32_FIND_DATAA fd;
-    HANDLE fh = FindFirstFileA((dir + "\\*.PSARC").c_str(), &fd);
-    if (fh != INVALID_HANDLE_VALUE) {
+    for (const std::string& d : dirs) {
+        WIN32_FIND_DATAA fd;
+        HANDLE fh = FindFirstFileA((d + "\\*.PSARC").c_str(), &fd);
+        if (fh == INVALID_HANDLE_VALUE) continue;
         do {
             if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) arcs.push_back(fd.cFileName);
         } while (FindNextFileA(fh, &fd));
         FindClose(fh);
+        if (!arcs.empty()) {
+            dir = d;
+            break;
+        }
     }
     std::sort(arcs.begin(), arcs.end());
     if (arcs.empty()) {
-        printf("precompile: error no PSARC archives in %s\n", dir.c_str());
+        std::string where;
+        for (const std::string& d : dirs) where += (where.empty() ? "" : ", ") + d;
+        printf("precompile: error no PSARC archives in %s\n", where.c_str());
         return 1;
     }
     char why[256] = "";

@@ -116,7 +116,81 @@ Once the pool's top has gone up the damage is everywhere, so the allocator's gua
 other two stand behind it for a block whose size goes bad after it got its place. All three callers allocate at the
 temple: textures while it loads, then the defragmenter and func_0039F7C8; the run had made 4,096 by 83 s.
 
+## The 0.1.0-alpha.7 report (2026-11-13)
+
+The reporter played the temple again on the alpha.7 Kit: no freeze, the textures still broken (a statue in stripes of
+noise). The texture and allocation guards said nothing. The move guard said eight moves from the queue's processor
+(`0x003A135C`): four of -15, -28, -70 and -105 MB inside local memory, then moves of `0x40180` bytes, each 0x280000 up
+from where the one before went, past local memory. After those the game's own offset errors, about 600 in five bursts,
+up to `0x46D11700`. Of the four, each move ends at its destination where the next one ends at its source.
+
+The session's precompile had failed: `no PSARC archives in <settings>`. Their game folder has only `GOWA.SELF`; the
+launcher decrypts it into the port's own folder and points `paths.elf` there, and the precompile looked for the archives
+beside `paths.elf`. Their shader cache had 1,177 programs (7,364 here), so the temple built shaders while it played.
+
+### How the VRAM manager moves blocks
+
+- **The queue** at `0x9B2838`: entries of 12 bytes (source, destination, size, as offsets in the pool), the count at
+  `0x9B2834`, room for 128 before the next global (`0x9B2E40`). The defragmenter (`func_0039F06C`), the run compactor
+  (`func_0039F3C4`) and the texture mover (`func_003A0000`) add to it, and the manager from a second list (`0x9B26B0`,
+  32 entries, its count at `0x9B2830`, filled by `func_0039C8E0` for the loader). No one checks the room in either.
+- **The processor**, `func_003A12A0`, at the frame's end: a TEXTURE_READ_SEMAPHORE_RELEASE of label 0x4E with the
+  counter at `0x9B227C`, then every move, then the count to 0.
+- **The manager**, `func_003A0780`, works only once label 0x4E holds that counter, and otherwise leaves the frame. Each
+  pass starts with `func_003A05F8`, which sets the frame's budget (`[0x83CD2C]`, 16 MB here) and zeroes the bytes moved
+  (`[0x9AF4BC]`). Each producer adds its move's size to those, and the defragmenter stops at the budget: no one checks
+  a size.
+- **The pool** (`[0x83CD30]` = `0xC38CB000`): a stack of blocks down from the top, each a descriptor of 128 bytes in main
+  memory (+8 the offset, +0xC the size, +0x18 the texture, +0x1C the address), listed in the table at `0x9AF51C`.
+
+### Tried here
+
+A probe, taken out after. The reporter's alpha.7 pad recording on their saves (the earlier report's are the session's
+start: only `DAT-11` and `DAT-31` changed, during it), with their settings, one run each:
+
+| Run | What it showed |
+|---|---|
+| Their shader cache's state, an empty one | stops of 15 to 17 s while shaders built, and the replay left the session's path after `TEM350AI`, back to the menu where they went on to the fight (`R_GOAT00`, `R_BRUTE10`, `TEM400`); 16,000 manager passes, 36% left while label 0x4E was behind, never two in a row; the second list never used; the queue at most 9 |
+| The full cache | the same (9,607 of 26,000 left); the replay waited for `TEM350AI` and `R_BRUTE10` and went on without them; every function of the pool on the game's main thread: the loader's callback (`func_0039D858`), texture allocation, the allocator, the manager, the processor, the compactor, the defragmenter, the texture mover |
+
+No overflow of either list and no second thread in the pool, then, and no `[vram]` line. Their first bad moves came
+before the fight, while TEM300, TEMBAS and TEM350 streamed in, which both replays went through.
+
+### The texture mover
+
+`func_003A0000` moves a streamed texture's data into the larger block it grows into: the texture at the head of
+`[0x9B26AC]`, its range `[+0x1C, +0x20)`, out of its block into `[0x9B1DEC]`. The size is `[+0x20] - [+0x1C]`, checked by
+nothing, then counted against the frame's budget and queued. A range that ends before it starts is the alpha.6 reports'
+texture whose data ends before it starts, which `gowa_vram_texture` catches in `func_0039B93C`; this path goes neither
+through it nor through the allocator. With the size negative the bytes moved go down by as much, and the defragmenter
+moves that much more before it meets the budget.
+
+A probe made the first texture move's range end 0xED5500 before its start, the size of the reporter's first bad move,
+one replay each:
+
+| Run | What the log has |
+|---|---|
+| the new guard off | the queue's move of `0xFF12AB00` bytes from `0x003A135C`, left out by the move guard: the reporter's first line |
+| the new guard on | `[vram] streamed texture 0x753074E0: its range 0x01400000..0x0052AB00 ends before it starts ...: moved as 0 bytes`, both blocks and the texture's 0x50 bytes, and nothing else |
+
+Neither went on to hundreds of moves: there was nothing more to defragment then. On their PC the sizes grew, -15 to
+-105 MB, and each took the bytes moved down with it.
+
+### What changed
+
+- **`port/vram_guard.cpp`:**
+  - `gowa_vram_stream`, at `0x003A0098` (`func_003A0000` and its copy `func_0039FFFC`): a texture move's size that is
+    negative or past local memory is made 0 before it counts against the budget or is queued, and said with the texture,
+    its range, both blocks and its first 0x50 bytes. `GOWA_VRAM_STREAM_GUARD=0` leaves it as the game has it, to try the
+    guard.
+  - `gowa_vram_runs`, at `0x0039F64C` (`func_0039F3C4`): a run of blocks whose size is negative or past local memory is
+    said with its blocks, and left as it is: the blocks' new places are worked out from it.
+  - `GAME_MODULE_ABI` 4: a Kit's DLL is built again.
+- **The precompile** (`port/precompile.cpp`): the archives are looked for where the game opens them,
+  `<hdd0>\game\NPUA80918\USRDIR`, then `<vfs>\PS3_GAME\USRDIR`, then beside `paths.elf`. The gate
+  (`port/loading_screen.cpp`) passes `paths.hdd0` and `paths.vfs` to it as well as `paths.elf`.
+
 ## Still open
 
-- What on their machine brings it about. The next report from it says, in its `[vram]` lines, which texture or
-  allocation it was and what the texture held.
+- What gives a streamed texture a range that ends before it starts on their PC. The next report's
+  `[vram] streamed texture` line says which texture, its range and both blocks.
