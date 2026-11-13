@@ -49,7 +49,10 @@ TO UPDATE
 The launcher says when a new version is out, with a link to its page: it asks GitHub at most every six hours, and
 Check for updates, in its System tab, turns that off.
 
-Unpack the new version over this folder, or into a new one. Your settings and saves stay where they are.
+Unpack the new version into a new folder and start it from there; once it runs, the old folder can go. Unpacking it
+over the old folder works too. Your settings, saves and shaders, and what the launcher made from your game, are in
+%LOCALAPPDATA%\Ascension-R (see WHERE YOUR FILES GO), and the new version takes them from there: do not delete that
+folder, your saves are in it. With portable.txt they are in this folder instead: unpack the new version over it.
 @KIT_UPDATE@
 
 

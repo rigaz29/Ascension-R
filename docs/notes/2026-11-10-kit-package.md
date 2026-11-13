@@ -185,3 +185,23 @@ status table. README.md points at the releases page now.
   most, and only from the web page.
 - **Not done:** the zip unpacked and played as a player has it. The tree's own build played the temple replay with
   the guards, and with one allocation's size made negative on purpose.
+
+## A Kit unpacked over an older one (2026-11-13)
+
+A player who unpacks a new Kit over the old folder keeps the old Kit's files the new one no longer has. The DLL
+compiled every `native/spu_*.c` there was, so a source a later version takes out or renames would have gone into it.
+
+- `kit-tree` writes `kit\kit-files.txt`, every file the Kit ships (435 in one made here), before its id, which so
+  covers it.
+- `kit-build` compiles of `native/spu_*.c` only those the list names (`kit_native_sources`), and says in `build.log`
+  the files in the Kit's folder the list does not have (`kit_extras`). Nothing is removed. The work folder needs
+  nothing: the PPU lift drops what its new lift lacks (`sync_dir`), and the SPU lifts start from empty folders. A
+  source tree has no list and takes every native source, as before.
+- Left as it is: an older Kit's Python module in `scripts\` with the name of one now in `ps3recomp\tools\` would come
+  first on the Kit's path. No module has moved so far.
+- From 0.1.0-alpha.7 to the next, no file of this tree or of the fork (`8d34fda` to `88ac02a`) was taken out or
+  renamed: unpacking over alpha.7 would have been safe without this.
+- Tried: `tests/test_kit_files.py` (4 cases); a Kit folder made by `kit-tree`, read by its own `gowa.py`: fresh, 20
+  native sources and nothing extra; with a `native\spu_old_kit.c` put in, still 20, that one left out and named.
+- `README.txt`, TO UPDATE: unpack into a new folder (or over the old one), keep `%LOCALAPPDATA%\Ascension-R` (the
+  saves are in it), and with `portable.txt` unpack over the old folder.

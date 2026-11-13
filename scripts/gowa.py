@@ -342,7 +342,8 @@ KIT_TEXT = {
         "\n"
         "\n",
     "@KIT_UPDATE@\n":
-        "The launcher then builds the game's code again, for the new version.\n",
+        "The launcher then builds the game's code again, once, for the new version. A Kit unpacked over an older one\n"
+        "builds from its own files only (kit\\kit-files.txt), whatever the older one left there.\n",
     "@KIT_THIRD@\n":
         "\n"
         "\n"
@@ -1836,7 +1837,7 @@ def module_sources(out):
     spu_dir = os.path.join(WORK, "spu")
     # General6's routines are written into the build folder (spu_to_native.py), in the place native/'s copy sorts
     # into; the Kit has no copy.
-    names = set(os.path.basename(n) for n in glob.glob(os.path.join(ROOT, "native", "spu_*.c"))) | {"spu_g6_routines.c"}
+    names = set(kit_native_sources()) | {"spu_g6_routines.c"}
     native = [os.path.join(out, "native", n) if n == "spu_g6_routines.c" else os.path.normpath(os.path.join(ROOT, "native", n))
               for n in sorted(names)]
     spu = (generated + listed(os.path.join(spu_dir, "wwspm", "*.c"))
@@ -2058,6 +2059,9 @@ KIT_SCRIPTS = ("gowa.py", "bench.py", "frames.py", "gametext.py", "spu_to_native
 # Never in the Kit, whatever names them: what decrypts.
 KIT_NEVER = {"sdata_decrypt.h", "edat.c", "edat.h", "pkg_extract.py", "extract_jobmods.py", "check_repo.py"}
 KIT_ID = "kit-id.txt"
+# Every file the Kit ships, one path a line with /: a Kit unpacked over an older one keeps the older one's files that
+# it no longer has, and the build takes from it only what the list names (kit_native_sources).
+KIT_FILES = "kit-files.txt"
 # LLVM's license texts, from llvm-project at the tag of the clang the Kit takes: local.json's "llvm_license", or
 # ../llvm-license/llvmorg-<version>, each as <part>/LICENSE.TXT. The Kit ships clang and lld, which are built on llvm.
 KIT_LLVM_LICENSES = ("llvm", "clang", "lld")
@@ -2072,6 +2076,42 @@ KIT_WORK_MADE = ("analysis", "recompiled", "recompiled.new", "spu", "build-modul
 def module_abi():
     with open(os.path.join(ROOT, "port", "game_module.h"), encoding="utf-8") as f:
         return int(re.search(r"#define\s+GAME_MODULE_ABI\s+(\d+)", f.read()).group(1))
+
+
+def kit_files(root=None):
+    """The files a Kit shipped (its kit-files.txt, written by kit-tree), as paths under its folder with /; None in a
+    source tree, which has no list."""
+    p = os.path.join(root or ROOT, KIT_FILES)
+    if not os.path.isfile(p):
+        return None
+    with open(p, encoding="utf-8") as f:
+        return set(line.strip() for line in f if line.strip())
+
+
+def kit_native_sources(root=None):
+    """The names of native/spu_*.c the DLL compiles: in a Kit only those it shipped, not an older Kit's left beside
+    them by unpacking over it; in a source tree, all."""
+    root = root or ROOT
+    have = kit_files(root)
+    return sorted(os.path.basename(p) for p in glob.glob(os.path.join(root, "native", "spu_*.c"))
+                  if have is None or "native/" + os.path.basename(p) in have)
+
+
+def kit_extras(root=None):
+    """The files in a Kit's folder that it did not ship (an older Kit's, unpacked over it), but for its id, its list
+    and the caches Python writes; none in a source tree."""
+    root = root or ROOT
+    have = kit_files(root)
+    if have is None:
+        return []
+    extra = []
+    for d, dirs, names in os.walk(root):
+        dirs[:] = [x for x in dirs if x != "__pycache__"]
+        for n in names:
+            r = os.path.relpath(os.path.join(d, n), root).replace(os.sep, "/")
+            if r not in have and r not in (KIT_ID, KIT_FILES):
+                extra.append(r)
+    return sorted(extra)
 
 
 def kit_id():
@@ -2225,6 +2265,10 @@ def kit_build(out, jobs, args, t0):
         die("no GOWA.elf: %s" % elf)
     if sha256(elf) != GAME_ELF_SHA256:
         die("not the GOWA.elf of 1.12: %s" % elf)
+    extra = kit_extras()
+    if extra:   # an older Kit's, unpacked over this one: kit_native_sources leaves its sources out
+        say("%d file(s) in the Kit's folder are not this Kit's (an older one unpacked over it?), and are left out of "
+            "what it compiles:\n  %s" % (len(extra), "\n  ".join(extra[:20]) + ("\n  ..." if len(extra) > 20 else "")))
     made = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(WORK) for f in fs) if os.path.isdir(WORK) else 0
     need, free = max(256 << 20, (1536 << 20) - made), shutil.disk_usage(out).free
     if free < need:
@@ -2401,6 +2445,10 @@ def cmd_kit_tree(args):
         die("not one clang resource folder: %s" % inc)
     shutil.copytree(inc[0], os.path.join(out, "llvm", os.path.relpath(inc[0], os.path.dirname(llvm))))
 
+    # What the Kit ships, before its id: the list is one of its files.
+    shipped = sorted(os.path.relpath(os.path.join(d, f), out).replace(os.sep, "/") for d, _, fs in os.walk(out) for f in fs)
+    with open(os.path.join(out, KIT_FILES), "w", encoding="utf-8", newline="\n") as f:
+        f.write("".join(r + "\n" for r in shipped if r not in (KIT_ID, KIT_FILES)))
     digest = kit_digest(out)
     with open(os.path.join(out, KIT_ID), "w", encoding="ascii") as f:
         f.write(digest + "\n")
