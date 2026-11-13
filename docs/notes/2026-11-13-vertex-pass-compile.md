@@ -16,7 +16,8 @@
   does not build takes. A compiler that never ends costs the CPU's time, not the game.
 - **The compiler:** `D3DCompile` on Windows, as before. Under Wine (its `ntdll` exports `wine_get_version`) it is DXC,
   when the guest programs come from DXC. `VTX_LIT_COMPILER=dxc` or `fxc` chooses. `rsx_dxc_compile` takes `cs_5_0`, as
-  `cs_6_0`. DXC's program is kept apart from `D3DCompile`'s in the shader cache.
+  `cs_6_0`. DXC's program is kept apart from `D3DCompile`'s in the shader cache. The port's other programs followed the
+  same day, and the vertex pass now takes their choice: `2026-11-13-proton-own-shaders.md`.
 
 ## Measured
 

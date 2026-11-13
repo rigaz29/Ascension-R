@@ -37,10 +37,10 @@ float4 main(float4 p : SV_Position, float4 c : COLOR0) : SV_Target {
 
 
 def options():
-    """What rsx_dxc_compile passes after the target, entry and level."""
+    """What dxc_compile passes after the target, entry and level (those three are not literals there)."""
     src = (ROOT / "ps3recomp/libs/video/rsx_dxc.c").read_text()
     words = re.findall(r'L"([^"]*)"', re.search(r"LPCWSTR args\[\] = \{(.*?)\};", src, re.S)[1])
-    return words[words.index("main") + 1:]
+    return words[words.index("-E") + 1:]
 
 
 def compile_main(opts):
