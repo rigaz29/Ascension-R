@@ -156,6 +156,7 @@ tools/         which of the game's imports the runtime answers, shader cache che
 tests/         tests for the launcher's game search, shader compile guards and native routines
 docs/          analysis, measurements, features and development notes
 packaging/     text files that go beside the program in a package
+site/          the website, rigaz29.github.io/Ascension-R, published by .github/workflows/pages.yml
 third_party/   zlib
 ps3recomp/     the toolkit and runtime, as a submodule (fork rigaz29/ps3recomp, branch gowa)
 ```
