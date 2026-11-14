@@ -67,3 +67,6 @@ So the decay's pieces are lit with a layout and a fourth light group the GPU's l
 such job runs whole on the SPU. Taking them on the GPU means the pass learning that layout (attribute 20 in the vertex
 it packs, ids 27-30 one place on) and the fourth group's point lights added to attribute 20, and the memo keeping
 attribute 20 for them.
+
+The pass learnt it: [2026-11-15-edge-attr20.md](2026-11-15-edge-attr20.md). The memo does not see these jobs at all
+(the job reader does not read their class), so that part stays.

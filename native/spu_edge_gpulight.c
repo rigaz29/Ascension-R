@@ -41,6 +41,23 @@
  * EG_MAX_LIGHTS lights. Anything else runs on the SPU with no record, and the backend draws what
  * the SPU wrote.
  *
+ * The layout with attribute 20 (eg_ids20; the temple bridge's falling pieces, ~850 jobs a frame
+ * there: input pieces 0x75B120 / 0x757CF0, output 0x755080, methods 0x75CEC0, which the job reader
+ * does not read): ids 1 3 4 20 27-30, 58 bytes a vertex, attribute 20 as U8N x y z w at +24 and
+ * ids 27-30 four bytes on (+28, +40, +46, +52). r8 names attribute 20's array: after its lighting
+ * the stage tail-calls the point lights (0x6AC8) for a fourth group of the light set (its count at
+ * the counts' +0x1C, the lights after the third group's), blend 1.0: attribute 20 is the value the
+ * input piece left plus the group's sum (from 0.5 with the flags' 0x100), as for id 30 but all four
+ * lanes; no light leaves it as it was. The output piece's U8N: floor(v 255 + 0.5) clamped to 0-255
+ * (cfltu(fma(v, 255, 0.5), 149) >> 24). With the stage skipped, the piece packs the value the input
+ * piece left, which the pass reads back as byte / 255 (one unit off now and then). The record says
+ * the layout; in the check (mode 1) the SPU's bytes already hold the result, so a record of this
+ * layout carries the bytes the piece would have packed before the stage, for the pass to start from.
+ * GOWA_EDGE_GPU_L20=0 leaves the layout on the SPU. At the decay (docs/notes/2026-11-15-edge-attr20.md):
+ * attribute 20's bytes the same as the SPU's for 99.996-100% (the GPU, VTX_LIT_CHECK) and 99.999% (the
+ * C pass, the selftest) of them, the rest one unit; every other job of the layout on the GPU, a job took
+ * ~84 us from 0x9A40 to the publish against ~133 on the SPU.
+ *
  * A skipped stage that the output stage cannot publish for (it runs lifted: an interrupt pending,
  * a stride callback) is run at the output stage's entry instead, from the registers it was called
  * with (edge_gpul_unskip): nothing between the two reads what lighting writes or changes what it
@@ -70,17 +87,30 @@
 
 #define EG_MAX_LIGHTS 32
 #define EG_STRIDE     54
+#define EG_STRIDE20   58
+#define EG_OLD_MAX    512u            /* the check's attribute 20 bytes: vertexes a record carries */
 
-/* the lit layout: the attribute ids at c + 0x160 */
+/* the lit layouts: the attribute ids at c + 0x160 */
 static const uint8_t eg_ids[8] = { 1, 3, 4, 27, 28, 29, 30, 0 };
+static const uint8_t eg_ids20[8] = { 1, 3, 4, 20, 27, 28, 29, 30 };
 
 /* the record, as the backend copies it for the shader (host order, 4-byte words) */
 typedef struct {
     uint32_t n0, n1, n2, flags;
     float    inten[4];
+    uint32_t n3;                             /* the fourth group (attribute 20's) */
+    uint32_t layout;                         /* 0 the 54-byte vertexes, 1 the 58 with attribute 20 */
+    uint32_t old;                            /* the check: where attribute 20's bytes before are, or 0 */
+    uint32_t nold;                           /* and for how many vertexes */
     float    light[EG_MAX_LIGHTS][3][4];     /* position, colour, direction */
+    uint8_t  room[4 * EG_OLD_MAX];           /* the check's bytes go right after the lights in use */
 } eg_rec;
-#define EG_REC_BYTES(n) (32u + 48u * (uint32_t)(n))
+#define EG_REC_HEAD 48u
+#define EG_REC_BYTES(n) (EG_REC_HEAD + 48u * (uint32_t)(n))
+/* the largest record published: a skinned job's (the 54-byte layout, no bytes of the check) */
+#define EG_REC_MAX (EG_REC_BYTES(EG_MAX_LIGHTS) + (uint32_t)sizeof(ek_rec))
+_Static_assert(EG_REC_BYTES(EG_MAX_LIGHTS) + 4u * EG_OLD_MAX <= EG_REC_MAX, "a record with the check's bytes fits");
+_Static_assert(sizeof(eg_rec) == EG_REC_BYTES(EG_MAX_LIGHTS) + 4u * EG_OLD_MAX, "the record's layout");
 
 /* the backend's vertex pass (libs/video/rsx_d3d12_backend.c) */
 extern void rsx_d3d12_vertex_pass_set(const char* hlsl, uint32_t stride, uint32_t max_record,
@@ -125,7 +155,8 @@ static int eg_mode(void)
         if (nat && (atoi(nat) & 131072) == 0) m = 0;
         s_eg_stats = getenv("GOWA_EDGE_NATIVE_STATS") != NULL;
         if (m) {
-            rsx_d3d12_vertex_pass_set(eg_hlsl(), EG_STRIDE, (uint32_t)(sizeof(eg_rec) + sizeof(ek_rec)), eg_cpu);
+            /* the second stride in the high half (ABI 6) */
+            rsx_d3d12_vertex_pass_set(eg_hlsl(), EG_STRIDE | (EG_STRIDE20 << 16), EG_REC_MAX, eg_cpu);
             if (s_eg_stats) atexit(eg_report);
             fprintf(stderr, "[edge-gpu] lighting on the GPU: mode %d (%s)\n", m,
                     m == 1 ? "check: the SPU lights too" : "the SPU skips it");
@@ -136,10 +167,19 @@ static int eg_mode(void)
     return m;
 }
 
+/* GOWA_EDGE_GPU_L20: the layout with attribute 20 too (1, the default), or on the SPU (0) */
+static int eg_l20(void)
+{
+    static int v = -1;
+    if (v < 0) { const char* e = getenv("GOWA_EDGE_GPU_L20"); v = !(e && e[0] == '0'); }
+    return v;
+}
+
 /* what a lit job carries from its lighting stage to its output stage */
 static SPU_THREAD_LOCAL struct {
     int      state;            /* 0 none; 1 a record (the stage ran); 2 a record, the stage skipped */
     uint32_t n;                /* lights */
+    uint32_t bytes;            /* the record's, as published */
     uint8_t  head[16];         /* c + 0x00 (the job's segment header): the job the record is of */
     u128     regs[16];         /* r0-r15 at the stage's entry, to run it late */
     int      binorm;           /* 0xA880's loop left out; its arguments */
@@ -238,6 +278,16 @@ int edge_gpul_lean_pack(void)
 
 static inline float eg_f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 
+/* The output piece 0x755080's U8N of a float's bits: cfltu(fma(v, 255, 0.5), 149) >> 24, that is
+ * floor(v 255 + 0.5) clamped to 0-255 (in double, exact; exponent 255 is a large number on the SPU) */
+static inline uint8_t eg_u8n(uint32_t b)
+{
+    if (((b >> 23) & 0xFFu) == 0xFFu) return (b & 0x80000000u) ? 0 : 255;
+    if (((b >> 23) & 0xFFu) == 0) return 0;
+    const double d = floor((double)eg_f(b) * 255.0 + 0.5);
+    return d <= 0.0 ? 0 : d >= 255.0 ? 255 : (uint8_t)d;
+}
+
 /* What the stage writes that is put out besides ids 27-30: the index list (u16, at c + 0x50's first
  * word, its count at c + 0x190) padded to a multiple of 8 with its first index, for the stage's
  * own marking loop (eight a pass); 0xB670 returns the list, the stage's start stores the padded
@@ -262,25 +312,37 @@ int edge_gpul_capture(spu_context* ctx)
     const uint8_t* ls = ctx->ls;
     const uint32_t c = ctx->gpr[3]._u32[0], r5 = ctx->gpr[5]._u32[0], r8 = ctx->gpr[8]._u32[0];
     const uint32_t r12 = ctx->gpr[12]._u32[0], flags = ctx->gpr[13]._u32[0];
-    int ok = c == 0x107A0 && r5 != 0 && r8 == 0 && (flags & 0x800) == 0 && !memcmp(ls + c + 0x160, eg_ids, 8);
-    /* the arguments name the pool's arrays: r9 id 1, r4-r7 ids 27-30 */
+    /* the 54-byte layout with r8 = 0, or the one with attribute 20, whose array r8 names */
+    const int l20 = c == 0x107A0 && r8 != 0 && eg_l20() && !memcmp(ls + c + 0x160, eg_ids20, 8);
+    int ok = c == 0x107A0 && r5 != 0 && (flags & 0x800) == 0 &&
+             (l20 ? r8 == eg_be32(ls, c + 0x1C) : r8 == 0 && !memcmp(ls + c + 0x160, eg_ids, 8));
+    /* the arguments name the pool's arrays: r9 id 1, r4-r7 ids 27-30 (a slot on with attribute 20) */
+    const uint32_t a27 = c + (l20 ? 0x20u : 0x1Cu);
     if (ok)
-        ok = ctx->gpr[9]._u32[0] == eg_be32(ls, c + 0x10) && ctx->gpr[4]._u32[0] == eg_be32(ls, c + 0x1C) &&
-             r5 == eg_be32(ls, c + 0x20) && ctx->gpr[6]._u32[0] == eg_be32(ls, c + 0x24) &&
-             ctx->gpr[7]._u32[0] == eg_be32(ls, c + 0x28);
-    uint32_t n0 = 0, n1 = 0, n2 = 0, o0 = 0, o1 = 0, o2 = 0;
+        ok = ctx->gpr[9]._u32[0] == eg_be32(ls, c + 0x10) && ctx->gpr[4]._u32[0] == eg_be32(ls, a27) &&
+             r5 == eg_be32(ls, a27 + 4) && ctx->gpr[6]._u32[0] == eg_be32(ls, a27 + 8) &&
+             ctx->gpr[7]._u32[0] == eg_be32(ls, a27 + 12);
+    uint32_t n0 = 0, n1 = 0, n2 = 0, n3 = 0, o0 = 0, o1 = 0, o2 = 0, nv = 0;
     if (ok) {
         o0 = eg_be32(ls, r12); o1 = eg_be32(ls, r12 + 4); o2 = eg_be32(ls, r12 + 8);
         n0 = eg_be32(ls, r12 + 0x10); n1 = eg_be32(ls, r12 + 0x14); n2 = eg_be32(ls, r12 + 0x18);
-        const uint64_t n = (uint64_t)n0 + n1 + n2;
+        if (l20) n3 = eg_be32(ls, r12 + 0x1C);
+        const uint64_t n = (uint64_t)n0 + n1 + n2 + n3;
         ok = n <= EG_MAX_LIGHTS && r12 < SPU_LS_SIZE &&
              (uint64_t)r12 + o0 + 16 * n <= SPU_LS_SIZE && (uint64_t)r12 + o1 + 16 * n <= SPU_LS_SIZE &&
              (uint64_t)r12 + o2 + 16 * n <= SPU_LS_SIZE;
+        /* the check: attribute 20's bytes before the stage, as many as the record can carry */
+        nv = ((uint32_t)ls[c + 8] << 8) | ls[c + 9];
+        if (ok && l20 && mode == 1) {
+            const uint32_t a20 = eg_be32(ls, c + 0x1C);
+            ok = nv <= EG_OLD_MAX && !(a20 & 15) && (uint64_t)a20 + 16ull * nv <= SPU_LS_SIZE;
+        }
     }
     if (!ok) { EG_COUNT(s_eg_declined); edge_memo_revoke_lit(ctx); eg_binorm_late(ctx); return 0; }
-    const uint32_t n = n0 + n1 + n2;
+    const uint32_t n = n0 + n1 + n2 + n3;
     eg_rec* r = &t_eg.rec;
     r->n0 = n0; r->n1 = n1; r->n2 = n2; r->flags = flags;
+    r->n3 = n3; r->layout = (uint32_t)l20; r->old = 0; r->nold = 0;
     for (int k = 0; k < 4; k++) r->inten[k] = eg_f(ctx->gpr[14]._u32[k]);
     for (uint32_t j = 0; j < n; j++)
         for (int k = 0; k < 4; k++) {
@@ -288,6 +350,16 @@ int edge_gpul_capture(spu_context* ctx)
             r->light[j][1][k] = eg_f(eg_be32(ls, r12 + o1 + 16 * j + 4 * k));
             r->light[j][2][k] = eg_f(eg_be32(ls, r12 + o2 + 16 * j + 4 * k));
         }
+    t_eg.bytes = EG_REC_BYTES(n);
+    if (l20 && mode == 1) {
+        uint8_t* ob = (uint8_t*)r + t_eg.bytes;
+        const uint32_t a20 = eg_be32(ls, c + 0x1C);
+        for (uint32_t v = 0; v < nv; v++)
+            for (int k = 0; k < 4; k++) ob[4 * v + k] = eg_u8n(eg_be32(ls, a20 + 16 * v + 4 * k));
+        r->old = t_eg.bytes;
+        r->nold = nv;
+        t_eg.bytes += 4u * nv;
+    }
     t_eg.n = n;
     memcpy(t_eg.head, ls + c, 16);
     memcpy(t_eg.regs, ctx->gpr, sizeof t_eg.regs);
@@ -343,12 +415,20 @@ void edge_gpul_unskip(spu_context* ctx)
 
 /* The output stage native, after the vertex PUT: the vertexes at IO offset vio, n of them, with
  * the given stride and attribute list. Every job's: one without a record clears the key. */
+/* The layout the output stage puts out, as a record says it: 0 the 54-byte vertexes, 1 the 58 with
+ * attribute 20, -1 neither. */
+static int eg_out_layout(const uint8_t* ls, uint32_t stride)
+{
+    if (stride == EG_STRIDE && !memcmp(ls + 0x107A0 + 0x160, eg_ids, 8)) return 0;
+    if (stride == EG_STRIDE20 && !memcmp(ls + 0x107A0 + 0x160, eg_ids20, 8)) return 1;
+    return -1;
+}
+
 /* What edge_gpul_publish needs of a job whose vertexes it will not see in the local store. */
 int edge_gpul_can_publish(const spu_context* ctx, uint32_t stride)
 {
     const uint8_t* ls = ctx->ls;
-    return t_eg.state == 2 && stride == EG_STRIDE && !memcmp(ls + 0x107A0 + 0x160, eg_ids, 8) &&
-           !memcmp(ls + 0x107A0, t_eg.head, 16);
+    return t_eg.state == 2 && eg_out_layout(ls, stride) == (int)t_eg.rec.layout && !memcmp(ls + 0x107A0, t_eg.head, 16);
 }
 
 void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t stride)
@@ -360,7 +440,7 @@ void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t
     t_eg.state = 0;
     const uint8_t* ls = ctx->ls;
     const uint32_t buf = eg_be32(ls, 0x107A0 + 0x54);      /* what the vertex PUT took (c + 0x50, word 1) */
-    if (stride != EG_STRIDE || memcmp(ls + 0x107A0 + 0x160, eg_ids, 8) || memcmp(ls + 0x107A0, t_eg.head, 16) ||
+    if (eg_out_layout(ls, stride) != (int)t_eg.rec.layout || memcmp(ls + 0x107A0, t_eg.head, 16) ||
         buf > SPU_LS_SIZE - 16) {
         /* not the job or the layout the record was taken for */
         EG_COUNT(s_eg_lost);
@@ -369,7 +449,7 @@ void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t
     }
     uint32_t skin_bytes = 0;
     const void* const skin = edge_memo_skin_part(&skin_bytes);
-    rsx_d3d12_vertex_pass_publish(vio, nverts, &t_eg.rec, EG_REC_BYTES(t_eg.n), (uint32_t)applied, ls + buf, skin, skin_bytes);
+    rsx_d3d12_vertex_pass_publish(vio, nverts, &t_eg.rec, t_eg.bytes, (uint32_t)applied, ls + buf, skin, skin_bytes);
     EG_COUNT(s_eg_published);
     if (applied) {
         static int st = -1;
@@ -380,7 +460,8 @@ void edge_gpul_publish(spu_context* ctx, uint32_t vio, uint32_t nverts, uint32_t
 
 /* ---------------------------------------------------------------------------------------------
  * The pass on the CPU: the backend's fallback (a draw that does not take the raw fetch, or a full
- * lit buffer). n vertexes of the 54-byte layout from src to dst (may be the same), big-endian. */
+ * lit buffer). n vertexes of the record's layout from src to dst (may be the same), big-endian; a
+ * record with the check's attribute 20 bytes is for vertexes from the job's first. */
 static inline uint32_t eg_rd32(const uint8_t* p) { return ((uint32_t)p[0] << 24) | ((uint32_t)p[1] << 16) | ((uint32_t)p[2] << 8) | p[3]; }
 static inline void eg_wr32(uint8_t* p, uint32_t v) { p[0] = (uint8_t)(v >> 24); p[1] = (uint8_t)(v >> 16); p[2] = (uint8_t)(v >> 8); p[3] = (uint8_t)v; }
 static inline int eg_rds16(const uint8_t* p) { return (int16_t)(((uint32_t)p[0] << 8) | p[1]); }
@@ -403,11 +484,15 @@ static void eg_cpu(const void* rv, const uint8_t* src, uint8_t* dst, uint32_t nv
     const uint32_t n0 = r->n0, n01 = r->n0 + r->n1;
     uint32_t nall = r->n0 + r->n1 + r->n2;
     if (nall > EG_MAX_LIGHTS) nall = EG_MAX_LIGHTS;
+    const int l20 = r->layout == 1;
+    const uint32_t S = l20 ? EG_STRIDE20 : EG_STRIDE, o27 = l20 ? 28u : 24u;
+    const uint32_t n3e = l20 ? (nall + r->n3 < EG_MAX_LIGHTS ? nall + r->n3 : EG_MAX_LIGHTS) : nall;
+    const uint8_t* const old = l20 && r->old ? (const uint8_t*)rv + r->old : NULL;
     const float* I = r->inten;
     for (uint32_t v = 0; v < nv; v++) {
-        const uint8_t* s = src + (size_t)v * EG_STRIDE;
-        uint8_t* o = dst + (size_t)v * EG_STRIDE;
-        if (o != s) memcpy(o, s, EG_STRIDE);
+        const uint8_t* s = src + (size_t)v * S;
+        uint8_t* o = dst + (size_t)v * S;
+        if (o != s) memcpy(o, s, S);
         const float V[3] = { eg_f(eg_rd32(s)), eg_f(eg_rd32(s + 4)), eg_f(eg_rd32(s + 8)) };
         const float N[3] = { (eg_rds16(s + 12) + 0.5f) / 32767.5f, (eg_rds16(s + 14) + 0.5f) / 32767.5f,
                              (eg_rds16(s + 16) + 0.5f) / 32767.5f };
@@ -452,26 +537,36 @@ static void eg_cpu(const void* rv, const uint8_t* src, uint8_t* dst, uint32_t nv
             }
             if (!pass) {
                 const float inv = 1.0f / WS;
-                for (int k = 0; k < 3; k++) eg_wr32(o + 24 + 4 * k, eg_u(A[k] * inv + V[k]));
+                for (int k = 0; k < 3; k++) eg_wr32(o + o27 + 4 * k, eg_u(A[k] * inv + V[k]));
             } else {
                 for (int k = 0; k < 3; k++) {
-                    eg_wr16(o + 36 + 2 * k, eg_f16(pos[k]));
-                    eg_wr16(o + 42 + 2 * k, eg_f16(neg[k]));
+                    eg_wr16(o + o27 + 12 + 2 * k, eg_f16(pos[k]));
+                    eg_wr16(o + o27 + 18 + 2 * k, eg_f16(neg[k]));
                 }
             }
         }
-        float pt[3];
-        pt[0] = pt[1] = pt[2] = (r->flags & 0x100u) ? 0.5f : 0.0f;
-        for (uint32_t j = n01; j < nall; j++) {
-            const float* P = r->light[j][0];
-            const float Cp[4] = { I[0] * r->light[j][1][0], I[1] * r->light[j][1][1], I[2] * r->light[j][1][2], I[3] * r->light[j][1][3] };
-            const float d[3] = { P[0] - V[0], P[1] - V[1], P[2] - V[2] };
-            const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
-            const float a = 1.0f - fminf(dist * P[3], 1.0f);
-            const float s = a * a * (3.0f - 2.0f * a), w = s * s * Cp[3];
-            for (int k = 0; k < 3; k++) pt[k] += w * Cp[k];
+        /* the point lights: the third group to id 30, the fourth (all four lanes) to attribute 20 */
+        for (int g = 0; g < 2; g++) {
+            const uint32_t j0 = g ? nall : n01, j1 = g ? n3e : nall;
+            if (g && j1 == j0) break;                  /* no light: attribute 20 stays */
+            float pt[4];
+            pt[0] = pt[1] = pt[2] = pt[3] = (r->flags & 0x100u) ? 0.5f : 0.0f;
+            for (uint32_t j = j0; j < j1; j++) {
+                const float* P = r->light[j][0];
+                const float Cp[4] = { I[0] * r->light[j][1][0], I[1] * r->light[j][1][1], I[2] * r->light[j][1][2], I[3] * r->light[j][1][3] };
+                const float d[3] = { P[0] - V[0], P[1] - V[1], P[2] - V[2] };
+                const float dist = sqrtf(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+                const float a = 1.0f - fminf(dist * P[3], 1.0f);
+                const float s = a * a * (3.0f - 2.0f * a), w = s * s * Cp[3];
+                for (int k = 0; k < 4; k++) pt[k] += w * Cp[k];
+            }
+            if (!g) {
+                for (int k = 0; k < 3; k++) eg_wr16(o + o27 + 24 + 2 * k, eg_f16(pt[k]));
+            } else {
+                const uint8_t* ob = old && v < r->nold ? old + 4 * v : o + 24;
+                for (int k = 0; k < 4; k++) o[24 + k] = eg_u8n(eg_u((float)ob[k] / 255.0f + pt[k]));
+            }
         }
-        for (int k = 0; k < 3; k++) eg_wr16(o + 48 + 2 * k, eg_f16(pt[k]));
     }
 }
 
@@ -480,11 +575,13 @@ static void eg_cpu(const void* rv, const uint8_t* src, uint8_t* dst, uint32_t nv
  * (vp_vb), t1 the batch's table, u0 the lit copies (vp_lit), b0 the dispatch's first segment; a
  * group a segment. A segment's entry, 32 bytes at index * 32 of t1: the source copy's header (16
  * attribute bases), the lit copy's header, the start of attribute 0's copy from the header, its
- * vertex count, the record's offset in t1, the segment's bytes from the header, where the vertexes
- * are if not in the copy (a kept block's, resident), and a skinned block's part of the record in t1
- * (bit 0: a position's block, 12-byte vertexes and no lights). The segment is copied word by word
- * but for attribute 0's vertexes, the header's bases moved to the lit copy; then a thread does two
- * vertexes (108 bytes, 27 words, 4-aligned since the copy starts 16-aligned). A skinned block's
+ * vertex count (the high half: the copy's first vertex in the job), the record's offset in t1, the
+ * segment's bytes from the header, where the vertexes are if not in the copy (a kept block's,
+ * resident), and a skinned block's part of the record in t1 (bit 0: a position's block, 12-byte
+ * vertexes and no lights). The record's layout word picks 54 or 58 bytes a vertex. The segment is
+ * copied word by word but for attribute 0's vertexes, the header's bases moved to the lit copy; then
+ * a thread does two vertexes (108 bytes, 27 words, or 116 and 29; 4-aligned since the copy starts
+ * 16-aligned). A skinned block's
  * vertexes are worked out first (spu_edge_gpuskin.c). The part's first word says which: an unskinned
  * block's transforms carry ER_RIGID (0x100), its inputs 16 or 48 bytes a vertex. */
 static const char s_eg_hlsl[] =
@@ -497,36 +594,47 @@ static const char s_eg_hlsl[] =
     "groupshared float4 gC[MAXL];\n"
     "groupshared float4 gQ[MAXL];\n"
     "groupshared uint4 gHead;\n"
+    "groupshared uint4 gHead2;\n"
     "groupshared float4 gInt;\n"
     "uint bs(uint x) { return (x << 24) | ((x << 8) & 0xFF0000u) | ((x >> 8) & 0xFF00u) | (x >> 24); }\n"
-    "uint rd32(uint w[27], uint o) {\n"
+    "uint rd32(uint w[29], uint o) {\n"
     "    uint i = o >> 2; uint v;\n"
     "    if ((o & 3u) == 0u) v = w[i]; else v = (w[i] >> 16) | (w[i + 1] << 16);\n"
     "    return bs(v);\n"
     "}\n"
-    "int rds16(uint w[27], uint o) {\n"
+    "int rds16(uint w[29], uint o) {\n"
     "    uint i = o >> 2; uint v;\n"
     "    if ((o & 2u) != 0u) v = w[i] >> 16; else v = w[i] & 0xFFFFu;\n"
     "    v = ((v & 0xFFu) << 8) | (v >> 8);\n"
     "    return ((int)(v << 16)) >> 16;\n"
     "}\n"
-    "void wr32(inout uint w[27], uint o, uint x) {\n"
+    "void wr32(inout uint w[29], uint o, uint x) {\n"
     "    uint i = o >> 2; uint v = bs(x);\n"
     "    if ((o & 3u) == 0u) w[i] = v;\n"
     "    else { w[i] = (w[i] & 0xFFFFu) | (v << 16); w[i + 1] = (w[i + 1] & 0xFFFF0000u) | (v >> 16); }\n"
     "}\n"
-    "void wr16(inout uint w[27], uint o, uint h) {\n"
+    "void wr16(inout uint w[29], uint o, uint h) {\n"
     "    uint i = o >> 2; uint v = ((h & 0xFFu) << 8) | ((h >> 8) & 0xFFu);\n"
     "    if ((o & 2u) != 0u) w[i] = (w[i] & 0xFFFFu) | (v << 16); else w[i] = (w[i] & 0xFFFF0000u) | v;\n"
     "}\n"
+    "uint rd8(uint w[29], uint o) { return (w[o >> 2] >> ((o & 3u) * 8u)) & 0xFFu; }\n"
+    "void wr8(inout uint w[29], uint o, uint b) {\n"
+    "    uint i = o >> 2, sh = (o & 3u) * 8u;\n"
+    "    w[i] = (w[i] & ~(0xFFu << sh)) | ((b & 0xFFu) << sh);\n"
+    "}\n"
+    /* the output piece 0x755080's U8N: floor(v 255 + 0.5) clamped */
+    "uint u8n(float x) { return (uint)clamp(floor(x * 255.0 + 0.5), 0.0, 255.0); }\n"
     "uint f16spu(float x) {\n"
     "    uint b = asuint(x); uint hi = (b >> 16) & 0x7FFFu; uint sg = (b >> 16) & 0x8000u;\n"
     "    if (hi >= 0x4780u) return 0x7BFFu | sg;\n"
     "    if (hi < 0x3800u) return 0u;\n"
     "    return ((((b & 0x7FFFFFFFu) - 0x38000000u) >> 13) & 0x7FFFu) | sg;\n"
     "}\n"
-    "void light_vertex(inout uint w[27], uint o) {\n"
+    /* lay 1: the 58-byte vertexes, attribute 20 at +24 and ids 27-30 four bytes on; vi the vertex in
+     * the job, for the check's bytes of attribute 20 in the record (rec + gHead2.z, gHead2.w of them) */
+    "void light_vertex(inout uint w[29], uint o, uint lay, uint vi, uint rec) {\n"
     "    const float EPS = asfloat(0x38D1B717u);\n"
+    "    uint o27 = o + (lay != 0u ? 28u : 24u);\n"
     "    float3 V = float3(asfloat(rd32(w, o)), asfloat(rd32(w, o + 4u)), asfloat(rd32(w, o + 8u)));\n"
     "    float3 N = (float3(rds16(w, o + 12u), rds16(w, o + 14u), rds16(w, o + 16u)) + 0.5) / 32767.5;\n"
     "    float nw = rds16(w, o + 18u) < 0 ? -1.0 : 1.0;\n"
@@ -572,10 +680,30 @@ static const char s_eg_hlsl[] =
     "        float s = a * a * (3.0 - 2.0 * a);\n"
     "        pt += (s * s * Cp.w) * Cp.xyz;\n"
     "    }\n"
-    "    wr32(w, o + 24u, asuint(Po.x)); wr32(w, o + 28u, asuint(Po.y)); wr32(w, o + 32u, asuint(Po.z));\n"
-    "    wr16(w, o + 36u, f16spu(pos.x)); wr16(w, o + 38u, f16spu(pos.y)); wr16(w, o + 40u, f16spu(pos.z));\n"
-    "    wr16(w, o + 42u, f16spu(neg.x)); wr16(w, o + 44u, f16spu(neg.y)); wr16(w, o + 46u, f16spu(neg.z));\n"
-    "    wr16(w, o + 48u, f16spu(pt.x)); wr16(w, o + 50u, f16spu(pt.y)); wr16(w, o + 52u, f16spu(pt.z));\n"
+    "    wr32(w, o27, asuint(Po.x)); wr32(w, o27 + 4u, asuint(Po.y)); wr32(w, o27 + 8u, asuint(Po.z));\n"
+    "    wr16(w, o27 + 12u, f16spu(pos.x)); wr16(w, o27 + 14u, f16spu(pos.y)); wr16(w, o27 + 16u, f16spu(pos.z));\n"
+    "    wr16(w, o27 + 18u, f16spu(neg.x)); wr16(w, o27 + 20u, f16spu(neg.y)); wr16(w, o27 + 22u, f16spu(neg.z));\n"
+    "    wr16(w, o27 + 24u, f16spu(pt.x)); wr16(w, o27 + 26u, f16spu(pt.y)); wr16(w, o27 + 28u, f16spu(pt.z));\n"
+    "    if (lay == 0u) return;\n"
+    "    uint n3e = min(nall + gHead2.x, (uint)MAXL);\n"
+    "    if (n3e <= nall) return;\n"
+    "    float4 c4 = (gHead.w & 0x100u) != 0u ? float4(0.5, 0.5, 0.5, 0.5) : float4(0.0, 0.0, 0.0, 0.0);\n"
+    "    for (j = nall; j < n3e; j++) {\n"
+    "        float4 P = gP[j]; float4 Cp = gC[j] * I;\n"
+    "        float3 d = P.xyz - V;\n"
+    "        float a = 1.0 - min(sqrt(dot(d, d)) * P.w, 1.0);\n"
+    "        float s = a * a * (3.0 - 2.0 * a);\n"
+    "        c4 += (s * s * Cp.w) * Cp;\n"
+    "    }\n"
+    "    uint4 ob;\n"
+    "    if (gHead2.z != 0u && vi < gHead2.w) {\n"
+    "        uint q = vtab.Load(rec + gHead2.z + vi * 4u);\n"
+    "        ob = uint4(q & 0xFFu, (q >> 8) & 0xFFu, (q >> 16) & 0xFFu, q >> 24);\n"
+    "    } else {\n"
+    "        ob = uint4(rd8(w, o + 24u), rd8(w, o + 25u), rd8(w, o + 26u), rd8(w, o + 27u));\n"
+    "    }\n"
+    "    float4 x = (float4)ob / 255.0 + c4;\n"
+    "    wr8(w, o + 24u, u8n(x.x)); wr8(w, o + 25u, u8n(x.y)); wr8(w, o + 26u, u8n(x.z)); wr8(w, o + 27u, u8n(x.w));\n"
     "}\n"
     "float4 ldf(uint a) { return asfloat(vtab.Load4(a)); }\n"
     "/* A bone the palette does not have is its first, as on the CPU (ek_blend). t1 is a root view, read\n"
@@ -712,7 +840,7 @@ static const char s_eg_hlsl[] =
     "}\n"
     /* the lit output piece's packing (ek_pack_lit): the position, the normal I16N, the tangent
      * X11Y11Z10; ftoi saturates as the SPU's cflts does */
-    "void pack_vertex(inout uint w[27], uint o, float3 P, float4 N, float4 T) {\n"
+    "void pack_vertex(inout uint w[29], uint o, float3 P, float4 N, float4 T) {\n"
     "    wr32(w, o, asuint(P.x)); wr32(w, o + 4u, asuint(P.y)); wr32(w, o + 8u, asuint(P.z));\n"
     "    int4 ni = (int4)(mad(N, 32767.5, -0.5) * 65536.0);\n"
     "    wr16(w, o + 12u, ((uint)ni.x) >> 16); wr16(w, o + 14u, ((uint)ni.y) >> 16);\n"
@@ -722,14 +850,14 @@ static const char s_eg_hlsl[] =
     "    int3 ti = (int3)(tt * 2147483648.0);\n"
     "    wr32(w, o + 20u, ((((uint)ti.x) >> 21) & 0x7FFu) | (((((uint)ti.y) >> 21) & 0x7FFu) << 11) | (((((uint)ti.z) >> 22) & 0x3FFu) << 22));\n"
     "}\n"
-    "void rigid_vertex(inout uint w[27], uint o, uint a, uint rk, uint fl) {\n"
+    "void rigid_vertex(inout uint w[29], uint o, uint a, uint rk, uint fl) {\n"
     "    float3 P = rigid_pos(asfloat(vsrc.Load4(a)), rk);\n"
     "    float4 N = rigid_rot(asfloat(vsrc.Load4(a + 16u)), rk + 80u), T = rigid_rot(asfloat(vsrc.Load4(a + 32u)), rk + 144u);\n"
     "    if ((fl & 1u) != 0u) N = skin_norm(N);\n"
     "    if ((fl & 2u) != 0u) T = skin_norm(T);\n"
     "    pack_vertex(w, o, P, N, T);\n"
     "}\n"
-    "void skin_vertex(inout uint w[27], uint o, uint a, uint sk, uint fl) {\n"
+    "void skin_vertex(inout uint w[29], uint o, uint a, uint sk, uint fl) {\n"
     "    float4 p = asfloat(vsrc.Load4(a)), n = asfloat(vsrc.Load4(a + 16u)), t = asfloat(vsrc.Load4(a + 32u));\n"
     "    float4 R0, R1, R2;\n"
     "    skin_rows(sk, vsrc.Load2(a + 48u), R0, R1, R2);\n"
@@ -744,8 +872,10 @@ static const char s_eg_hlsl[] =
     "    uint e = (seg_base + gid.x) * 32u;\n"
     "    uint4 s0 = vtab.Load4(e);\n"
     "    uint2 s1 = vtab.Load2(e + 16u);\n"
-    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w, rec = s1.x, sv = vtab.Load(e + 24u), sk = vtab.Load(e + 28u);\n"
-    "    uint dw0 = data >> 2, dw1 = (data >> 2) + ((nv * 54u + 3u) >> 2), nw = (s1.y + 3u) >> 2;\n"
+    "    uint sh = s0.x, dh = s0.y, data = s0.z, nv = s0.w & 0xFFFFu, lo = s0.w >> 16, rec = s1.x;\n"
+    "    uint sv = vtab.Load(e + 24u), sk = vtab.Load(e + 28u);\n"
+    "    uint lay = (sk & 1u) == 0u ? vtab.Load(rec + 36u) : 0u;\n"
+    "    uint dw0 = data >> 2, dw1 = (data >> 2) + ((nv * (lay != 0u ? 58u : 54u) + 3u) >> 2), nw = (s1.y + 3u) >> 2;\n"
     "    for (uint i = ti; i < nw; i += 64u) {\n"
     "        if (i >= dw0 && i < dw1) continue;\n"
     "        uint v = vsrc.Load(sh + i * 4u);\n"
@@ -757,8 +887,8 @@ static const char s_eg_hlsl[] =
     "        uint fv = vtab.Load(sk);\n"
     "        if ((fv & 0x200u) != 0u) {\n"
     "            for (uint v = ti; v < nv; v += 64u) {\n"
-    "                uint w[27]; uint k;\n"
-    "                [unroll] for (k = 0u; k < 27u; k++) w[k] = 0u;\n"
+    "                uint w[29]; uint k;\n"
+    "                [unroll] for (k = 0u; k < 29u; k++) w[k] = 0u;\n"
     "                uint a = sv + v * 48u;\n"
     "                rigid_vertex(w, 0u, a, sk, fv);\n"
     "                float3 Q = rigid_pos(asfloat(vsrc.Load4(a)), sk + 192u);\n"
@@ -785,18 +915,41 @@ static const char s_eg_hlsl[] =
     "        }\n"
     "        return;\n"
     "    }\n"
-    "    if (ti == 0u) { gHead = vtab.Load4(rec); gInt = asfloat(vtab.Load4(rec + 16u)); }\n"
+    "    if (ti == 0u) { gHead = vtab.Load4(rec); gInt = asfloat(vtab.Load4(rec + 16u)); gHead2 = vtab.Load4(rec + 32u); }\n"
     "    GroupMemoryBarrierWithGroupSync();\n"
-    "    uint nall = min(gHead.x + gHead.y + gHead.z, (uint)MAXL);\n"
+    "    uint nall = min(gHead.x + gHead.y + gHead.z + (lay != 0u ? gHead2.x : 0u), (uint)MAXL);\n"
     "    if (ti < nall) {\n"
-    "        uint a = rec + 32u + ti * 48u;\n"
+    "        uint a = rec + 48u + ti * 48u;\n"
     "        gP[ti] = asfloat(vtab.Load4(a)); gC[ti] = asfloat(vtab.Load4(a + 16u)); gQ[ti] = asfloat(vtab.Load4(a + 32u));\n"
     "    }\n"
     "    GroupMemoryBarrierWithGroupSync();\n"
     "    uint np = (nv + 1u) >> 1;\n"
+    /* The 58-byte vertexes (never a kept block's): two a thread, 116 bytes, 29 words; a last odd one
+     * stores 60 bytes, its last 2 the copy's own. Each layout calls light_vertex with constant offsets,
+     * which FXC folds into fixed registers once it inlines them (the four calls take it from 14 to 23 s
+     * over the program, once: the shader cache keeps it; one call with the offsets computed, 20 s). */
+    "    if (lay != 0u) {\n"
+    "        for (uint p = ti; p < np; p += 64u) {\n"
+    "            uint a = (sv != 0u ? sv : sh + data) + p * 116u, b = dh + data + p * 116u;\n"
+    "            uint w[29]; uint4 q; uint k;\n"
+    "            [unroll] for (k = 0u; k < 28u; k += 4u) { q = vsrc.Load4(a + k * 4u); w[k] = q.x; w[k + 1u] = q.y; w[k + 2u] = q.z; w[k + 3u] = q.w; }\n"
+    "            w[28] = vsrc.Load(a + 112u);\n"
+    "            light_vertex(w, 0u, 1u, lo + p * 2u, rec);\n"
+    "            if (p * 2u + 1u < nv) {\n"
+    "                light_vertex(w, 58u, 1u, lo + p * 2u + 1u, rec);\n"
+    "                [unroll] for (k = 0u; k < 28u; k += 4u) vdst.Store4(b + k * 4u, uint4(w[k], w[k + 1u], w[k + 2u], w[k + 3u]));\n"
+    "                vdst.Store(b + 112u, w[28]);\n"
+    "            } else {\n"
+    "                [unroll] for (k = 0u; k < 12u; k += 4u) vdst.Store4(b + k * 4u, uint4(w[k], w[k + 1u], w[k + 2u], w[k + 3u]));\n"
+    "                vdst.Store3(b + 48u, uint3(w[12], w[13], w[14]));\n"
+    "            }\n"
+    "        }\n"
+    "        return;\n"
+    "    }\n"
     "    for (uint p = ti; p < np; p += 64u) {\n"
     "        uint a = (sv != 0u ? sv : sh + data) + p * 108u, b = dh + data + p * 108u;\n"
-    "        uint w[27]; uint4 q; uint k;\n"
+    "        uint w[29]; uint4 q; uint k;\n"
+    "        w[27] = 0u; w[28] = 0u;\n"
     "        if (sk != 0u) {\n"
     "            [unroll] for (k = 0u; k < 27u; k++) w[k] = 0u;\n"
     "            uint fl = vtab.Load(sk);\n"
@@ -811,9 +964,9 @@ static const char s_eg_hlsl[] =
     "            [unroll] for (k = 0u; k < 24u; k += 4u) { q = vsrc.Load4(a + k * 4u); w[k] = q.x; w[k + 1u] = q.y; w[k + 2u] = q.z; w[k + 3u] = q.w; }\n"
     "            uint3 q3 = vsrc.Load3(a + 96u); w[24] = q3.x; w[25] = q3.y; w[26] = q3.z;\n"
     "        }\n"
-    "        light_vertex(w, 0u);\n"
+    "        light_vertex(w, 0u, 0u, 0u, rec);\n"
     "        if (p * 2u + 1u < nv) {\n"
-    "            light_vertex(w, 54u);\n"
+    "            light_vertex(w, 54u, 0u, 0u, rec);\n"
     "            [unroll] for (k = 0u; k < 24u; k += 4u) vdst.Store4(b + k * 4u, uint4(w[k], w[k + 1u], w[k + 2u], w[k + 3u]));\n"
     "            vdst.Store3(b + 96u, uint3(w[24], w[25], w[26]));\n"
     "        } else {\n"
@@ -827,6 +980,7 @@ static const char* eg_hlsl(void) { return s_eg_hlsl; }
 /* GOWA_EDGE_GPU_SELFTEST: the C pass over the packed vertexes (c + 0x50's second word, the buffer the
  * vertex PUT took) against the SPU's, for the vertexes in the stage's list */
 static volatile long long s_st_verts, s_st_units[5], s_st_calls;
+static volatile long long s_st20_calls, s_st20_verts, s_st20_units[4], s_st20_lit;
 static double s_st_max27, s_st_maxh[3];
 static volatile int s_st_lock;
 static float eg_half(uint32_t h)
@@ -844,36 +998,57 @@ static void eg_st_report(void)
             s_st_calls, s_st_verts, s_st_max27, 100.0 * s_st_units[0] / n, 100.0 * s_st_units[1] / n,
             100.0 * s_st_units[2] / n, 100.0 * s_st_units[3] / n, 100.0 * s_st_units[4] / n,
             s_st_maxh[0], s_st_maxh[1], s_st_maxh[2]);
+    if (s_st20_verts) {
+        const double m = (double)s_st20_verts * 4.0;
+        fprintf(stderr, "[edge-gpu] selftest, attribute 20's layout: %lld jobs, %lld vertexes (in those above); its U8N bytes: "
+                "%.3f%% the same, %.3f%% 1 unit, %.4f%% 2-3, %.4f%% more; %lld vertexes with the fourth group's lights\n",
+                s_st20_calls, s_st20_verts, 100.0 * s_st20_units[0] / m, 100.0 * s_st20_units[1] / m,
+                100.0 * s_st20_units[2] / m, 100.0 * s_st20_units[3] / m, s_st20_lit);
+    }
 }
 static void eg_selftest(const uint8_t* ls, const eg_rec* r, uint32_t n)
 {
-    const uint32_t c = 0x107A0, buf = eg_be32(ls, c + 0x54), s7 = eg_be32(ls, c + 0x2C);
-    if (!n || n > 4096 || (uint64_t)buf + (uint64_t)n * EG_STRIDE > SPU_LS_SIZE || (uint64_t)s7 + 16ull * n > SPU_LS_SIZE)
+    const int l20 = r->layout == 1;
+    const uint32_t S = l20 ? EG_STRIDE20 : EG_STRIDE, o27 = l20 ? 28u : 24u;
+    const uint32_t c = 0x107A0, buf = eg_be32(ls, c + 0x54), s7 = eg_be32(ls, c + (l20 ? 0x30 : 0x2C));
+    if (!n || n > 4096 || (uint64_t)buf + (uint64_t)n * S > SPU_LS_SIZE || (uint64_t)s7 + 16ull * n > SPU_LS_SIZE)
         return;
-    uint8_t* out = (uint8_t*)malloc((size_t)n * EG_STRIDE);
+    uint8_t* out = (uint8_t*)malloc((size_t)n * S);
     if (!out) return;
     eg_cpu(r, ls + buf, out, n);
     while (__atomic_exchange_n(&s_st_lock, 1, __ATOMIC_ACQUIRE)) { }
     static int armed;
     if (!armed) { armed = 1; atexit(eg_st_report); }
     s_st_calls++;
+    if (l20) s_st20_calls++;
+    if (!(s_st_calls & 0x3FFF)) eg_st_report();          /* a game closed from its window has no atexit */
     uint32_t prev = 0;
     for (uint32_t k = 0; k < n; k++) {
         const uint32_t off = eg_be32(ls, s7 + 16 * k + 12);
         if ((off & 15) || off / 16 >= n || (k && off <= prev)) break;
         prev = off;
         const uint32_t v = off / 16;
-        const uint8_t* g = out + (size_t)v * EG_STRIDE;
-        const uint8_t* s = ls + buf + (size_t)v * EG_STRIDE;
+        const uint8_t* g = out + (size_t)v * S;
+        const uint8_t* s = ls + buf + (size_t)v * S;
         s_st_verts++;
+        if (l20) {
+            s_st20_verts++;
+            const uint8_t* ob = r->old && v < r->nold ? (const uint8_t*)r + r->old + 4 * v : NULL;
+            if (ob && memcmp(ob, s + 24, 4)) s_st20_lit++;
+            for (int i = 0; i < 4; i++) {
+                const int du = g[24 + i] > s[24 + i] ? g[24 + i] - s[24 + i] : s[24 + i] - g[24 + i];
+                s_st20_units[du == 0 ? 0 : du == 1 ? 1 : du < 4 ? 2 : 3]++;
+            }
+        }
         for (int i = 0; i < 3; i++) {
-            const double d = fabs((double)eg_f(eg_rd32(g + 24 + 4 * i)) - (double)eg_f(eg_rd32(s + 24 + 4 * i)));
+            const double d = fabs((double)eg_f(eg_rd32(g + o27 + 4 * i)) - (double)eg_f(eg_rd32(s + o27 + 4 * i)));
             if (d > s_st_max27) s_st_max27 = d;
         }
         for (int a = 0; a < 3; a++)
             for (int i = 0; i < 3; i++) {
-                const uint32_t ha = ((uint32_t)g[36 + 6 * a + 2 * i] << 8) | g[37 + 6 * a + 2 * i];
-                const uint32_t hb = ((uint32_t)s[36 + 6 * a + 2 * i] << 8) | s[37 + 6 * a + 2 * i];
+                const uint32_t o = o27 + 12 + 6 * a + 2 * i;
+                const uint32_t ha = ((uint32_t)g[o] << 8) | g[o + 1];
+                const uint32_t hb = ((uint32_t)s[o] << 8) | s[o + 1];
                 const uint32_t ma = ha & 0x7FFFu, mb = hb & 0x7FFFu;
                 const uint32_t du = ((ha ^ hb) & 0x8000u) ? ma + mb : (ma > mb ? ma - mb : mb - ma);
                 s_st_units[du == 0 ? 0 : du == 1 ? 1 : du < 4 ? 2 : du < 16 ? 3 : 4]++;

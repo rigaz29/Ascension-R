@@ -10,8 +10,10 @@
 #include <stdint.h>
 
 /* A DLL built for another number is refused. Change it when a list below or a structure they share changes.
- * 2: atol and calloc (native/spu_edge_memo.c). 3: the VRAM guards (port/vram_guard.cpp). 4: two more of them. */
-#define GAME_MODULE_ABI 5
+ * 2: atol and calloc (native/spu_edge_memo.c). 3: the VRAM guards (port/vram_guard.cpp). 4: two more of them.
+ * 5: gowa_vram_cut. 6: the vertex pass's second stride, in rsx_d3d12_vertex_pass_set's high half, and the
+ * copy's first vertex in its table (native/spu_edge_gpulight.c). */
+#define GAME_MODULE_ABI 6
 
 /* The program's functions. In the DLL each is one jump through the table. */
 #define GAME_MODULE_FUNCS(X)                                                                                                  \
