@@ -327,7 +327,8 @@ RELEASES = {
 # the Prebuilt leaves out; @KIT_PYTHON@ and @KIT_LLVM@ are the versions in the Kit's folder.
 KIT_TEXT = {
     "@KIT_NEEDS@\n":
-        "- About 1.5 GB of free disk space and ten minutes or more, once: see THE GAME'S CODE.\n",
+        "- About 1.5 GB of free disk space and ten minutes or more, once (3 GB and about 25 minutes with Optimise for\n"
+        "  this PC): see THE GAME'S CODE.\n",
     "@KIT@\n":
         "THE GAME'S CODE\n"
         "\n"
@@ -336,6 +337,13 @@ KIT_TEXT = {
         "stopped. It runs at a low priority and needs about 1.5 GB of free disk space while it works. What it leaves is\n"
         "game-code\\ascension_game.dll, about 80 MB, beside your settings (see WHERE YOUR FILES GO). It is made from your\n"
         "copy of the game: keep it to yourself.\n"
+        "\n"
+        "With Optimise for this PC (System tab, off at first) the build makes a training copy first, which plays the\n"
+        "game's opening by itself for about seven minutes in a window of its own, muted, on a profile of its own that\n"
+        "leaves your saves alone: leave that window open. The build then uses what it counted, and the game runs 2-3%\n"
+        "faster on the test laptop (Sparta's fight). It needs about 3 GB of free disk space and adds about 15 minutes\n"
+        "to each build. If anything goes wrong there, the build goes on without it; game-code\\ascension_game.ini says\n"
+        "which way it went. Turned on after a build, Play builds the game's code again with it.\n"
         "\n"
         "The kit folder beside Ascension-R.exe holds what builds it: Python @KIT_PYTHON@, clang and lld @KIT_LLVM@, and the\n"
         "scripts and sources of this port and of ps3recomp. Keep it there.\n"
@@ -354,8 +362,9 @@ KIT_TEXT = {
         "    Windows build are under their own licenses, in the same file: Python.txt.\n"
         "\n"
         "kit\\llvm\n"
-        "    clang-cl.exe, lld-link.exe and clang's headers of LLVM @KIT_LLVM@, under the Apache License 2.0 with LLVM\n"
-        "    Exceptions: LLVM.txt, LLVM-clang.txt, LLVM-lld.txt.\n"
+        "    clang-cl.exe, lld-link.exe, llvm-profdata.exe, clang's headers and compiler-rt's profile runtime of LLVM\n"
+        "    @KIT_LLVM@, under the Apache License 2.0 with LLVM Exceptions: LLVM.txt, LLVM-clang.txt, LLVM-lld.txt,\n"
+        "    LLVM-compiler-rt.txt.\n"
         "\n"
         "kit\\scripts, kit\\port, kit\\native\n"
         "    This port's scripts and sources that build the game's code: Ascension-R.txt.\n"
@@ -1853,8 +1862,20 @@ def module_sources(out):
             + [("spu", p) for p in spu])
 
 
-def module_flags(kind, src):
-    """clang-cl's options for one translation unit: CMake's for the DLL, and no header but the Kit's and clang's own."""
+def pgo_flags(pgo):
+    """The lifted code's options for profile-guided optimization: "gen" instruments it (the training build of
+    "Optimise for this PC"), a .profdata path optimizes it with what the training counted."""
+    if not pgo:
+        return []
+    if pgo == "gen":
+        return ["-fprofile-instr-generate"]
+    return ["-fprofile-instr-use=" + pgo, "-Wno-profile-instr-unprofiled", "-Wno-profile-instr-out-of-date",
+            "-Wno-profile-instr-missing"]
+
+
+def module_flags(kind, src, pgo=None):
+    """clang-cl's options for one translation unit: CMake's for the DLL, and no header but the Kit's and clang's own.
+    pgo: pgo_flags' for the lifted PPU and SPU code; "gen" also gives game_module.c the profile writer."""
     cxx = src.endswith(".cpp")
     rt = os.path.join(PS3RECOMP, "runtime")
     inc = [RECOMPILED, os.path.join(PS3RECOMP, "include"), os.path.join(rt, "ppu"), os.path.join(rt, "spu"),
@@ -1873,7 +1894,19 @@ def module_flags(kind, src):
         inc = [os.path.join(rt, "spu")] + inc
         if os.path.basename(src) == "spu_g6_routines.c":   # written into the build folder, away from the headers it shares
             inc.append(os.path.join(ROOT, "native"))
+    if kind in ("ppu", "spu"):
+        f += pgo_flags(pgo)
+    elif pgo == "gen":
+        f += ["/DGOWA_PGO_GEN"]
     return f + ["-I" + d for d in inc] + ["/imsvc" + os.path.join(KIT_DIR, "include")]
+
+
+def profile_runtime(llvm):
+    """clang's profile runtime beside the Kit's clang (lib\\clang\\<version>\\lib\\windows), for the training build."""
+    libs = glob.glob(os.path.join(os.path.dirname(llvm), "lib", "clang", "*", "lib", "windows", "clang_rt.profile-x86_64.lib"))
+    if len(libs) != 1:
+        die("not one clang_rt.profile-x86_64.lib beside %s: %s" % (llvm, libs))
+    return libs[0]
 
 
 def module_headers_digest(out):
@@ -1951,10 +1984,19 @@ def cmd_module(args):
             say(r.stdout[-3000:])
             die("%s failed (%s)" % (what, os.path.join(out, "module.log")))
 
+    # --pgo gen: the training build of "Optimise for this PC"; --pgo <.profdata>: optimized with its profile. Phases
+    # under a prefix of their own (kit-build: "train_") keep the launcher's bar in order.
+    pgo = getattr(args, "pgo", None)
+    if pgo and pgo != "gen":
+        pgo = os.path.abspath(pgo)   # the compiles run in other folders
+        if not os.path.isfile(pgo):
+            die("no profile at %s" % pgo)
+    pre = getattr(args, "phases", "") or ""
+    pgo_tag = "" if not pgo else ("gen" if pgo == "gen" else "use " + sha256(pgo))
     gen = os.path.join(out, "generated_spu")
     os.makedirs(gen, exist_ok=True)
-    say("[module] the SPU programs inside the game's ELF")
-    PROGRESS.phase("spu_programs", "Translating the SPU programs")
+    say("[module] the SPU programs inside the game's ELF%s" % (", PGO " + pgo_tag[:16] if pgo else ""))
+    PROGRESS.phase(pre + "spu_programs", "Translating the SPU programs" if not pre else "Optimising for this PC: the training copy")
     step("build_spu_workloads", py + [os.path.join(TOOLS, "build_spu_workloads.py"), "--lifted", gen,
                                       "--out", os.path.join(gen, "spu_workloads.c"), "--constructor", "--merge-chunks", "--input", elf])
     PROGRESS.part(1, 2)
@@ -1973,8 +2015,9 @@ def cmd_module(args):
     for kind, src in srcs:
         rel = os.path.relpath(src, out if src.startswith(out) else (WORK if src.startswith(WORK) else ROOT))
         obj = os.path.join(out, "obj", rel.replace(os.sep, "_") + ".obj")
-        cmd = [clang] + module_flags(kind, src) + ["/c", src, "/Fo" + obj]
-        h = hashlib.sha256((" ".join(cmd) + "\n" + headers + "\n").encode())
+        cmd = [clang] + module_flags(kind, src, pgo) + ["/c", src, "/Fo" + obj]
+        # A new profile at the same path: compiled again. Without one the stamp is what it was before PGO.
+        h = hashlib.sha256((" ".join(cmd) + "\n" + headers + "\n" + (pgo_tag + "\n" if pgo_tag else "")).encode())
         with open(src, "rb") as f:
             h.update(f.read())
         work.append((kind, src, obj, cmd, h.hexdigest()))
@@ -1992,8 +2035,9 @@ def cmd_module(args):
     # How far, by the bytes of source compiled: the time a file takes goes more with its size than with the count.
     all_bytes = sum(os.path.getsize(w[1]) for w in work) or 1
     done_bytes = [all_bytes - sum(os.path.getsize(w[1]) for w in todo)]
-    PROGRESS.phase("compile", "Compiling")
-    PROGRESS.part(done_bytes[0], all_bytes, "Compiling: %d of %d files" % (len(work) - len(todo), len(work)))
+    what = "Compiling" if not pre else "Optimising for this PC: compiling the training copy"
+    PROGRESS.phase(pre + "compile", what)
+    PROGRESS.part(done_bytes[0], all_bytes, "%s: %d of %d files" % (what, len(work) - len(todo), len(work)))
 
     def compile_one(w):
         kind, src, obj, cmd, digest = w
@@ -2013,7 +2057,7 @@ def cmd_module(args):
             open(obj + ".stamp", "w").write(digest)
             stats.append((kind, src, secs, ws, commit))
             done_bytes[0] += os.path.getsize(src)
-            PROGRESS.part(done_bytes[0], all_bytes, "Compiling: %d of %d files" % (len(work) - len(todo) + done[0], len(work)))
+            PROGRESS.part(done_bytes[0], all_bytes, "%s: %d of %d files" % (what, len(work) - len(todo) + done[0], len(work)))
             if done[0] % 10 == 0 or done[0] == len(todo):
                 el = time.monotonic() - t0
                 say("[module] %d/%d compiled, %d:%02d" % (done[0], len(todo), el // 60, el % 60))
@@ -2027,11 +2071,17 @@ def cmd_module(args):
         say(text[-4000:])
         die("%d of %d files did not compile, %s first (%s)" % (len(failed), len(todo), os.path.basename(src), os.path.join(out, "module.log")))
 
-    PROGRESS.phase("link", "Linking")
-    lib = os.path.join(out, "kernel32.lib")
-    if not os.path.isfile(lib):   # lld-link /lib is llvm-lib: the same library, one program fewer in the Kit
+    PROGRESS.phase(pre + "link", "Linking")
+    # lld-link /lib is llvm-lib: the same library, one program fewer in the Kit. The training build links clang's
+    # profile runtime, which takes the rest of what it needs from ucrtbase.dll and kernel32.dll (port/game_module.c).
+    libs = []
+    for d in (("kernel32_pgo", "ucrtbase_pgo") if pgo == "gen" else ("kernel32",)):
+        lib = os.path.join(out, d + ".lib")   # made each time: a few ms, and an older .def's never stays
         step("lld-link /lib", [os.path.join(llvm, "lld-link.exe"), "/lib", "/nologo", "/machine:x64",
-                               "/def:" + os.path.join(KIT_DIR, "kernel32.def"), "/out:" + lib], clean)
+                               "/def:" + os.path.join(KIT_DIR, d + ".def"), "/out:" + lib], clean)
+        libs.append(lib)
+    if pgo == "gen":
+        libs.append(profile_runtime(llvm))
     rsp = os.path.join(out, "objects.rsp")
     with open(rsp, "w", encoding="utf-8") as f:
         f.write("\n".join('"%s"' % w[2] for w in work) + "\n")
@@ -2039,7 +2089,7 @@ def cmd_module(args):
     say("[module] linking")
     # /Brepro: the time stamps are a hash of the DLL, so the same sources give the same file on every PC.
     step("lld-link", [os.path.join(llvm, "lld-link.exe"), "/nologo", "/dll", "/NODEFAULTLIB", "/NOENTRY", "/MANIFEST:NO", "/machine:x64",
-                      "/INCREMENTAL:NO", "/Brepro", "/MAP:" + os.path.join(out, "ascension_game.map"), "/OUT:" + dll, "@" + rsp, lib],
+                      "/INCREMENTAL:NO", "/Brepro", "/MAP:" + os.path.join(out, "ascension_game.map"), "/OUT:" + dll, "@" + rsp] + libs,
          clean)
     el = time.monotonic() - t0
     if stats:
@@ -2079,13 +2129,13 @@ KIT_ID = "kit-id.txt"
 KIT_FILES = "kit-files.txt"
 # LLVM's license texts, from llvm-project at the tag of the clang the Kit takes: local.json's "llvm_license", or
 # ../llvm-license/llvmorg-<version>, each as <part>/LICENSE.TXT. The Kit ships clang and lld, which are built on llvm.
-KIT_LLVM_LICENSES = ("llvm", "clang", "lld")
+KIT_LLVM_LICENSES = ("llvm", "clang", "lld", "compiler-rt")   # compiler-rt: the profile runtime of kit-build --pgo
 # The lifted PPU code in this many files whatever the PC, so that every PC compiles the same sources.
 KIT_CHUNKS = 96
 # Where kit-build leaves the DLL: <the settings' folder>\game-code (port/game_module_host.c).
 KIT_INI = "ascension_game.ini"
 # What kit-build makes in GOWA_WORK, and so what it removes when the DLL is in place.
-KIT_WORK_MADE = ("analysis", "recompiled", "recompiled.new", "spu", "build-module", "lifted.txt")
+KIT_WORK_MADE = ("analysis", "recompiled", "recompiled.new", "spu", "build-module", "build-train", "train", "lifted.txt")
 
 
 def module_abi():
@@ -2145,18 +2195,26 @@ class KitProgress(NoProgress):
     ORDER = ("check", "analyze", "lift_ppu", "lift_spu", "spu_programs", "compile", "link")
     SECONDS = {"check": 1.0, "analyze": 2.0, "lift_ppu": 72.0, "lift_spu": 31.0, "spu_programs": 14.0, "compile": 1600.0,
                "link": 2.0}
-    QUIET = ("check", "analyze", "lift_spu", "spu_programs", "link")
+    QUIET = ("check", "analyze", "lift_spu", "spu_programs", "link", "train_spu_programs", "train_link", "merge")
+    # "Optimise for this PC": the training copy built, played and its profile merged, between the lift and the build.
+    # The instrumented compile takes ~1.2 times the other's; the training run says how far it is itself.
+    PGO_ORDER = ("check", "analyze", "lift_ppu", "lift_spu", "train_spu_programs", "train_compile", "train_link", "train",
+                 "merge", "spu_programs", "compile", "link")
+    PGO_SECONDS = {"train_spu_programs": 14.0, "train_compile": 1900.0, "train_link": 3.0, "train": 440.0, "merge": 6.0}
     LIFTED = re.compile(r"lifted (\d+)/(\d+) functions")
     WROTE = re.compile(r"wrote ppu_recomp_(\d+)\.c")
     listens = True
 
-    def __init__(self, report, jobs, chunks):
+    def __init__(self, report, jobs, chunks, pgo=False):
         import collections
         import threading
         import time
         self.report, self.chunks = report, chunks
-        self.w = dict(self.SECONDS)
+        self.ORDER = self.PGO_ORDER if pgo else KitProgress.ORDER   # an instance's own, for phase()
+        self.w = dict(self.SECONDS, **(self.PGO_SECONDS if pgo else {}))
         self.w["compile"] /= max(1, jobs)
+        if pgo:
+            self.w["train_compile"] /= max(1, jobs)
         self.total = sum(self.w.values())
         self.cur, self.base, self.part_frac, self.text = "check", 0.0, 0.0, ""
         self.t0 = self.phase_t = time.monotonic()
@@ -2254,7 +2312,7 @@ def cmd_kit_build(args):
     os.dup2(fd, 2)
     os.close(fd)
     jobs = module_jobs(args.jobs)
-    PROGRESS = KitProgress(report, jobs, KIT_CHUNKS)
+    PROGRESS = KitProgress(report, jobs, KIT_CHUNKS, pgo=getattr(args, "pgo", False))
     say("kit-build %s: Python %s, %d cores, %d MB free, %d compiles at a time\nwork %s\nout  %s"
         % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), platform.python_version(), os.cpu_count() or 0,
            bench.free_ram_mb(), jobs, WORK, out))
@@ -2286,7 +2344,9 @@ def kit_build(out, jobs, args, t0):
         say("%d file(s) in the Kit's folder are not this Kit's (an older one unpacked over it?), and are left out of "
             "what it compiles:\n  %s" % (len(extra), "\n  ".join(extra[:20]) + ("\n  ..." if len(extra) > 20 else "")))
     made = sum(os.path.getsize(os.path.join(d, f)) for d, _, fs in os.walk(WORK) for f in fs) if os.path.isdir(WORK) else 0
-    need, free = max(256 << 20, (1536 << 20) - made), shutil.disk_usage(out).free
+    # The training copy of "Optimise for this PC" makes a second build folder, as large as the first.
+    need = (3072 << 20) if getattr(args, "pgo", False) else (1536 << 20)
+    need, free = max(256 << 20, need - made), shutil.disk_usage(out).free
     if free < need:
         die("needs %.1f GB free on %s, has %.1f GB" % (need / 2.0**30, os.path.splitdrive(out)[0] or out, free / 2.0**30))
     os.makedirs(WORK, exist_ok=True)
@@ -2302,7 +2362,10 @@ def kit_build(out, jobs, args, t0):
         with open(stamp, "w", encoding="ascii") as f:
             f.write(lifted)
     mod = os.path.join(WORK, "build-module")
-    cmd_module(argparse.Namespace(out=mod, jobs=str(jobs)))
+    profile, pgo_note = None, "off"
+    if getattr(args, "pgo", False):
+        profile, pgo_note = kit_pgo_profile(out, jobs)
+    cmd_module(argparse.Namespace(out=mod, jobs=str(jobs), pgo=profile))
     # The DLL first, then what it was made from: the launcher takes the DLL only with that.
     dll = os.path.join(out, MODULE_DLL)
     shutil.copyfile(os.path.join(mod, MODULE_DLL), dll + ".new")
@@ -2312,11 +2375,13 @@ def kit_build(out, jobs, args, t0):
     with open(ini + ".new", "w", encoding="utf-8", newline="\n") as f:
         f.write("; ascension_game.dll beside this file was built on this PC from the game's GOWA.elf by gowa.py kit-build.\n"
                 "; The launcher builds it again when the program or the Kit is another version.\n"
-                "abi = %d\nkit = %s\nelf = %s\nseconds = %d\n" % (abi, kit, GAME_ELF_SHA256, secs))
+                "abi = %d\nkit = %s\nelf = %s\nseconds = %d\npgo = %s\n" % (abi, kit, GAME_ELF_SHA256, secs, pgo_note))
     os.replace(ini + ".new", ini)
     if not args.keep_work:
         for name in KIT_WORK_MADE:
             p = os.path.join(WORK, name)
+            if name == "train" and not junction_off(os.path.join(p, "hdd0", "game", "NPUA80918")):
+                continue   # never removed through the junction to the player's game
             if os.path.isdir(p):
                 shutil.rmtree(p, ignore_errors=True)
             elif os.path.isfile(p):
@@ -2328,6 +2393,306 @@ def kit_build(out, jobs, args, t0):
     say("built in %d:%02d: %s" % (secs // 60, secs % 60, dll))
     PROGRESS.say("@done %d" % secs, True)
     return 0
+
+
+# "Optimise for this PC": the training run (docs/notes/2026-11-14-kit-pgo.md). Its route is the one a New Game takes on
+# an empty profile, which every player's copy takes alike: the first boot's brightness and screen size (Cross), the
+# opening movie (it cannot be skipped on a first boot), the welcome note (Circle), Single Player, Profile 1, a new
+# profile (Yes), New Game and Normal (Cross); then the opening level, played with combat buttons alone.
+TRAIN_LEVEL = "WAD/PS3_BE/HECABAS.WAD"   # the opening level's first file
+TRAIN_PLAY = 180                         # s of it
+TRAIN_EXPECTED = 440                     # s a run takes on a Ryzen 5 4600H, for the launcher's bar
+TRAIN_TRIES = 2                          # a run that froze or lost its way is made once more, from the start
+TRAIN_BTN = {"cross": 0x4000, "circle": 0x2000, "square": 0x8000, "triangle": 0x1000, "r1": 0x0800, "l1": 0x0400}
+TRAIN_FIGHT = ("square", "square", "triangle", "square", "circle", "cross", "square", "r1", "triangle", "l1")
+# What the logs say on the way. The unlocks are saved as the movie starts, and again just before the welcome note.
+TRAIN_MOVIE_OPEN, TRAIN_MOVIE_CLOSE = "[cellVdec] Open(", "[cellVdec] Close("
+TRAIN_PREFS = 'name="SaveDataUtil::SaveUnlocksPrefs"'
+TRAIN_PROFILE = 'name="SaveDataUtil::CreateSaveProfile"'
+
+
+class TrainStop(Exception):
+    """The training run cannot go on: why."""
+
+
+class TrainLog:
+    """What the training run's logs said so far, read as they grow: how often each mark came, and the flips per second
+    of each of GOWA_THREADS' 10 s windows."""
+
+    def __init__(self, paths, marks):
+        self.paths, self.marks = paths, marks
+        self.pos, self.rest = [0] * len(paths), [b""] * len(paths)
+        self.seen, self.flips = dict.fromkeys(marks, 0), []
+
+    def poll(self):
+        for i, path in enumerate(self.paths):
+            try:
+                with open(path, "rb") as f:
+                    f.seek(self.pos[i])
+                    data = f.read()
+            except OSError:
+                continue
+            self.pos[i] += len(data)
+            lines = (self.rest[i] + data).split(b"\n")
+            self.rest[i] = lines.pop()
+            for raw in lines:
+                line = raw.decode("utf-8", "replace")
+                for m in self.marks:
+                    if m in line:
+                        self.seen[m] += 1
+                if line.startswith("[threads] t="):
+                    f = re.search(r" flips=([\d.]+)/s", line)
+                    if f:
+                        self.flips.append(float(f.group(1)))
+        return self
+
+    def frozen(self):
+        """No flips for a minute after there were some, as the bench judges it: the game stopped."""
+        return any(self.flips) and len(self.flips) >= 6 and max(self.flips[-6:]) < 0.5
+
+
+def ini_read(path):
+    """section -> {key: value} of an INI as ps3_settings reads it (keys lowercased, quotes taken off)."""
+    out, sec = {}, ""
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            lines = f.read().splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        s = line.strip()
+        if not s or s[0] in ";#":
+            continue
+        if s.startswith("[") and "]" in s:
+            sec = s[1:s.index("]")].strip().lower()
+            continue
+        if "=" in s:
+            k, v = s.split("=", 1)
+            v = v.strip()
+            if len(v) >= 2 and v[0] == v[-1] == '"':
+                v = v[1:-1]
+            out.setdefault(sec, {})[k.strip().lower()] = v
+    return out
+
+
+def junction_on(link, target):
+    """A junction link -> target (no rights needed on NTFS); whether the game's USRDIR is seen through it."""
+    try:
+        import _winapi
+        _winapi.CreateJunction(target, link)
+    except Exception:   # an older Python, or a file system without them: mklink says it its way
+        subprocess.run(["cmd", "/c", "mklink", "/J", link, target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return os.path.isdir(os.path.join(link, "USRDIR"))
+
+
+def junction_off(link):
+    """The junction itself removed, never what it points to (RemoveDirectory takes the link); whether it is gone."""
+    if os.path.lexists(link):
+        try:
+            os.rmdir(link)
+        except OSError:
+            pass
+    return not os.path.lexists(link)
+
+
+def kit_pgo_profile(out, jobs):
+    """The training copy built (instrumented), played (kit_train) and its counters merged: the profile and what
+    ascension_game.ini says of it, or (None, why not), and the build goes on without one."""
+    import time
+    t0 = time.monotonic()
+    train = os.path.join(WORK, "train")
+    try:
+        mod = os.path.join(WORK, "build-train")
+        cmd_module(argparse.Namespace(out=mod, jobs=str(jobs), pgo="gen", phases="train_"))
+        raw, why = kit_train(out, os.path.join(mod, MODULE_DLL), train)
+        if not raw:
+            say("[pgo] no profile: %s; the build goes on without one" % why)
+            return None, "none (%s)" % why
+        PROGRESS.phase("merge", "Optimising for this PC: what it learned")
+        prof = os.path.join(train, "game.profdata")
+        r = subprocess.run([os.path.join(kit_llvm(), "llvm-profdata.exe"), "merge", "-o", prof, raw],
+                           stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace")
+        say(r.stdout[-2000:])
+        if r.returncode or not os.path.isfile(prof) or os.path.getsize(prof) < 4096:
+            say("[pgo] the profile did not merge; the build goes on without one")
+            return None, "none (the profile did not merge)"
+        secs = time.monotonic() - t0
+        say("[pgo] profile %s: %.1f MB, after %d s" % (prof, os.path.getsize(prof) / 1048576.0, secs))
+        return prof, "on (trained in %d s, profile %s)" % (secs, sha256(prof)[:12])
+    except (SystemExit, Exception) as e:   # whatever stopped it, the player still gets a game
+        if isinstance(e, SystemExit):
+            why = LAST_ERROR[0] if LAST_ERROR else "stopped"
+        else:
+            import traceback
+            traceback.print_exc()
+            why = "%s: %s" % (type(e).__name__, e)
+        say("[pgo] %s; the build goes on without a profile" % why)
+        return None, "none (%s)" % why
+
+
+def kit_train(out, dll, train):
+    """The training run: the program on the instrumented DLL (GOWA_GAME_MODULE), with a settings file of its own and an
+    empty hdd0 whose game folder is a junction to the player's (only read), muted (PS3_MUTE), deaf to the player's pads
+    and keyboard (PAD_NO_HOST), and driven through PAD_FILE by what its logs say. The player's settings, shader cache,
+    saves and folders are only read. A run that froze or lost its way is made once more, from the start (one of five
+    first boots of the training copy stopped on its first frames: docs/notes/2026-11-14-kit-pgo.md). Returns (the raw
+    profile, None) or (None, why)."""
+    import time
+    exe = os.environ.get("GOWA_TRAIN_EXE") or os.path.join(os.path.dirname(ROOT), "Ascension-R.exe")
+    src = os.environ.get("GOWA_TRAIN_SETTINGS") or os.path.join(os.path.dirname(out), "ascension-r.ini")
+    if not os.path.isfile(exe):
+        return None, "no Ascension-R.exe beside the Kit"
+    ini = ini_read(src)
+    paths = ini.get("paths", {})
+    hdd0 = paths.get("hdd0") or os.path.join(os.path.dirname(src), "gamedata", "dev_hdd0")
+    game = os.path.join(hdd0, "game", "NPUA80918")
+    if not os.path.isdir(os.path.join(game, "USRDIR")):
+        return None, "the game's folder is not at %s" % game
+    cache = ini.get("graphics", {}).get("shader_cache") or os.path.join(os.path.dirname(src), "d3d12_shader_cache.bin")
+    PROGRESS.phase("train", "Optimising for this PC: the game plays by itself (leave it open)")
+    link = os.path.join(train, "hdd0", "game", "NPUA80918")
+    raw = os.path.join(train, "game.profraw")
+    t_start, why = time.monotonic(), None
+    for attempt in range(1, TRAIN_TRIES + 1):
+        if os.path.isdir(train):
+            if not junction_off(link):
+                return None, "an earlier training's junction could not be removed"
+            shutil.rmtree(train, ignore_errors=True)
+        os.makedirs(os.path.join(train, "hdd0", "game"))
+        os.makedirs(os.path.join(train, "hdd0", "home", "00000001", "savedata"))
+        if not junction_on(link, game):
+            junction_off(link)
+            return None, "no junction to the game's folder could be made here"
+        try:
+            ok, why = kit_train_run(exe, kit_train_settings(train, ini, cache), dll, train, raw, t_start)
+        finally:
+            gone = junction_off(link)
+        if not gone:
+            return None, "the junction %s could not be removed: the training folder stays" % link
+        if ok:
+            return raw, None
+        say("[pgo] training run %d of %d: %s" % (attempt, TRAIN_TRIES, why))
+    return None, why
+
+
+def kit_train_settings(train, ini, cache):
+    """The training run's settings: the player's paths, language and patches (their code paths), on the training's
+    hdd0, in a 720p window with no frame cap, VSync or frame generation, Kratos taking no damage, and a copy of the
+    player's shader cache (the run is killed at its end, which no file of the player's must see)."""
+    paths = ini.get("paths", {})
+    keep = lambda sec, key, default: ini.get(sec, {}).get(key, default)
+    mine = os.path.join(train, "d3d12_shader_cache.bin")
+    if os.path.isfile(cache):
+        shutil.copyfile(cache, mine)
+    elf = os.environ.get("GOWA_ELF") or paths.get("elf", "")   # the launcher's, as it starts the build
+    lines = ["[paths]", "elf = " + elf, "vfs = " + paths.get("vfs", ""), "hdd0 = " + os.path.join(train, "hdd0")]
+    if paths.get("ffmpeg"):
+        lines.append("ffmpeg = " + paths["ffmpeg"])
+    lines += ["[display]", "mode = windowed", "window_size = 1280x720", "vsync = off", "frame_cap = off", "show_fps = off",
+              "[graphics]", "gpu = " + keep("graphics", "gpu", "discrete"), "render_scale = 1", "scaling = bilinear",
+              "sharpening = off", "frame_generation = off", "antialiasing = off",
+              "async_shaders = " + keep("graphics", "async_shaders", "2"), "shader_cache = " + mine,
+              "[system]", "language = " + keep("system", "language", "auto"), "[cheats]", "damage_taken = 0",
+              "[launcher]", "show = off", "[patches]"]
+    lines += ["%s = %s" % kv for kv in sorted(ini.get("patches", {}).items())]
+    settings = os.path.join(train, "ascension-r.ini")
+    with open(settings, "w", encoding="utf-8", newline="\r\n") as f:
+        f.write("\n".join(lines) + "\n")
+    return settings
+
+
+def kit_train_run(exe, settings, dll, train, raw, t_start):
+    """One run of the training route, to TRAIN_PLAY s of the opening level and a write of the counters after it,
+    then the program killed: (True, None), or (False, why)."""
+    import time
+    pad = os.path.join(train, "pad.txt")
+    open(pad, "w").close()
+    for name in (raw, raw + ".new"):
+        if os.path.isfile(name):
+            os.remove(name)
+    env = dict(os.environ, GOWA_GAME_MODULE=dll, LLVM_PROFILE_FILE=raw, PAD_FILE=pad, PAD_NO_HOST="1", PS3_MUTE="1",
+               GOWA_PRECOMPILE_FIRST="0", GOWA_THREADS="10")
+    log_o, log_e = os.path.join(train, "game.log"), os.path.join(train, "game.err")
+    log = TrainLog((log_o, log_e), (TRAIN_MOVIE_OPEN, TRAIN_MOVIE_CLOSE, TRAIN_PREFS, TRAIN_PROFILE, TRAIN_LEVEL))
+    t0 = time.monotonic()
+    p = None
+
+    def t():
+        return time.monotonic() - t0
+
+    def press(b, n=10):
+        with open(pad, "w") as f:
+            f.write("0x%04X %d" % (TRAIN_BTN[b], n))
+
+    def wait(secs):
+        end = t() + secs
+        while True:
+            if p.poll() is not None:
+                raise TrainStop("the game ended by itself at %d s (exit code %s)" % (t(), p.returncode))
+            if log.poll().frozen():
+                raise TrainStop("the game froze at %d s" % t())
+            PROGRESS.part(min(time.monotonic() - t_start, TRAIN_EXPECTED - 1), TRAIN_EXPECTED)
+            if t() >= end:
+                return
+            time.sleep(0.5)
+
+    try:
+        with open(log_o, "w") as fo, open(log_e, "w") as fe:
+            p = subprocess.Popen([exe, "--settings", settings, "--no-launcher"], cwd=os.path.dirname(exe), env=env,
+                                 stdout=fo, stderr=fe)
+        say("[pgo] training: %s, pid %d" % (exe, p.pid))
+        nxt = 12.0   # the first boot's brightness and screen size: Cross until the movie opens
+        while not log.seen[TRAIN_MOVIE_OPEN]:
+            if t() > 150:
+                raise TrainStop("the opening movie did not start")
+            if t() >= nxt:
+                press("cross")
+                nxt = t() + 6
+            wait(0.5)
+        opened = t()
+        while not log.seen[TRAIN_MOVIE_CLOSE]:
+            if t() > opened + 300:
+                raise TrainStop("the opening movie did not end")
+            wait(1)
+        closed = t()
+        say("[pgo] the opening movie from %d to %d s" % (opened, closed))
+        while log.seen[TRAIN_PREFS] < 2 and t() < closed + 20:
+            wait(0.5)
+        wait(2)
+        press("circle")   # the welcome note; Cross does not take it away
+        nxt = t() + 6     # Single Player, Profile 1, Yes (a new profile), New Game, Normal
+        while not log.seen[TRAIN_LEVEL]:
+            if t() > closed + 150:
+                raise TrainStop("the menus did not reach the opening level (%s)" %
+                                ("a profile was made" if log.seen[TRAIN_PROFILE] else "no profile was made"))
+            if t() >= nxt:
+                press("cross")
+                nxt = t() + 6
+            wait(0.5)
+        level = t()
+        say("[pgo] the opening level at %d s" % level)
+        k = 0
+        while t() < level + TRAIN_PLAY:
+            press(TRAIN_FIGHT[k % len(TRAIN_FIGHT)], 6)
+            k += 1
+            wait(0.7)
+        played = time.time()   # the counters to the end of the play: the next write (every 15 s)
+        while not (os.path.isfile(raw) and os.path.getmtime(raw) > played):
+            if t() > level + TRAIN_PLAY + 45:
+                raise TrainStop("no counters were written after the play")
+            wait(0.5)
+        say("[pgo] trained: %d s in all, %d s of the level, %.1f MB of counters" %
+            (t(), t() - level, os.path.getsize(raw) / 1048576.0))
+        return True, None
+    except TrainStop as e:
+        return False, str(e)
+    finally:
+        if p is not None and p.poll() is None:
+            p.kill()
+            try:
+                p.wait(30)
+            except subprocess.TimeoutExpired:
+                pass
 
 
 def py_closure(entries, folder):
@@ -2444,8 +2809,12 @@ def cmd_kit_tree(args):
         f.write("python314.zip\n.\n..\\scripts\n..\\ps3recomp\\tools\n")
     llvm = kit_llvm()
     os.makedirs(os.path.join(out, "llvm", "bin"))
-    for t in ("clang-cl.exe", "lld-link.exe"):
+    # llvm-profdata and clang's profile runtime: "Optimise for this PC" (kit-build --pgo).
+    for t in ("clang-cl.exe", "lld-link.exe", "llvm-profdata.exe"):
         shutil.copyfile(os.path.join(llvm, t), os.path.join(out, "llvm", "bin", t))
+    rt = profile_runtime(llvm)
+    os.makedirs(os.path.join(out, "llvm", os.path.dirname(os.path.relpath(rt, os.path.dirname(llvm)))))
+    shutil.copyfile(rt, os.path.join(out, "llvm", os.path.relpath(rt, os.path.dirname(llvm))))
     ver = llvm_version(llvm)[0]
     lic = load_local().get("llvm_license") or os.path.join(os.path.dirname(ROOT), "llvm-license", "llvmorg-" + ver)
     have = [n for n in KIT_LLVM_LICENSES if os.path.isfile(os.path.join(lic, n, "LICENSE.TXT"))]
@@ -2921,6 +3290,7 @@ def main():
     p = sub.add_parser("module", help="the game's DLL with clang-cl and lld-link alone, as the Kit builds it")
     p.add_argument("--out", help="where (default build-module/ in the work folder)")
     p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 384 MB of free memory each)")
+    p.add_argument("--pgo", help="gen: the instrumented training copy; a .profdata: optimized with it")
     p = sub.add_parser("kit-tree", help="the Kit's folder: its Python, clang and lld, and what of this tree builds the DLL")
     p.add_argument("--out", required=True, help="where, e.g. build-kit/kit")
     p.add_argument("--replace", action="store_true", help="replace the folder if it is there")
@@ -2929,6 +3299,10 @@ def main():
     p.add_argument("--out", required=True, help="where the DLL goes, with build.log and ascension_game.ini")
     p.add_argument("--jobs", default="auto", help="compiles at a time (default: the cores, 384 MB of free memory each)")
     p.add_argument("--keep-work", action="store_true", help="leave what it made in GOWA_WORK")
+    p.add_argument("--pgo", action="store_true",
+                   help="Optimise for this PC: build a training copy, let it play the opening by itself, then build with "
+                        "what it counted (GOWA_TRAIN_EXE and GOWA_TRAIN_SETTINGS stand in for the Kit's program and the "
+                        "player's settings, for a run outside a Kit)")
     p = sub.add_parser("ffmpeg", help="build the small FFmpeg a release carries, from its source tarball in ../ffmpeg-release")
     p.add_argument("--jobs", default="6", help="parallel compile jobs (default 6)")
     p = sub.add_parser("package", help="build and zip a release into dist/<version>/<release>/; nothing is uploaded")

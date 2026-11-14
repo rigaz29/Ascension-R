@@ -1,0 +1,32 @@
+; Only for the training build of "Optimise for this PC" (gowa.py kit-build --pgo): what clang's profile runtime,
+; linked into the instrumented DLL, takes from a C runtime and the program's table does not give the DLL
+; (port/game_module.c, GOWA_PGO_GEN). `lld-link /lib /def:ucrtbase_pgo.def /machine:x64` makes the import library.
+; ucrtbase.dll is in System32 on every Windows 10 and 11. The DLL a player plays with imports none of these.
+LIBRARY ucrtbase.dll
+EXPORTS
+    __stdio_common_vsprintf
+    _chsize
+    _errno
+    _fdopen
+    _fileno
+    _get_osfhandle
+    _getpid
+    _mkdir
+    _open
+    _open_osfhandle
+    _putenv
+    _strdup
+    fclose
+    feof
+    fopen
+    fread
+    fseek
+    ftell
+    memset
+    realloc
+    strchr
+    strcmp
+    strerror
+    strlen
+    strncpy
+    strrchr

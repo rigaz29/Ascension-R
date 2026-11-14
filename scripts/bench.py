@@ -43,7 +43,9 @@ A run that never reaches the level (fewer than 3 windows, or a median of 30
 flips/s or more: stuck on a menu or loading screen; --menu-fps sets that
 figure, as the fight runs above 30 with Disable Shadows) or freezes in it (median
 of 3 or less, or no flips for a minute) is reported as failed and run once
-more. Variants are run in ABBA order (a b, then b a, ...), the way A/Bs are
+more. A run at the title's own 30 flips/s lock (the median at 29.8-30.6, no
+window above 31) is in the level, not on a menu: it counts, and the summary
+says that there the builds cannot be told apart (at_lock). Variants are run in ABBA order (a b, then b a, ...), the way A/Bs are
 judged: compare medians, two runs a side at least. In plain alternation
 (a b a b) the first variant of each round came out ahead 6 times in 6, by
 1.7-2.6%, for builds the ABBA order then found within 1% of each other.
@@ -403,9 +405,21 @@ def run_once(exe, env_extra, a, out, tag):
     elif exited and t() < anchor + a.until:
         rec["failed"] = "exited at %.0f s" % t()
     elif len(vals) < 3 or not 3 < statistics.median(vals) < a.menu_fps:
-        rec["failed"] = ("never reached the level" if len(vals) < 3 or statistics.median(vals) >= a.menu_fps
-                         else "frozen")
+        if len(vals) >= 3 and at_lock(vals):
+            rec["at_lock"] = True
+        else:
+            rec["failed"] = ("never reached the level" if len(vals) < 3 or statistics.median(vals) >= a.menu_fps
+                             else "frozen")
     return rec
+
+
+def at_lock(vals):
+    """The windows (sorted) of a run in the level at the title's own 30 flips/s. The title holds some scenes there,
+    the route's fight among them once a build is fast enough: the median at 29.8-30.6 and no window above 31 (the
+    menus run near 40). Failing such a run as "never reached the level" took the faster build's runs out of an A/B
+    and made the slower one's median (docs/notes/2026-11-14-kit-pgo.md): it counts, and the summary says that at the
+    lock the A/B cannot tell the builds apart."""
+    return 29.8 <= statistics.median(vals) <= 30.6 and vals[-1] <= 31.0
 
 
 def seen(path, pat):
@@ -528,6 +542,8 @@ def line(rec):
         s += " | presents %.2f" % rec["presents"]
     if "skipped" in rec:
         s += ", skipped %.2f" % rec["skipped"]
+    if rec.get("at_lock"):
+        s += " AT THE TITLE'S 30 FPS LOCK"
     if rec.get("failed"):
         s += " FAILED: " + rec["failed"]
     return s
@@ -604,6 +620,11 @@ def main(a):
                 ", ".join("%.2f" % m for m in summary[name]["run_medians"]), extra))
         else:
             print("  %-10s no good run" % name)
+    locked = [r["tag"] for r in result["runs"] if r.get("at_lock")]
+    if locked:
+        print("== at the title's 30 fps lock: %s. There the builds cannot be told apart; a heavier scene can "
+              "(a --replay of a later level)." % ", ".join(locked))
+        result["at_lock"] = locked
     result["summary"] = summary
     if a.baseline and variants and variants[0][0] in summary:
         with open(a.baseline) as f:

@@ -68,6 +68,11 @@ void game_module_built(wchar_t* out, size_t n, const wchar_t* name)
 int game_module_where(wchar_t* path, size_t n)
 {
     wchar_t p[MAX_PATH + 32];
+    /* GOWA_GAME_MODULE: another DLL, for one run (the Kit's training run loads the instrumented one it built). */
+    if (GetEnvironmentVariableW(L"GOWA_GAME_MODULE", p, MAX_PATH) && GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES) {
+        swprintf(path, n, L"%ls", p);
+        return 1;
+    }
     const DWORD len = GetModuleFileNameW(NULL, p, MAX_PATH);
     wchar_t* slash = len && len < MAX_PATH ? wcsrchr(p, L'\\') : NULL;
     if (slash) {
@@ -131,6 +136,22 @@ int game_module_state(void)
     }
     if (!kit[0]) return abi == GAME_MODULE_ABI || !said ? 0 : 3;   /* nothing to build it again with: loading it tells */
     return abi == GAME_MODULE_ABI && !strcmp(kit, built_kit) ? 0 : 2;
+}
+
+/* Whether the game's code built here was built with Optimise for this PC: its ascension_game.ini says "pgo = on (...)",
+ * or "pgo = none (...)" when the training did not get through, against "pgo = off" or no such line (gowa.py kit-build). */
+int game_module_pgo(void)
+{
+    wchar_t p[MAX_PATH + 64];
+    char line[200];
+    int pgo = 0;
+    game_module_built(p, sizeof p / sizeof p[0], L"ascension_game.ini");
+    FILE* f = _wfopen(p, L"rb");
+    if (!f) return 0;
+    while (fgets(line, sizeof line, f))
+        if (!strncmp(line, "pgo = ", 6)) pgo = strncmp(line + 6, "off", 3) != 0;
+    fclose(f);
+    return pgo;
 }
 
 /* Before anything looks for lifted code. */

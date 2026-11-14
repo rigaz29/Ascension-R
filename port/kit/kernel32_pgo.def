@@ -1,0 +1,24 @@
+; Only for the training build of "Optimise for this PC" (gowa.py kit-build --pgo): kernel32.def's function, what
+; clang's profile runtime imports, and the three the DLL's profile writer uses (port/game_module.c, GOWA_PGO_GEN).
+; `lld-link /lib /def:kernel32_pgo.def /machine:x64` makes the import library.
+LIBRARY KERNEL32.dll
+EXPORTS
+    CloseHandle
+    CreateEventW
+    CreateFileA
+    CreateFileMappingW
+    CreateThread
+    FlushViewOfFile
+    GetComputerNameExW
+    GetCurrentThreadId
+    GetLastError
+    GetNativeSystemInfo
+    GetOverlappedResult
+    LockFileEx
+    MapViewOfFile
+    MoveFileExA
+    Sleep
+    UnlockFile
+    UnmapViewOfFile
+    VirtualUnlock
+    WideCharToMultiByte

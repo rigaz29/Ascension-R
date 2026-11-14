@@ -71,6 +71,17 @@ The GPU's work is recorded, submitted and presented on a thread of its own, `rsx
 the game's command buffer. Where that walk was the limit it gives about 10% (the gate with shadows on, 30 to 33 frames
 a second). `graphics.render_thread = off` (Render thread in the launcher's Graphics tab) puts both back on one thread.
 
+## Optimise for this PC
+
+With Optimise for this PC on (System tab, `launcher.optimise`, off at first), the Kit's build of the game's code makes a
+training copy first: instrumented, it plays the game's opening by itself for about seven minutes, in a window of its
+own, muted, deaf to the player's controllers and keyboard, on an hdd0 of its own (the game's folder through a junction,
+only read) with a copy of the shader cache. The build then optimizes with what it counted (clang's profile-guided
+optimization): 2-3% more frames in Sparta's fight on the test laptop, for about 15 minutes more a build and 3 GB of free
+disk space while it runs. A training that does not get through is made once more, then the build goes on without it;
+`game-code\ascension_game.ini` says `pgo = on (...)`, `none (why)` or `off`. Turned on after a build, Play builds the
+game's code again with it ([note](notes/2026-11-14-kit-pgo.md)).
+
 ## Which graphics card
 
 On a PC with two GPUs, Graphics card in the launcher's Graphics tab (`graphics.gpu`: `discrete`, the default, or `integrated`)

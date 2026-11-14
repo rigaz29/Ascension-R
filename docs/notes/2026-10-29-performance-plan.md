@@ -2561,6 +2561,12 @@ Each item is small and is measured on its own.
       against 340% at 28.9 (about 17% less a frame); the main thread stays at 97% either way.
     - Not in the Kit: a profile comes from running the game's code, so like the maps it does not
       ship. The Kit would have to train on the player's PC.
+    - **Corrected the same day: about +2-3%, not +7.5%.** The profile above summed 33 and 29
+      snapshots of the counts (the runtime appends each write; fixed), and the bench took the first
+      normal run, at the title's 30 flips/s lock in the level, for one that never reached it, so the
+      normal build's median came from its two slower runs (`bench.py` counts such runs now). The
+      Kit trains on the player's PC since, as Optimise for this PC, off at first; measured on
+      Sparta's fight: +2.2% (play only +2.9%). See [Optimise for this PC](2026-11-14-kit-pgo.md).
 
 ### Phase 3: native and GPU replacements, beyond an emulator
 

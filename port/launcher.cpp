@@ -243,6 +243,11 @@ static Opt s_opt[] = {
       "surround), where the device has a way past them." },
     { T_SYSTEM, "system", "precompile_music", "normal", "Precompile music", 0, LIST(k_music, k_music_n), k_music_n,
       "Music on the screen that builds the shaders at a version's first start, made by the program." },
+    { T_SYSTEM, "launcher", "optimise", "off", "Optimise for this PC", 1, SW,
+      "When the game's code is built, a training copy first plays the opening by itself, muted, in a window of its "
+      "own (leave it open), and the build then uses what it counted: 2-3% more frames on the test laptop. It adds "
+      "about 15 minutes to each build; if anything goes wrong there, the build goes on without it. Turned on after "
+      "a build, Play builds the game's code again with it." },
     { T_SYSTEM, "launcher", "show", "on", "Show this window at start", 1, SW,
       "When off, hold Shift while the game starts to bring it back." },
     { T_SYSTEM, "launcher", "update_check", "on", "Check for updates", 1, SW,
@@ -535,6 +540,7 @@ static struct {
 
 #ifdef PORT_GAME_MODULE
 extern "C" int game_module_state(void);                                        /* game_module_host.c */
+extern "C" int game_module_pgo(void);                                          /* game_module_host.c */
 extern "C" void game_module_built(wchar_t* out, size_t n, const wchar_t* name);
 extern "C" void game_module_kit(wchar_t* out, size_t n, const wchar_t* name);
 
@@ -552,6 +558,7 @@ static struct {
     char last[240];                    /* its last line that was not an @ line: Python's own complaint, if it had one */
     volatile LONG done, stopped;       /* @done came; Stop was pressed */
     int state;                         /* game_module_state(): 0 built, 1 not yet, 2 for another version, 3 no Kit */
+    int pgo;                           /* game_module_pgo(): built with Optimise for this PC (kit_state: 4 when not) */
     int partly;                        /* a build that stopped left its work: Build goes on from there */
     ULONGLONG started;
 } s_kit;
@@ -562,8 +569,25 @@ static void kit_refresh(void)
 {
     wchar_t p[GAME_PATH_MAX];
     s_kit.state = game_module_state();
+    s_kit.pgo = game_module_pgo();
     game_module_built(p, GAME_PATH_MAX, L"work");
     s_kit.partly = GetFileAttributesW(p) != INVALID_FILE_ATTRIBUTES;
+}
+
+/* launcher.optimise, as the System tab has it now (saved or not): the build makes a training copy first, which plays
+ * the opening, and builds with what it counted (kit-build --pgo). Off at first: it adds about 15 minutes to a build,
+ * for 2-3% more frames on the test laptop (docs/notes/2026-11-14-kit-pgo.md). */
+static int kit_optimise(void)
+{
+    const Opt* o = opt_find("launcher", "optimise");
+    return ps3_settings_ieq(o ? o->cur : ps3_settings_str("launcher", "optimise", NULL, "off"), "on");
+}
+
+/* s_kit.state, and 4: built, but without Optimise for this PC, which is on now. Build makes it again with it; turning
+ * it off plays what is there. */
+static int kit_state(void)
+{
+    return s_kit.state == 0 && !s_kit.pgo && kit_optimise() ? 4 : s_kit.state;
 }
 
 /* UTF-8 into a buffer, cut to fit it. */
@@ -591,7 +615,7 @@ static int kit_line(wchar_t* b, size_t n)
 /* What the ready check says when the game's code is not there to play, and the line under it. */
 static int kit_need(wchar_t* b, size_t n, const wchar_t** hint)
 {
-    *hint = L"Once, on this PC: about 10 minutes";
+    *hint = kit_optimise() ? L"Once, on this PC: about 25 minutes" : L"Once, on this PC: about 10 minutes";
     AcquireSRWLockShared(&s_kit.lock);
     const int failed = s_kit.err[0] != 0;
     if (failed) swprintf(b, n, L"Not built: %ls", s_kit.err);
@@ -600,7 +624,7 @@ static int kit_need(wchar_t* b, size_t n, const wchar_t** hint)
         *hint = L"";   /* Log and Try again leave no room: the log says the rest */
         return -1;
     }
-    switch (s_kit.state) {
+    switch (kit_state()) {
     case 1:
         if (s_kit.partly) {
             swprintf(b, n, L"The game's code is partly built");
@@ -611,7 +635,11 @@ static int kit_need(wchar_t* b, size_t n, const wchar_t** hint)
         return 0;
     case 2:
         swprintf(b, n, L"The game's code is from another version");
-        *hint = L"Again, on this PC: about 10 minutes";
+        *hint = kit_optimise() ? L"Again, on this PC: about 25 minutes" : L"Again, on this PC: about 10 minutes";
+        return 0;
+    case 4:
+        swprintf(b, n, L"The game's code is built without Optimise for this PC");
+        *hint = L"Again with it: about 25 minutes";   /* or Optimise off again, which plays what is there */
         return 0;
     default:
         swprintf(b, n, L"No Kit folder to build the game's code with");
@@ -1972,7 +2000,7 @@ static void draw_play(void)
         draw_progress(lx + 26, y + 28, lw - 26, f, level == 0, 8.0f);
         y += 10;
 #ifdef PORT_GAME_MODULE
-    } else if (s_kit.running || (s_rc.elf_ok && s_kit.state != 0)) {
+    } else if (s_kit.running || (s_rc.elf_ok && kit_state() != 0)) {
         /* The game's code, built here: what it is at, and under it the bar and Stop, or what Build would do. */
         wchar_t b[480];
         const wchar_t* hint = L"";
@@ -1982,7 +2010,7 @@ static void draw_play(void)
             y += 34;
             draw_progress(lx + 26, y + 10, lw - 26 - 106, (float)s_kit.permille / 1000.0f, s_kit.stopped != 0);
             w_button(L"Stop", R(lx + lw - 96, y, 96, 30), H_KIT_STOP, B_PLAIN);
-        } else if (s_kit.state != 3) {
+        } else if (kit_state() != 3) {
             y += 34;
             const int log = s_kit.err[0] != 0;
             text(hint, s_tf_small, R(lx + 26, y, lw - 26 - (log ? 212 : 106), 26), C_MUTED);
@@ -2624,7 +2652,7 @@ static void prepare_done(void)
     game_paths_fill();
     game_refresh();
 #ifdef PORT_GAME_MODULE
-    if (s_kit.state == 1 || s_kit.state == 2) {   /* the game's code next, built here once */
+    if (kit_state() != 0 && kit_state() != 3) {   /* the game's code next, built here once */
         kit_start();
         return;
     }
@@ -2814,7 +2842,9 @@ static void kit_start(void)
     env[at] = 0;
 
     static wchar_t cmd[4 * GAME_PATH_MAX];
-    swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%ls\" -E -s -B -X utf8 \"%ls\" kit-build --out \"%ls\"", py, script, out);
+    const int pgo = kit_optimise();
+    swprintf(cmd, sizeof cmd / sizeof cmd[0], L"\"%ls\" -E -s -B -X utf8 \"%ls\" kit-build --out \"%ls\"%ls", py, script, out,
+             pgo ? L" --pgo" : L"");
     SECURITY_ATTRIBUTES sa = { sizeof sa, NULL, TRUE };
     HANDLE rd = NULL, wr = NULL;
     HANDLE job = CreateJobObjectW(NULL, NULL);
@@ -2872,7 +2902,7 @@ static void kit_start(void)
     }
     ResumeThread(pi.hThread);
     CloseHandle(pi.hThread);
-    toast("Building the game's code: about 10 minutes");
+    toast(pgo ? "Building the game's code: about 25 minutes" : "Building the game's code: about 10 minutes");
 }
 
 static void kit_stop(void)
@@ -3144,8 +3174,8 @@ static void act(int id)
 #ifdef PORT_GAME_MODULE
             /* The game's code first: Play builds it, and the player plays once it is there. */
             if (s_kit.running) { toast("The game's code is still being built"); break; }
-            if (s_kit.state == 3) { toast_bad("No Kit folder to build the game's code with"); break; }
-            if (s_kit.state != 0) { s_tab = T_PLAY; kit_start(); break; }
+            if (kit_state() == 3) { toast_bad("No Kit folder to build the game's code with"); break; }
+            if (kit_state() != 0) { s_tab = T_PLAY; kit_start(); break; }
 #endif
             /* The second link, if only the first was made. */
             if (s_game.g.state >= GAME_NO_ELF && GetFileAttributesW(s_game.link_hdd0) == INVALID_FILE_ATTRIBUTES)

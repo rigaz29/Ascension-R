@@ -1529,14 +1529,29 @@ static void title_environment(void)
 #if defined(PORT_SPU_PGO_GEN)
 /* PORT_SPU_PGO=gen: the lifted SPU code is instrumented. Its profile goes to LLVM_PROFILE_FILE
  * every 15 s: the bench closes the game with WM_CLOSE and kills it 3 s later, so the write at
- * exit cannot be counted on. */
+ * exit cannot be counted on. The runtime truncates its file once, at its start, and appends
+ * every write after: a run of 8 minutes left 33 profiles of the counts so far one after the
+ * other, which llvm-profdata merge adds up, the first minutes counted 33 times. Each write goes
+ * to <file>.new instead, moved over the file after it: the file holds the last one alone. */
 extern "C" int __llvm_profile_write_file(void);
+extern "C" void __llvm_profile_set_filename(const char*);
+static char s_pgo_raw[MAX_PATH], s_pgo_new[MAX_PATH + 4];
 static DWORD WINAPI pgo_writer(void*)
 {
     for (;;) {
         Sleep(15000);
-        __llvm_profile_write_file();
+        if (__llvm_profile_write_file() == 0)
+            MoveFileExA(s_pgo_new, s_pgo_raw, MOVEFILE_REPLACE_EXISTING);
     }
+}
+static void pgo_writer_start(void)
+{
+    const char* raw = getenv("LLVM_PROFILE_FILE");
+    if (!raw || !*raw || strlen(raw) >= sizeof s_pgo_raw) return;
+    snprintf(s_pgo_raw, sizeof s_pgo_raw, "%s", raw);
+    snprintf(s_pgo_new, sizeof s_pgo_new, "%s.new", raw);
+    __llvm_profile_set_filename(s_pgo_new);
+    CreateThread(NULL, 0, pgo_writer, NULL, 0, NULL);
 }
 #endif
 
@@ -1634,7 +1649,7 @@ int main(int argc, char** argv)
     { const char* m = getenv("PS3_MISSED_CODE");
       if (!precompile && m && *m && strcmp(m, "0")) ps3_missed_code_to(m); }
 #if defined(PORT_SPU_PGO_GEN)
-    CreateThread(NULL, 0, pgo_writer, NULL, 0, NULL);
+    pgo_writer_start();
 #endif
     const int src = ps3_settings_load(settings);
     gowa_port_defaults();

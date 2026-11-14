@@ -70,6 +70,54 @@ static void module_sync(const GameModuleHost* h)
  * and write the program's block, index 0. This is the one import, for that. */
 __declspec(dllimport) unsigned long __stdcall GetCurrentThreadId(void);
 
+#ifdef GOWA_PGO_GEN
+/* The training build of "Optimise for this PC" (gowa.py kit-build --pgo): the lifted code instrumented
+ * (-fprofile-instr-generate), with clang's profile runtime (clang_rt.profile-x86_64.lib) linked in. That runtime is
+ * built against a C runtime. What it takes from one comes from ucrtbase.dll and kernel32.dll through the import
+ * libraries the build makes (kit\ucrtbase_pgo.def, kit\kernel32_pgo.def), from the program's table for what this
+ * file takes from there already, and from here. */
+unsigned long long __security_cookie = 0x00002B992DDFA232ull;
+void __security_check_cookie(unsigned long long cookie) { (void)cookie; }
+/* What it calls by name and this file has only as __imp_ pointers, and the POSIX names ucrtbase has with a _. */
+#define PLAIN(n) __asm__(".text\n.balign 16\n.globl " #n "\n.def " #n "; .scl 2; .type 32; .endef\n" #n ":\n\tjmpq *__imp_" #n "(%rip)\n");
+PLAIN(malloc) PLAIN(free) PLAIN(calloc) PLAIN(getenv) PLAIN(atoi) PLAIN(fflush) PLAIN(__acrt_iob_func) PLAIN(__stdio_common_vfprintf)
+#define ALIAS(n, to) __asm__(".text\n.balign 16\n.globl " #n "\n.def " #n "; .scl 2; .type 32; .endef\n" #n ":\n\tjmp " #to "\n");
+ALIAS(strdup, _strdup) ALIAS(fileno, _fileno) ALIAS(fdopen, _fdopen) ALIAS(getpid, _getpid) ALIAS(open, _open)
+__declspec(dllimport) void* __stdcall CreateThread(void*, unsigned long long, unsigned long(__stdcall*)(void*), void*, unsigned long,
+                                                   unsigned long*);
+__declspec(dllimport) void __stdcall Sleep(unsigned long);
+__declspec(dllimport) int __stdcall MoveFileExA(const char*, const char*, unsigned long);
+char* getenv(const char*);
+unsigned long long strlen(const char*);
+void* memcpy(void*, const void*, unsigned long long);
+int __llvm_profile_write_file(void);
+void __llvm_profile_set_filename(const char*);
+/* The counters go to LLVM_PROFILE_FILE every 15 s, and the training run ends killed once one written after its play
+ * is there. The runtime truncates its file once and appends every write after it, which llvm-profdata merge adds
+ * up: each goes to <file>.new instead, moved over the file after it (main.cpp's pgo_writer has the same). */
+static char s_pgo_raw[1024], s_pgo_new[1024 + 4];
+static unsigned long __stdcall pgo_writer(void* arg)
+{
+    (void)arg;
+    for (;;) {
+        Sleep(15000);
+        if (__llvm_profile_write_file() == 0)
+            MoveFileExA(s_pgo_new, s_pgo_raw, 1);   /* MOVEFILE_REPLACE_EXISTING */
+    }
+}
+static void pgo_writer_start(void)
+{
+    const char* raw = getenv("LLVM_PROFILE_FILE");
+    const unsigned long long n = raw ? strlen(raw) : 0;
+    if (!n || n >= sizeof s_pgo_raw) return;
+    memcpy(s_pgo_raw, raw, n + 1);
+    memcpy(s_pgo_new, raw, n);
+    memcpy(s_pgo_new + n, ".new", 5);
+    __llvm_profile_set_filename(s_pgo_new);
+    CreateThread(0, 0, pgo_writer, 0, 0, 0);
+}
+#endif
+
 __declspec(dllexport) int ascension_game_init(const GameModuleHost* h, GameModuleOut* out)
 {
     out->thread_id = GetCurrentThreadId();
@@ -85,6 +133,9 @@ __declspec(dllexport) int ascension_game_init(const GameModuleHost* h, GameModul
     g_module_tramp_off = h->tramp_offset;
     for (GameCtor* c = &s_ctors_begin; c < &s_ctors_end; c++)
         if (*c) (*c)();
+#ifdef GOWA_PGO_GEN
+    pgo_writer_start();
+#endif
     out->functions = function_table;
     out->function_count = function_table_count;
     out->resolver = (void*)spu_indirect_branch;
