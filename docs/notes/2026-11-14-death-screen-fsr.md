@@ -47,11 +47,23 @@ its own, `logs\issue9-play`), the drop came, and that session's pad recording re
 - **The memo holds.** `GOWA_EDGE_NATIVE_STATS=1`: EDGE jobs looked up went from ~833 a frame to ~1,725, with results
   for 92% of them, 99% of the unskinned (rigid) ones, and no new results kept: the falling pieces are many more jobs
   of meshes already kept. Given up after a result: 0.27% of the jobs before, 1.36% after.
-- **The cost of a result.** A rigid job with a result still unpacks ([the rigid note](2026-11-11-edge-rigid.md):
-  so that a result given up later has its arrays). The sampler on the workers (`PS3_SAMPLE=1`, `PS3_SAMPLE_THREAD`):
-  the input piece's lifted code (`0x3000C`, `0x30358`, `0x306F0`) went from 11.2% of their guest samples to 26.6%;
-  `gowa_edge_light_79b0` (lighting on the SPU's side, for results given up) shows up among the hottest after.
+- **Where EDGE's time goes.** The sampler on the workers with each sample's workload (`PS3_SAMPLE=1`,
+  `PS3_SAMPLE_THREAD=spurs pm`, `PS3_SAMPLE_RVAS`, named by the link map), EDGE0-2 only, samples a second before and
+  after: `gowa_edge_light_79b0` (the lighting stage's loop on the SPU's side) 44 -> 244, `pic_00755080`'s `0x306F0`
+  34 -> 195 and `pic_0075B120`'s `0x30358` 18 -> 101 (lifted pieces), `xf_native` 7 -> 33, `pt_native` 11 -> 47: the
+  whole job on the SPU, about 5.5 times. The unpacking hardly moves (`v9_decode` 1.1 times, `gowa_edge_decode_304a0`
+  1.3): a rigid result's unpacking is not this scene's cost.
+- **Why on the SPU.** A temporary count at the lighting stage's entry (`edge_gpul_capture`) of why the GPU's
+  lighting turned stages down, every 5 s: before the decay ~3-5 thousand a second for `r8 != 0`, after ~15 thousand
+  (~850 a frame); the other attribute layout ~3.5 thousand a second after; more than 32 lights (33-48) ~700 a second
+  after. A stage turned down gives its job's kept result up (`edge_memo_revoke_lit`): the whole job then runs on the
+  SPU, unpacking, transforms, lighting and packing.
+- **What `r8` is.** Those jobs' attribute list is `01 03 04 14 1B 1C 1D 1E`: an attribute 20 (`0x14`) before 27-30,
+  and `r8` names its array. Their light record counts four groups, `3 0 1 3` here: after the stage's lighting, when
+  `r8` is set, it tail-calls the point lights (`0x6AC8`) once more for the fourth group, adding them to attribute 20
+  (blend 1.0). The GPU's lighting knows the first layout and three groups.
 
-So the decay doubles EDGE's jobs, and every one of them still unpacks. The rigid note's next step, rigid results
-without the unpacking (the arrays given back from the result on a revoke, as the other kept results do), is what this
-scene asks for: unpacking is about a quarter of the workers' guest time in it.
+So the decay's pieces are lit with a layout and a fourth light group the GPU's lighting does not take, and every
+such job runs whole on the SPU. Taking them on the GPU means the pass learning that layout (attribute 20 in the vertex
+it packs, ids 27-30 one place on) and the fourth group's point lights added to attribute 20, and the memo keeping
+attribute 20 for them.
