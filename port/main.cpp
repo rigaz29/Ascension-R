@@ -1485,7 +1485,9 @@ static void title_environment(void)
     /* Keep the newest copies of a save before it is written over
      * ([system] save_backups, the launcher's "Save backups"). */
     env_default("PS3_SAVEDATA_BACKUPS", ps3_settings_str("system", "save_backups", NULL, "5"));
-    env_default("VTX_RESIDENT_MB", "256");      /* EDGE's kept results in GPU memory (rsx_kept.h) */
+    /* EDGE's kept results, drawn from a copy that stays (rsx_kept.h): 256 MB of vertexes and 128 MB of indexes, in an
+     * upload heap (system memory the GPU reads). */
+    env_default("VTX_RESIDENT_MB", "256");
     /* Record a frame's draws into the command list as the drain captures them,
      * in time it otherwise spends idle, rather than all at the frame's end. */
     env_default("D3D12_RECORD_AHEAD", "1");
