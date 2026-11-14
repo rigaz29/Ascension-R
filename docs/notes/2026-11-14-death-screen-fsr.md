@@ -35,7 +35,23 @@ times the brightness (the brightest pixel 1 of 255 before the prompt shows); the
 
 ## The frame rate at the decay
 
-Not reproduced: in every replay of the session (three, and the earlier one of the session of 17:06) Kratos falls off
-the bridge before the decay; the bridge itself runs at 42-59 flips/s on the test laptop. The reporter's overlay had
-the PPU and the SPUs at 100% and the GPU at 17%, and their log has the game's own `BATCHJOB: AddJob: waiting for room
-in job list` around then: the SPUs' job lists full. A save just before the decay would let it be measured.
+The reporter's own replays fell off the bridge before the decay. Played by hand here from the same save (a folder of
+its own, `logs\issue9-play`), the drop came, and that session's pad recording replays it every time on this laptop
+(`temple_repro.ps1`, the same save, sharpening high and frame generation on as played, `PAD_NO_HOST=1`): ~30 flips/s,
+13 at ~120 s, then 17-19 for as long as the run goes on (the reporter: 23 on a Ryzen 7 5700X3D).
+
+- **The SPUs.** The workers took 532% of a core before and 566% after (`GOWA_THREADS=2`): 66% more SPU work a frame.
+  The main thread stays at 96%; the GPU's threads lose time.
+- **EDGE.** By workload (`SPURS_WID_PROF=2`): EDGE0, EDGE1 and EDGE2 ~67% of a core each before, ~126% after, a run
+  2.0 ms then 5.7: ~2.9 times a frame. RenderJobs 2.1 times a frame. General6 and the others take less.
+- **The memo holds.** `GOWA_EDGE_NATIVE_STATS=1`: EDGE jobs looked up went from ~833 a frame to ~1,725, with results
+  for 92% of them, 99% of the unskinned (rigid) ones, and no new results kept: the falling pieces are many more jobs
+  of meshes already kept. Given up after a result: 0.27% of the jobs before, 1.36% after.
+- **The cost of a result.** A rigid job with a result still unpacks ([the rigid note](2026-11-11-edge-rigid.md):
+  so that a result given up later has its arrays). The sampler on the workers (`PS3_SAMPLE=1`, `PS3_SAMPLE_THREAD`):
+  the input piece's lifted code (`0x3000C`, `0x30358`, `0x306F0`) went from 11.2% of their guest samples to 26.6%;
+  `gowa_edge_light_79b0` (lighting on the SPU's side, for results given up) shows up among the hottest after.
+
+So the decay doubles EDGE's jobs, and every one of them still unpacks. The rigid note's next step, rigid results
+without the unpacking (the arrays given back from the result on a revoke, as the other kept results do), is what this
+scene asks for: unpacking is about a quarter of the workers' guest time in it.
