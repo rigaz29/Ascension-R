@@ -11,8 +11,11 @@
  * main memory. The game's own checks print "invalid size" and stop on a trap, which on a PS3 would have ended the game
  * and which the lift leaves out.
  *
- * What gives a block such a size there is not known yet. These say it in the log, with what a texture held, and keep
- * the damage from spreading: such a texture or allocation gets an empty block, and a move past local memory does not
+ * What gives a block such a size: the streaming pass trims the oldest texture's block (func_0039EA58), cutting the
+ * mips above the ones it keeps off the block's front, and it takes a texture loaded with only its smaller mips too, for
+ * which the cut is larger than the block (issues #7 and #9, found with #7's save in HRTN). gowa_vram_cut makes such a
+ * cut nothing. The others stay for any other way: they say it in the log, with what a texture held, and keep the
+ * damage from spreading: such a texture or allocation gets an empty block, and a move past local memory does not
  * happen. A size made negative on purpose (one replay of the temple) printed one line and nothing else.
  *
  * With 0.1.0-alpha.7 the same came the other way in: the texture mover (func_003A0000), which grows a streamed texture
@@ -129,6 +132,45 @@ extern "C" void gowa_vram_runs(ppu_context* ctx, uint32_t)
                     vm_read32(b + 0x8), vm_read32(b + 0xC), vm_read32(b + 0x18), vm_read32(b + 0x1C));
     }
     fflush(stderr);
+}
+
+/* func_0039EA58 trims a texture's block: it cuts [texture + 0x1C] bytes, the mips above the ones the texture keeps,
+ * off the block's front, and moves its offset and RSX address up by as much. That holds for a block with the whole
+ * chain, [0, [texture + 0x20]). The streaming pass (around 0x003A0D88) also takes, once it is the oldest, a texture
+ * loaded with only its smaller mips, whose block is [+0x20] - [+0x1C] bytes: the cut is larger than the block, its
+ * size goes negative and its offset past its data, and the moves after it wreck local memory (#9; #7: one 1024x1024
+ * texture at the Sparta cinematic's level, cut by 640 KB from a 43 KB block every frame).
+ * At 0x0039EB1C r29 is the cut, r4 the block's size, r30 the block, r31 the texture. A cut larger than the block is
+ * made what the block holds in front of the kept mips: nothing, for such a block. The trim then changes nothing in
+ * place, and its other work stays as the game has it. So that the pass takes another texture next, this one's LRU
+ * stamp (+8 of its block's state entry, in the table at [0x9B2298]) is moved on by the 240 frames the pass waits
+ * before a texture counts as old; a pass that takes it every frame finds nothing to free and stays short of memory. */
+extern "C" void gowa_vram_cut(ppu_context* ctx, uint32_t)
+{
+    const uint32_t cut = (uint32_t)ctx->gpr[29], size = (uint32_t)ctx->gpr[4];
+    if (cut <= size) return;
+    const uint32_t tex = (uint32_t)ctx->gpr[31], blk = (uint32_t)ctx->gpr[30];
+    const uint32_t end = is_there(tex, 0x48) ? vm_read32(tex + 0x20) : 0;
+    const uint32_t lead = end >= size ? end - size : 0;   /* where in the chain the block begins */
+    const uint32_t fixed = cut >= lead && cut - lead <= size ? cut - lead : 0;
+    ctx->gpr[29] = fixed;
+    uint32_t stamp = 0;
+    if (is_there(0x009B2298, 8)) {
+        const int32_t d = (int32_t)(blk - vm_read32(0x009B229C));
+        const uint32_t st = vm_read32(0x009B2298) + (uint32_t)((d / 128) * 16);   /* srawi 7 + addze: toward zero */
+        if (is_there(st, 16)) {
+            stamp = vm_read32(st + 8);
+            if (stamp) vm_write32(st + 8, stamp + 240);
+        }
+    }
+    static volatile LONG said;
+    const LONG n = InterlockedIncrement(&said);
+    if (n <= 8 || !(n & (n - 1))) {
+        fprintf(stderr, "[vram] texture 0x%08X: a trim of 0x%X bytes from a block of 0x%X that holds only its mips from "
+                        "0x%X made 0x%X; its stamp 0x%X put 240 frames on (%ld so far)\n", tex, cut, size, lead, fixed,
+                stamp, (long)n);
+        fflush(stderr);
+    }
 }
 
 /* MoveLocalMemory (func_003A2ADC) on entry: r3 the destination, r4 the source, r5 the size, as offsets in local

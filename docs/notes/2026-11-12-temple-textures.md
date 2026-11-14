@@ -290,3 +290,28 @@ The other three: one upload changed while read (32x32, 0xA5), and nothing.
 
 So the break happens on a GTX 1650 too (#7 an RTX 3080, #9 an RX 7900 XT), one run in four here, about four minutes
 in. #7's cinematic, with nothing in an 0.1.0-alpha.7 log, fits the same failure; the replay did not show it.
+
+## The cause, and the fix (2026-11-14)
+
+Probes in the trim (`func_0039EA58`), kept in a ring in memory and said when a size went bad, on that replay:
+
+- The bad size is the trim's own. It cuts `[texture + 0x1C]` off the front of the texture's block, the mips above the
+  ones it keeps, and moves the block's offset and RSX address up by as much. In a run that did not break every trim
+  was of a block with the whole chain, `[0, [texture + 0x20])` (400 of 400), and a texture was trimmed again only
+  after a grow (`func_003A0000`) had given it its chain back.
+- In the runs that broke, the streaming pass's trim of its oldest texture (from 0x003A10CC) took a texture loaded with
+  only its smaller mips: 1024x1024, `[0xA0000, 0xAAAB0)`, a block of 0xAAB0 bytes, its state's flags 0x0400 (no
+  0x8000, which every whole-chain trim had). The cut of 0xA0000 made the size 0xFFF6AAB0 and moved the block 640 KB
+  past its data, and the pass took it again every frame, 0xA0000 more each time. The same texture in both runs; a
+  512x512 one in a later run. The main thread did every grow and trim: not a race between threads.
+- The pass takes a texture without 0x8000 once its stamp (+8 of the state entry, the frame it was last used) is 240
+  frames old. The stamp counts flips: at 60 a second a texture is old after 4 s, where the PS3's 30 gave 8. Why such
+  a texture is the oldest here, and seemingly not there, is not settled.
+- First try, such textures left out of the pass (at 0x003A0D88): no break, but one run fell to about 2 flips a
+  second. After its trim the pass compares free memory with what it needs and, short, calls `func_0039EC14`.
+- **The fix**, `gowa_vram_cut` at 0x0039EB1C: a cut larger than the block is made what the block holds in front of
+  the kept mips, which for such a block is nothing, so the trim changes nothing in place; and the texture's stamp is
+  moved on 240 frames, so the pass takes another texture next. `GAME_MODULE_ABI` 5.
+
+Six replay runs with it (four still with the probes): none broke. In one the fix took the 512x512 texture nine times,
+240 frames apart, and the run went on to the checkpoint at 49 flips a second, as the others did (47 to 51).
