@@ -2547,6 +2547,20 @@ Each item is small and is measured on its own.
     `6D90` 0.96M.
   - Level, three runs each: 15.85 against 15.69 flips/s.
   - The option stays, off: the same mechanism can serve the lifted PPU code.
+  - **Lifted PPU and SPU code, 2026-11-14 (0.1.0-alpha.10's tree): +7.5%.** Asked after the
+    inFAMOUS 2 port (SamiEnazi/infamous2-port), which trains a profile on the player's PC and
+    reports +5-11%.
+    - Instrumented build (`PORT_PPU_PGO=gen`, `PORT_SPU_PGO=gen`): 13 min with 3 jobs; it ran
+      HRTN at 9.3 flips/s.
+    - Profile from two replays, neither of them the bench's scene: #7's save through HRTN's fight
+      (480 s) and #9's through the temple's TEM300 and TEM350 (420 s). Merged, 45,518 functions;
+      the hottest are the lifted SPU code's helpers (`spu__xl`, `spu__xs`, the shuffles, LS reads).
+    - Build with it: 8 min, no warning of a function out of date; the exe 75.4 MB against 90.5.
+    - Bench, ABBA, two runs a side (logs/pgo/bench1): 26.87 against 28.89 flips/s, runs 26.53 and
+      27.18 against 27.77 and 29.02. The six SPU policy workers took 381% of a core at 26.9
+      against 340% at 28.9 (about 17% less a frame); the main thread stays at 97% either way.
+    - Not in the Kit: a profile comes from running the game's code, so like the maps it does not
+      ship. The Kit would have to train on the player's PC.
 
 ### Phase 3: native and GPU replacements, beyond an emulator
 
