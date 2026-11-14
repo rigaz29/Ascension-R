@@ -279,13 +279,14 @@ int edge_gpul_lean_pack(void)
 static inline float eg_f(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 
 /* The output piece 0x755080's U8N of a float's bits: cfltu(fma(v, 255, 0.5), 149) >> 24, that is
- * floor(v 255 + 0.5) clamped to 0-255 (in double, exact; exponent 255 is a large number on the SPU) */
+ * floor(v 255 + 0.5) clamped to 0-255 (in double, exact; exponent 255 is a large number on the SPU).
+ * The floor is the truncation of a positive value: the DLL has no floor (game_module.h). */
 static inline uint8_t eg_u8n(uint32_t b)
 {
     if (((b >> 23) & 0xFFu) == 0xFFu) return (b & 0x80000000u) ? 0 : 255;
     if (((b >> 23) & 0xFFu) == 0) return 0;
-    const double d = floor((double)eg_f(b) * 255.0 + 0.5);
-    return d <= 0.0 ? 0 : d >= 255.0 ? 255 : (uint8_t)d;
+    const double d = (double)eg_f(b) * 255.0 + 0.5;
+    return !(d > 0.0) ? 0 : d >= 255.0 ? 255 : (uint8_t)(int)d;
 }
 
 /* What the stage writes that is put out besides ids 27-30: the index list (u16, at c + 0x50's first
