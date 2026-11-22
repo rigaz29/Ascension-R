@@ -1,9 +1,19 @@
 cmake_minimum_required(VERSION 3.20)
+# macOS: Apple Silicon only (docs/MACOS.md). arm64 whatever the CMake or the shell runs as: an x86-64 CMake under
+# Rosetta would otherwise make an Intel build.
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_ARCHITECTURES)
+    set(CMAKE_OSX_ARCHITECTURES arm64 CACHE STRING "macOS: Apple Silicon only")
+endif()
 project(GowARecomp
     VERSION 0.1.0
     LANGUAGES C CXX
     DESCRIPTION "God of War: Ascension (PS3, NPUA80918) static recompilation on ps3recomp"
 )
+
+if(APPLE AND NOT CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    message(FATAL_ERROR "macOS builds are for Apple Silicon only: CMAKE_OSX_ARCHITECTURES is "
+            "'${CMAKE_OSX_ARCHITECTURES}', and must be arm64 (no Intel Mac, no Rosetta, no universal binary).")
+endif()
 
 # ---------------------------------------------------------------------------
 # Standards
@@ -395,11 +405,8 @@ option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
 # arm64 (an Apple Silicon Mac): no SSE or AVX. The SPU helpers take their NEON forms there (spu_helpers.h), and
 # the RZ mode is FPCR's (spu_run_with_halt), so neither x86 option applies.
 set(PORT_HOST_X86 OFF)
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|i[3-6]86" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+if(NOT APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|i[3-6]86")   # a Mac is arm64 (above)
     set(PORT_HOST_X86 ON)
-endif()
-if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
-    set(PORT_HOST_X86 OFF)
 endif()
 if(NOT PORT_HOST_X86 AND PORT_SPU_AVX2)
     message(STATUS "Lifted SPU:      arm64: no AVX2, the NEON forms")

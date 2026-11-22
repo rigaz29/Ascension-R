@@ -3,6 +3,10 @@
 This fork is being brought to macOS on Apple Silicon (M1 and later). This page tracks what is done, how to build it,
 and what is left.
 
+Apple Silicon only: no Intel Macs and no Rosetta. CMake builds arm64 on a Mac whatever it runs as, and stops if asked
+for anything else. Homebrew must be the arm64 one, in `/opt/homebrew` (not `/usr/local`, where Rosetta's goes), or its
+libraries will not link.
+
 ## Status
 
 The port **builds** for arm64 against ps3recomp's small sample program (the "smoke lift"), and the `macOS` workflow
@@ -32,6 +36,7 @@ a Mac yet**: that needs the game's own lifted code, built on a Mac from your cop
 You need Xcode's command-line tools (`xcode-select --install`) and [Homebrew](https://brew.sh).
 
 ```sh
+uname -m && brew --prefix                  # arm64 and /opt/homebrew
 brew install cmake ninja python sdl2 glslang spirv-cross
 git clone --recursive <this fork>
 cd Ascension-R
