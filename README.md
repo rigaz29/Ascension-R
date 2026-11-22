@@ -232,6 +232,11 @@ For a copy that is not supported yet, its serial and version (RPCS3's game list 
 One player plays it on Linux through Proton, in a Wine prefix made by Lutris
 ([#12](https://github.com/rigaz29/Ascension-R/issues/12)). The Steam Deck has not been tried.
 
+### Does it run on a Mac?
+
+Not yet. This fork is being brought to Apple Silicon Macs: it builds there, with ps3recomp's Metal backend, but has
+not run the game on a Mac yet. [docs/MACOS.md](docs/MACOS.md) has the state, how to build it and what is left.
+
 ### Can I use mods?
 
 Yes: put a mod's folder or its `.zip` into the `mods` folder beside `Ascension-R.exe` (the Mods

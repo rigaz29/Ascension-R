@@ -23,7 +23,11 @@
 #include <string>
 #include <thread>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "port_compat.h"
+#ifndef _WIN32
+#include <dirent.h>
+#include <sys/stat.h>
+#endif
 
 static const int k_multiplayer[] = { 1 };   /* Blood Oath: "Complete the MP Training in Olympus" */
 
@@ -125,6 +129,25 @@ static void on_unlock(const PS3TrophySet* set, int id)
 static int find_trp(const char* dir, char* out, size_t cap)
 {
     if (!dir || !*dir) return -1;
+#ifndef _WIN32
+    /* POSIX: the same search, on UTF-8 paths. */
+    char tropdir[1100];
+    snprintf(tropdir, sizeof tropdir, "%s/TROPDIR", dir);
+    DIR* d = opendir(tropdir);
+    if (!d) return -1;
+    int r = -1;
+    while (struct dirent* e = readdir(d)) {
+        if (e->d_name[0] == '.') continue;
+        char trp[1400];
+        snprintf(trp, sizeof trp, "%s/%s/TROPHY.TRP", tropdir, e->d_name);
+        struct stat st;
+        if (stat(trp, &st) != 0 || !S_ISREG(st.st_mode)) continue;
+        if (strlen(trp) < cap) { strcpy(out, trp); r = 0; }
+        break;
+    }
+    closedir(d);
+    return r;
+#else
     wchar_t wdir[1024], pat[1100];
     if (!MultiByteToWideChar(CP_UTF8, 0, dir, -1, wdir, 1024)) return -1;
     swprintf(pat, 1100, L"%ls\\TROPDIR\\*", wdir);
@@ -142,6 +165,7 @@ static int find_trp(const char* dir, char* out, size_t cap)
     } while (FindNextFileW(h, &fd));
     FindClose(h);
     return r;
+#endif
 }
 
 int gowa_trophies_read(const char* hdd0, const char* app_dir, const char* disc_dir, int lang, GowaTrophies* t)

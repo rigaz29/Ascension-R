@@ -31,7 +31,7 @@
 #include "spu_context.h"
 #include "spu_helpers.h"
 #include "spu_edge_verify.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -63,6 +63,7 @@ static int cx_on(void)
 
 static SPU_THREAD_LOCAL spu_context* t_cx_ref;   /* GOWA_EDGE_VERIFY's reference run: off */
 
+#if NATIVE_SIMD_X86
 static __m128i cx_m(u128 v) { return _mm_loadu_si128((const __m128i*)v._u32); }
 static void cx_put(spu_context* ctx, int r, __m128i v) { _mm_storeu_si128((__m128i*)ctx->gpr[r]._u32, v); }
 /* r + d in every word (ai, a) */
@@ -70,6 +71,12 @@ static void cx_add(spu_context* ctx, int r, uint32_t d)
 {
     cx_put(ctx, r, _mm_add_epi32(cx_m(ctx->gpr[r]), _mm_set1_epi32((int)d)));
 }
+#else
+static void cx_add(spu_context* ctx, int r, uint32_t d)
+{
+    for (int k = 0; k < 4; k++) ctx->gpr[r]._u32[k] += d;
+}
+#endif
 
 /* [a, a + n) and [b, b + m) overlap in the local store's address space */
 static int cx_overlap(uint32_t a, uint32_t n, uint32_t b, uint32_t m)
@@ -123,6 +130,11 @@ void gowa_edge_ctx_8988(spu_context* ctx)
  * passes' stores reach neither that quadword nor the A bytes still to be read. */
 void gowa_edge_ctx_8b90(spu_context* ctx)
 {
+#if !NATIVE_SIMD_X86
+    /* arm64: loop B is written with SSE; the lifted loop runs it (a void routine that does nothing). */
+    (void)ctx;
+}
+#else
     if (!cx_on() || t_cx_ref == ctx) return;
     uint8_t* ls = ctx->ls;
     const uint32_t a33 = ctx->gpr[33]._u32[0];
@@ -182,6 +194,7 @@ void gowa_edge_ctx_8b90(spu_context* ctx)
     CX_COUNT(s_cx_b, 1);
     CX_COUNT(s_cx_b_passes, done);
 }
+#endif
 
 /* GOWA_EDGE_VERIFY=1: the whole builder (0x88B0) on a copy with the loops native, against the
  * builder on the real context with them lifted (spu_edge_verify.h). */

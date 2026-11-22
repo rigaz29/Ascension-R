@@ -46,10 +46,14 @@
 #include "spu_helpers.h"
 #include "spu_edge_verify.h"
 #include "spu_edge_memo.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+/* arm64: written with SSE (pshufb tables). The hook says "not handled" there, and the lifted 0xE4D0 decompresses the
+ * list, as it does with GOWA_EDGE_NATIVE's bit off. */
+#if NATIVE_SIMD_X86
 
 static volatile long long s_x11_calls, s_x11_tris, s_x11_declined, s_x11_why[13];
 static int x11_no(int why) { __atomic_add_fetch(&s_x11_why[why], 1, __ATOMIC_RELAXED); return 0; }
@@ -304,3 +308,7 @@ int gowa_edge_idx_e4d0(spu_context* ctx)
     __atomic_add_fetch(&s_x11_declined, 1, __ATOMIC_RELAXED);
     return 0;
 }
+
+#else
+int gowa_edge_idx_e4d0(spu_context* ctx) { (void)ctx; return 0; }
+#endif

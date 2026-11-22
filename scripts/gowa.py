@@ -1332,8 +1332,9 @@ def cmd_build(args):
     else:
         say("note: no FFmpeg build in ../ffmpeg; movies and compressed audio won't decode")
         ff_opts = ["-DPS3RECOMP_FFMPEG_RUNTIME=OFF"]
-    sdl3 = find_sdl3()
-    if not sdl3:
+    # SDL3 beside XInput is Windows'. Elsewhere the runtime reads the controllers through SDL2 (macOS: brew install sdl2).
+    sdl3 = find_sdl3() if os.name == "nt" else None
+    if os.name == "nt" and not sdl3:
         say("note: no SDL3 %s in ../sdl3; the controllers are XInput's alone" % SDL3_VERSION)
     ff_opts.append("-DPS3RECOMP_SDL3_INCLUDE_DIR=" + (os.path.join(sdl3, "include") if sdl3 else ""))
     rc = run(["cmake", "-S", ROOT, "-B", BUILD, "-G", "Ninja",
@@ -1353,10 +1354,11 @@ def cmd_build(args):
     rc = run(["cmake", "--build", BUILD, "-j", args.jobs], env=env)
     if not rc:
         write_settings(ffmpeg)
-        copy_dxc()
-        copy_fsr()
-        copy_sdl3(sdl3)
-        copy_vc_runtime(env)
+        if os.name == "nt":   # the DLLs the D3D12 build loads from its own folder (docs/MACOS.md for the Mac)
+            copy_dxc()
+            copy_fsr()
+            copy_sdl3(sdl3)
+            copy_vc_runtime(env)
         # beside the exe as in a release, for RecompLauncher's "Add a build" (its Developer tools)
         shutil.copy2(os.path.join(ROOT, "recomplauncher.json"), BUILD)
     return rc

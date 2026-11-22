@@ -50,7 +50,7 @@
 #include "spu_edge_gpuskin.h"
 #include "spu_edge_verify.h"
 #include "rsx_kept.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -286,8 +286,21 @@ static int memo_unpack_mode(void)
  * flight change over, and fits a turn's frame time to its kept jobs a flip and the switch
  * (docs/notes/2026-11-16-s-j-review.md). Unset: always on. Not in the Kit's DLL. */
 #ifndef PS3_GAME_MODULE
+#ifdef _WIN32
 __declspec(dllimport) int __stdcall QueryPerformanceCounter(long long* count);
 __declspec(dllimport) int __stdcall QueryPerformanceFrequency(long long* freq);
+#else
+#include <time.h>
+/* The same two on the monotonic clock, in nanoseconds. */
+static int QueryPerformanceCounter(long long* count)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    *count = (long long)ts.tv_sec * 1000000000LL + ts.tv_nsec;
+    return 1;
+}
+static int QueryPerformanceFrequency(long long* freq) { *freq = 1000000000LL; return 1; }
+#endif
 extern unsigned cellGcm_flip_request_count(void);
 static int turn_same(const char* a, const char* b)
 {

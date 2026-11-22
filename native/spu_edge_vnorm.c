@@ -37,7 +37,7 @@
 #include "spu_helpers.h"
 #include "spu_edge_simd.h"
 #include "spu_edge_verify.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

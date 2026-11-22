@@ -24,7 +24,7 @@
  * calls, iterations and fallbacks every 2^20 iterations. */
 #include "spu_context.h"
 #include "spu_helpers.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

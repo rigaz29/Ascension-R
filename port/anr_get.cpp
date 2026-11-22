@@ -8,6 +8,7 @@
  * signature on the DLL. ANR comes with no licence: the project keeps nothing of it and fetches it, for a player who asks,
  * only from Apex Compute's own releases.
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "anr_get.h"
 #include "game_find.h"
 #include "version.h"
@@ -261,3 +262,5 @@ std::string anr_version_of(const std::string& s)
     while (end > at + 2 && s[end - 1] == '.') end--;
     return end > at + 2 ? s.substr(at, end - at) : std::string();
 }
+
+#endif /* _WIN32 */

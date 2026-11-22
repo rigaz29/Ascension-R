@@ -2,6 +2,7 @@
  * Texture mods for the D3D12 backend's hooks (textures.h, ps3recomp's rsx_tex_replace.h). The pictures are read
  * and the dump is written with Windows' own imaging (WIC).
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "textures.h"
 #include "mods.h"
 
@@ -647,3 +648,5 @@ int gowa_textures_start(const ModList& l, const std::wstring& dump_dir)
            (int)s.pics.size(), copies, u8[0] ? "; the dump: " : "", u8);
     return (int)s.pics.size();
 }
+
+#endif /* _WIN32 */

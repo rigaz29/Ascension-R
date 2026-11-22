@@ -14,6 +14,7 @@
  * folder (vfs\PS3_GAME and hdd0\game\<id>, to the game's folders) is made again to the same folder, never followed. The
  * old folder is only read, and stays as it was.
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "portable_copy.h"
 #include "game_find.h"
 
@@ -216,3 +217,5 @@ void portable_offer(const char* settings, char* note, size_t n)
     }
     if (note && n) snprintf(note, n, "%s", done);
 }
+
+#endif /* _WIN32 */

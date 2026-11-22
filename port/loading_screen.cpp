@@ -40,6 +40,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -1308,3 +1309,5 @@ int gowa_loading_preview(const char* dir)
     }
     return 0;
 }
+
+#endif /* _WIN32 */

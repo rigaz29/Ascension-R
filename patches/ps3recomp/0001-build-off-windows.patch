@@ -1,0 +1,194 @@
+diff --git a/libs/input/cellPad.c b/libs/input/cellPad.c
+index 9a63762..2d0cfc0 100644
+--- a/libs/input/cellPad.c
++++ b/libs/input/cellPad.c
+@@ -277,15 +277,6 @@ static void pad_rumble_levels(u8 small_on, u8 large, u16* lo, u16* hi)
+     *hi = small_on ? 0xFFFFu : 0u;
+ }
+ 
+-/* ---------------------------------------------------------------------------
+- * XInput backend
+- * -----------------------------------------------------------------------*/
+-
+-#if PAD_BACKEND_XINPUT
+-
+-/* Deadzone for analog sticks (same as XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) */
+-#define PAD_STICK_DEADZONE  7849
+-
+ /* A title that reads the pad once a frame samples at 33 ms what a thumb does in 100, and one
+  * that wants a stick at the end of its travel for several reads misses most flicks at that
+  * rate. God of War: Ascension's evade is such a one: it smooths the right stick over its
+@@ -332,6 +323,39 @@ static int pad_flick_hold(void)
+     }
+     return n;
+ }
++
++/* input.device: auto (the pads, and the keyboard into slot 0 beside them), pad
++ * (no keyboard; also PAD_NO_KEYBOARD) or keyboard (no pads).
++ * PAD_NO_HOST=1: neither, slot 0 a pad that only PAD_FILE, PAD_SCRIPT and the
++ * like press: a run that drives itself, which the player's own pads and
++ * keyboard must not disturb (a port's training run while the player waits). */
++enum { PAD_DEV_AUTO, PAD_DEV_PAD, PAD_DEV_KEYBOARD, PAD_DEV_NONE };
++static int pad_device(void)
++{
++    static int d = -1;
++    if (d >= 0) return d;
++    const char* v = ps3_settings_str("input", "device", NULL, "auto");
++    if (getenv("PAD_NO_HOST"))                   d = PAD_DEV_NONE;
++    else if (getenv("PAD_NO_KEYBOARD"))          d = PAD_DEV_PAD;
++    else if (ps3_settings_ieq(v, "pad"))         d = PAD_DEV_PAD;
++    else if (ps3_settings_ieq(v, "keyboard"))    d = PAD_DEV_KEYBOARD;
++    else {
++        if (!ps3_settings_ieq(v, "auto"))
++            printf("[cellPad] input.device = %s is not auto, pad or keyboard; using auto\n", v);
++        d = PAD_DEV_AUTO;
++    }
++    return d;
++}
++
++/* ---------------------------------------------------------------------------
++ * XInput backend
++ * -----------------------------------------------------------------------*/
++
++#if PAD_BACKEND_XINPUT
++
++/* Deadzone for analog sticks (same as XINPUT_GAMEPAD_LEFT_THUMB_DEADZONE) */
++#define PAD_STICK_DEADZONE  7849
++
+ #define PAD_TRIGGER_THRESHOLD 30
+ 
+ /* XInput is resolved at run time. Only XInputGetState and XInputSetState are
+@@ -431,29 +455,6 @@ static int pad_host_window_focused(void)
+     return pid == GetCurrentProcessId();
+ }
+ 
+-/* input.device: auto (the pads, and the keyboard into slot 0 beside them), pad
+- * (no keyboard; also PAD_NO_KEYBOARD) or keyboard (no pads).
+- * PAD_NO_HOST=1: neither, slot 0 a pad that only PAD_FILE, PAD_SCRIPT and the
+- * like press: a run that drives itself, which the player's own pads and
+- * keyboard must not disturb (a port's training run while the player waits). */
+-enum { PAD_DEV_AUTO, PAD_DEV_PAD, PAD_DEV_KEYBOARD, PAD_DEV_NONE };
+-static int pad_device(void)
+-{
+-    static int d = -1;
+-    if (d >= 0) return d;
+-    const char* v = ps3_settings_str("input", "device", NULL, "auto");
+-    if (getenv("PAD_NO_HOST"))                   d = PAD_DEV_NONE;
+-    else if (getenv("PAD_NO_KEYBOARD"))          d = PAD_DEV_PAD;
+-    else if (ps3_settings_ieq(v, "pad"))         d = PAD_DEV_PAD;
+-    else if (ps3_settings_ieq(v, "keyboard"))    d = PAD_DEV_KEYBOARD;
+-    else {
+-        if (!ps3_settings_ieq(v, "auto"))
+-            printf("[cellPad] input.device = %s is not auto, pad or keyboard; using auto\n", v);
+-        d = PAD_DEV_AUTO;
+-    }
+-    return d;
+-}
+-
+ /* The keyboard as pad 0. [keyboard] has one line per PS3 button or stick
+  * direction, naming up to four keys or mouse buttons, comma-separated:
+  * `cross = Space, MouseLeft`. A line the file leaves out keeps the runtime's
+@@ -1436,6 +1437,17 @@ static DWORD WINAPI pad_sampler(LPVOID unused)
+         Sleep(PAD_POLL_INTERVAL_MS);
+     }
+ }
++#else
++static void* pad_sampler(void* unused)
++{
++    (void)unused;
++    for (;;) {
++        if (s_pad_initialized) pad_poll_backend();
++        struct timespec d = { 0, PAD_POLL_INTERVAL_MS * 1000000L };
++        nanosleep(&d, NULL);
++    }
++    return NULL;
++}
+ #endif
+ 
+ /* ---------------------------------------------------------------------------
+@@ -1483,6 +1495,13 @@ s32 cellPadInit(u32 max_connect)
+         if (t) CloseHandle(t);
+         else s_sampling = 0;
+     }
++#else
++    if (!s_sampling && (pad_flick_hold() || pad_stick_full() < 1.0f)) {
++        s_sampling = 1;
++        pthread_t t;
++        if (pthread_create(&t, NULL, pad_sampler, NULL) == 0) pthread_detach(t);
++        else s_sampling = 0;
++    }
+ #endif
+     /* What is there at start is the baseline; only later changes are
+      * flagged CELL_PAD_STATUS_ASSIGN_CHANGES. */
+diff --git a/libs/system/cellSaveData.c b/libs/system/cellSaveData.c
+index 0c1219c..03a2b4a 100644
+--- a/libs/system/cellSaveData.c
++++ b/libs/system/cellSaveData.c
+@@ -28,6 +28,17 @@
+  * etc.) that collide with the identically named members of CellSaveData*Stat; undef
+  * them so the struct fields resolve, and read host times via the explicit timespec
+  * fields in the POSIX branches below. */
++/* The host file times, spelt without the macros undefined below. */
++#if defined(__APPLE__)
++#  define HOST_ST_ATIME(st) ((st).st_atimespec.tv_sec)
++#  define HOST_ST_MTIME(st) ((st).st_mtimespec.tv_sec)
++#elif defined(_WIN32)
++#  define HOST_ST_ATIME(st) ((st).st_atime)
++#  define HOST_ST_MTIME(st) ((st).st_mtime)
++#else
++#  define HOST_ST_ATIME(st) ((st).st_atim.tv_sec)
++#  define HOST_ST_MTIME(st) ((st).st_mtim.tv_sec)
++#endif
+ #ifdef st_atime
+ #  undef st_atime
+ #endif
+@@ -737,8 +748,8 @@ static int copy_host_file(const char* src, const char* dst)
+         _utime(dst, &ub);
+ #else
+         struct utimbuf ub;
+-        ub.actime = st.st_atime;
+-        ub.modtime = st.st_mtime;
++        ub.actime = HOST_ST_ATIME(st);
++        ub.modtime = HOST_ST_MTIME(st);
+         utime(dst, &ub);
+ #endif
+     }
+diff --git a/runtime/ppu/ppu_loader.cpp b/runtime/ppu/ppu_loader.cpp
+index 5faeb45..039371e 100644
+--- a/runtime/ppu/ppu_loader.cpp
++++ b/runtime/ppu/ppu_loader.cpp
+@@ -1019,6 +1019,8 @@ void ps3_sampler_start(void)
+ void ps3_sampler_start(void) {}
+ #endif
+ 
++#else   /* not Windows: no sampling profiler (the one above walks Win32 thread contexts) */
++void ps3_sampler_start(void) {}
+ #endif
+ 
+ extern "C" uint8_t* vm_base;   /* defined by the host */
+diff --git a/runtime/spu/spu_dma.h b/runtime/spu/spu_dma.h
+index 4a24104..32a369b 100644
+--- a/runtime/spu/spu_dma.h
++++ b/runtime/spu/spu_dma.h
+@@ -990,13 +990,20 @@ static inline int mfc_run_list(spu_context* spu, uint32_t elem_lsa,
+ {
+     /* A job's input list is a dozen small blocks from all over memory, cold: one miss after
+      * another, each as long as the copy. All the misses start here at once. */
+-#if defined(__SSE2__) || defined(_M_X64)
++#if defined(_M_X64) || (defined(__SSE2__) && (defined(_MSC_VER) || !defined(__GNUC__)))
+     if (num_left > 1 && mfc_is_get(base_cmd))
+         for (uint32_t i = 0; i < num_left; i++) {
+             const uint8_t* const p = vm_base + spu_ls_read32(spu, (elem_lsa + i * 8 + 4) & SPU_LS_MASK);
+             _mm_prefetch((const char*)p, _MM_HINT_T0);
+             _mm_prefetch((const char*)p + 64, _MM_HINT_T0);
+         }
++#elif defined(__GNUC__) || defined(__clang__)
++    if (num_left > 1 && mfc_is_get(base_cmd))
++        for (uint32_t i = 0; i < num_left; i++) {
++            const uint8_t* const p = vm_base + spu_ls_read32(spu, (elem_lsa + i * 8 + 4) & SPU_LS_MASK);
++            __builtin_prefetch(p, 0, 3);
++            __builtin_prefetch(p + 64, 0, 3);
++        }
+ #endif
+     for (uint32_t i = 0; i < num_left; i++) {
+         uint32_t el = (elem_lsa + i * 8) & SPU_LS_MASK;

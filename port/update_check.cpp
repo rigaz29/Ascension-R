@@ -12,6 +12,7 @@
  *     latest <tag> <page>          (when a newer release was out)
  *     dismissed <tag>              (its notice closed)
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "update_check.h"
 #include "version.h"
 #include "ps3emu/ps3_settings.h"
@@ -207,3 +208,5 @@ void update_check_end(void)
     CloseHandle(s_thread);
     s_thread = NULL;
 }
+
+#endif /* _WIN32 */

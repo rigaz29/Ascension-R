@@ -24,8 +24,11 @@
  * (to 512), then per joint i32 parent (-1: none), f32 ratio, f32 inverse bind[16], f32 new inverse bind[16]:
  * little-endian, rows. Parents come before children. Not covered: the skinned jobs of the Grotto's own build (b7c8).
  */
-#include <excpt.h>
-#include <immintrin.h>
+#include "port_compat.h"
+/* <windows.h> (port_compat.h on Windows) keeps the 16-bit pointer words far and near as empty macros; this file has
+ * a variable called far. */
+#undef far
+#undef near
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -59,7 +62,7 @@ static volatile long s_lock;
 
 static void lock(void)
 {
-    while (__atomic_exchange_n(&s_lock, 1, __ATOMIC_ACQUIRE)) _mm_pause();
+    while (__atomic_exchange_n(&s_lock, 1, __ATOMIC_ACQUIRE)) port_cpu_relax();
 }
 static void unlock(void) { __atomic_store_n(&s_lock, 0, __ATOMIC_RELEASE); }
 
@@ -164,7 +167,7 @@ static int mesh_of(uint32_t rec)
         for (int j = 0; j < s_files[k]->nsizes; j++)
             if (s_files[k]->sizes[j] > far) far = s_files[k]->sizes[j];
     uint32_t base = 0, size = 0;
-    __try {
+    PORT_TRY {
         for (uint32_t h = rec & ~15u; h + far >= rec && h >= 0x10000; h -= 16) {
             const uint8_t* q = vm_base + h;
             if (be32(q) == 0x0001000D && !be32(q + 8) && !be32(q + 12)) {
@@ -173,7 +176,7 @@ static int mesh_of(uint32_t rec)
                 break;
             }
         }
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } PORT_EXCEPT {
         base = 0;
     }
     int prop = -1;
@@ -216,9 +219,9 @@ static const prop_array* palette_of(uint32_t base, int prop)
     /* The array, copied: a file of more joints than the character has would read past it. */
     static uint8_t src[PROP_MAX_JOINTS * 64];
     int read = 1;
-    __try {
+    PORT_TRY {
         memcpy(src, vm_base + base, (size_t)p->n * 64);
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } PORT_EXCEPT {
         read = 0;
     }
     if (!read) return NULL;

@@ -299,6 +299,7 @@ add_executable(${PROJECT_NAME}
     port/textures.cpp
     port/edge_prop.c
     port/skel_prop.c
+    port/posix_stubs.cpp     # off Windows: what stands in for the Windows-only files (docs/MACOS.md)
     ${PS3RECOMP_SCAFFOLD}
     ${HLE_NID_TABLE}
     ${PORT_GAME_SOURCES}
@@ -391,6 +392,19 @@ target_sources(${PROJECT_NAME} PRIVATE ${ZLIB_INFLATE_SOURCES})
 #                          (SPU_LS_NO_DIAG), those have no gate: a load and a
 #                          branch less at every lqd/stqd.
 option(PORT_SPU_AVX2 "Build the lifted SPU code with AVX2" ON)
+# arm64 (an Apple Silicon Mac): no SSE or AVX. The SPU helpers take their NEON forms there (spu_helpers.h), and
+# the RZ mode is FPCR's (spu_run_with_halt), so neither x86 option applies.
+set(PORT_HOST_X86 OFF)
+if(CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64|i[3-6]86" OR CMAKE_OSX_ARCHITECTURES MATCHES "x86_64")
+    set(PORT_HOST_X86 ON)
+endif()
+if(CMAKE_OSX_ARCHITECTURES MATCHES "arm64")
+    set(PORT_HOST_X86 OFF)
+endif()
+if(NOT PORT_HOST_X86 AND PORT_SPU_AVX2)
+    message(STATUS "Lifted SPU:      arm64: no AVX2, the NEON forms")
+    set(PORT_SPU_AVX2 OFF)
+endif()
 option(PORT_SPU_LINES "Line tables for the lifted SPU code, and a PDB (profiling)" OFF)
 # PORT_RT_LINES: line tables for the runtime library and a PDB, the lifted code as it is, so a PS3_SAMPLE_THREAD
 # profile names the runtime's lines (llvm-symbolizer on the samples' RVAs) without building the lifted code again.
@@ -434,7 +448,10 @@ if(SPU_SOURCES)
         INCLUDE_DIRECTORIES "${PS3RECOMP_DIR}/runtime/spu"
         COMPILE_DEFINITIONS "${spu_defs}")
     if(NOT MSVC OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-        set(spu_opts -O2 -msse4.1)
+        set(spu_opts -O2)
+        if(PORT_HOST_X86)
+            list(APPEND spu_opts -msse4.1)
+        endif()
         if(PORT_SPU_AVX2)
             list(APPEND spu_opts -mavx2 -mfma -ffp-contract=off)
         endif()
@@ -535,6 +552,12 @@ if(WIN32)
     endif()
 endif()
 
+# macOS: CoreFoundation for the main thread's run loop (main.cpp, run_guest). The Metal and AppKit frameworks
+# come with ps3recomp_runtime.
+if(APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE "-framework CoreFoundation")
+endif()
+
 # ---------------------------------------------------------------------------
 # Compiler-specific flags
 # ---------------------------------------------------------------------------
@@ -582,7 +605,7 @@ endif()
 #     with the same correctly rounded result. OFF for CPUs without FMA3.
 option(PORT_PPU_FMA "Build the lifted PPU code with FMA3 instructions (x86-64)" ON)
 set(recomp_fma OFF)
-if(PORT_PPU_FMA AND CMAKE_SYSTEM_PROCESSOR MATCHES "AMD64|x86_64")
+if(PORT_PPU_FMA AND PORT_HOST_X86)   # arm64 has fused multiply-add as part of its base instruction set
     set(recomp_fma ON)
 endif()
 if(MSVC)

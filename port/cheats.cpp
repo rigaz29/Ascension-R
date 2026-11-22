@@ -26,7 +26,7 @@
 #include <stdlib.h>
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "port_compat.h"
 
 static const uint32_t GO_PLAYER = 0x006925D0, GO_PASSIVE_AI = 0x0069EA78, GO_NEO_IO = 0x0069E920;
 static const uint32_t CREATURE_HEALTH = 0x214, CREATURE_MAX_HEALTH = 0x218, CREATURE_CONTROLLER = 0x1304;
@@ -66,9 +66,7 @@ static const uint32_t CREATURE_POSITION = 0x40;
 
 static int is_there(uint32_t addr, uint32_t bytes)
 {
-    MEMORY_BASIC_INFORMATION mi;
-    if (!VirtualQuery(vm_base + addr, &mi, sizeof mi) || mi.State != MEM_COMMIT) return 0;
-    return (uint8_t*)mi.BaseAddress + mi.RegionSize >= vm_base + (uint64_t)addr + bytes;
+    return port_mem_mapped(vm_base + addr, bytes);
 }
 
 static int position_line(char* out, int max)

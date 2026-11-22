@@ -26,6 +26,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include <windows.h>
 #include <xaudio2.h>
 
@@ -1057,3 +1058,5 @@ int gowa_music_preview(const char* path, double seconds)
     printf("%s: %.1f s\n", path, total / (double)RATE);
     return 0;
 }
+
+#endif /* _WIN32 */

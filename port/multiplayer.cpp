@@ -29,6 +29,7 @@
  * Play then finds it running (gowa_online_start waits for one that is starting). Host and join start at Play.
  */
 #define WIN32_LEAN_AND_MEAN
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -579,3 +580,5 @@ extern "C" int gowa_online_start(char* why, size_t n)
     if (const char* p = gowa_online_problem()) return fail(why, n, "%s", p);
     return start_with(a, why, n);
 }
+
+#endif /* _WIN32 */

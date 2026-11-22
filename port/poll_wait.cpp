@@ -36,11 +36,11 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include "port_compat.h"
 #if defined(_M_X64) || defined(__x86_64__)
+#ifdef _WIN32
 #include <intrin.h>
+#endif
 #include <x86intrin.h>
 #define POLL_X86 1
 #endif
@@ -278,11 +278,11 @@ static void poll_seen(ppu_context* ctx, uint32_t addr)
  * manager's block: at +0x30 + 4 * queue the queue's job list (8 bytes a job, the u16 at +2 non-zero while
  * the list goes on) and at +0x40 + 16 * queue the queue's first job, then seven u16 progress counters, one
  * per SPU, that its jobs raise. The loop ends once the least counter reaches the target: the first job and
- * the jobs in the list after it. Guest memory read under __try: a bad pointer ends the lines. */
+ * the jobs in the list after it. Guest memory read under PORT_TRY: a bad pointer ends the lines. */
 static void poll_report_jobs(const PollSeen& p)
 {
     const uint32_t mgr = p.r31, q = p.r4, reg_target = p.r5 & 0xFFFFu;
-    __try {
+    PORT_TRY {
         const uint32_t blk = vm_read32(mgr), qa = blk + (q << 4) + 0x40, list = vm_read32(blk + (q << 2) + 0x30);
         const uint32_t first = vm_read16(qa);
         uint32_t n = 0;
@@ -300,7 +300,7 @@ static void poll_report_jobs(const PollSeen& p)
         const uint32_t from = least < first + n ? least : first, to = from + 6 < first + n ? from + 6 : first + n;
         for (uint32_t j = from; j < to; j++)
             fprintf(stderr, "[freeze]   job %u: %016llX\n", j, (unsigned long long)vm_read64(list + j * 8));
-    } __except (EXCEPTION_EXECUTE_HANDLER) {
+    } PORT_EXCEPT {
         fprintf(stderr, "[freeze]   (the job manager at 0x%08X, queue %u, could not be read)\n", mgr, q);
     }
 }

@@ -8,6 +8,7 @@
  * RPCS3 ends with exit code 0 even when it decrypted nothing, so what counts is the file it leaves,
  * and that file's hash.
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "game_prepare.h"
 #include "game_find.h"
 #include "game_title.h"
@@ -867,3 +868,5 @@ extern "C" int gowa_prepare_cli(const char* game, const char* rpcs3, const char*
     printf("[prepare] GOWA.elf is ready\n");
     return 0;
 }
+
+#endif /* _WIN32 */

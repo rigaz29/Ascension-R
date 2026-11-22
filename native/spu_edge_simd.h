@@ -10,7 +10,7 @@
 
 #include "spu_context.h"
 #include "spu_helpers.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdlib.h>
 #include <stdint.h>
 

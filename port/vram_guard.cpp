@@ -28,15 +28,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "port_compat.h"
 
 static const uint32_t GCM_STATE = 0x00A23500;   /* the game's: +0x8 the size of local memory its checks use */
 
 static int is_there(uint32_t addr, uint32_t bytes)
 {
-    MEMORY_BASIC_INFORMATION mi;
-    if (!VirtualQuery(vm_base + addr, &mi, sizeof mi) || mi.State != MEM_COMMIT) return 0;
-    return (uint8_t*)mi.BaseAddress + mi.RegionSize >= vm_base + (uint64_t)addr + bytes;
+    return port_mem_mapped(vm_base + addr, bytes);
 }
 
 /* func_0039B93C at its first branch: r31 the texture, r3 its data's size as the function took it. */

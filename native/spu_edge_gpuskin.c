@@ -33,7 +33,7 @@
 #include "spu_edge_gpuskin.h"
 #include "spu_context.h"
 #include "spu_helpers.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <math.h>
 #include <string.h>
 
@@ -49,6 +49,7 @@ static inline void ek_wr32(uint8_t* p, uint32_t v)
 }
 static inline void ek_wr16(uint8_t* p, uint32_t v) { p[0] = (uint8_t)(v >> 8); p[1] = (uint8_t)v; }
 
+#if NATIVE_SIMD_X86
 /* the local store's quadword as host words */
 static inline __m128i ek_q(const uint8_t* p)
 {
@@ -92,6 +93,59 @@ void ek_give(const uint8_t* in, uint8_t* p, uint8_t* n, uint8_t* t)
         _mm_storeu_si128((__m128i*)t, _mm_shuffle_epi8(_mm_loadu_si128((const __m128i*)(in + 32)), bs));
     }
 }
+#else
+/* The same three without SSE (arm64): word k of a local-store quadword, in host order, is ek_be(q + 4k).
+ * Lane by lane what EK_ROW's blends give: row j of matrix i is (q[j].x, q[j+1].y, q[j+2].z, q3[j]), the
+ * quadwords' indexes mod 3. */
+static inline void ek_row(uint8_t* dst, const uint8_t* m, int j)
+{
+    const uint32_t w[4] = { ek_be(m + 16 * j + 0), ek_be(m + 16 * ((j + 1) % 3) + 4),
+                            ek_be(m + 16 * ((j + 2) % 3) + 8), ek_be(m + 48 + 4 * j) };
+    memcpy(dst, w, 16);
+}
+
+void ek_rows(ek_rec* r, const uint8_t* m, uint32_t nmat)
+{
+    r->nmat = nmat;
+    for (uint32_t i = 0; i < nmat; i++, m += 64)
+        for (int j = 0; j < 3; j++) ek_row((uint8_t*)r->rows[i][j], m, j);
+}
+
+/* 16 bytes of the local store as four host words, or back: each word byte-swapped. */
+static inline void ek_swap16(uint8_t* dst, const uint8_t* src)
+{
+    uint32_t w[4];
+    for (int k = 0; k < 4; k++) w[k] = ek_be(src + 4 * k);
+    memcpy(dst, w, 16);
+}
+
+void ek_take(uint8_t* in, const uint8_t* p, const uint8_t* n, const uint8_t* t, const uint8_t* bones)
+{
+    ek_swap16(in, p);
+    if (n) {
+        ek_swap16(in + 16, n);
+        ek_swap16(in + 32, t);
+        memcpy(in + 48, bones, 8);
+    } else {
+        memcpy(in + 16, bones, 8);
+    }
+}
+
+void ek_give(const uint8_t* in, uint8_t* p, uint8_t* n, uint8_t* t)
+{
+    /* a host word to the local store's order is the same swap */
+    uint32_t w[4];
+    memcpy(w, in, 16);
+    for (int k = 0; k < 4; k++) ek_wr32(p + 4 * k, w[k]);
+    if (n) {
+        memcpy(w, in + 16, 16);
+        for (int k = 0; k < 4; k++) ek_wr32(n + 4 * k, w[k]);
+        memcpy(w, in + 32, 16);
+        for (int k = 0; k < 4; k++) ek_wr32(t + 4 * k, w[k]);
+    }
+}
+
+#endif
 
 static void ek_blend(const ek_rec* r, const uint8_t* b, float R[3][4])
 {

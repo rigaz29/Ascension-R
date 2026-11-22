@@ -1,0 +1,51 @@
+# The macOS build on Apple Silicon (docs/MACOS.md). No job needs the game: the port is built against ps3recomp's smoke
+# title, a lift of a few hand-written functions, which is enough to compile and link every file of the port and the
+# runtime, the Metal backend and the Objective-C with them.
+name: macOS
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build on macOS (arm64)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          submodules: true
+
+      # sdl2: the controllers and the audio off Windows. glslang and spirv-cross: the guest shaders on Metal
+      # (HLSL -> SPIR-V -> MSL); without them the Metal backend draws with its fixed-function path only.
+      - name: Install the dependencies
+        run: brew install ninja sdl2 glslang spirv-cross
+
+      - name: Apply this fork's ps3recomp patches
+        run: sh scripts/apply_ps3recomp_patches.sh
+
+      - name: Build the runtime and the smoke title's lift
+        run: |
+          cmake -S ps3recomp -B build-rt -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-rt --target ps3recomp_runtime ps3recomp_smoke_lift
+
+      - name: Build the port
+        run: |
+          cmake -S . -B build-mac -G Ninja -DCMAKE_BUILD_TYPE=Release -DRECOMP_DIR="$PWD/build-rt/smoke/lift"
+          cmake --build build-mac
+
+      - name: The program starts
+        run: |
+          file build-mac/Ascension-R
+          # No game here: it reads its settings and says it has no ELF (exit 2).
+          set +e
+          out=$(./build-mac/Ascension-R --no-launcher --settings "$RUNNER_TEMP/ci.ini" 2>&1)
+          rc=$?
+          set -e
+          echo "$out" | tail -5
+          echo "exit $rc"
+          echo "$out" | grep -q "No ELF given"

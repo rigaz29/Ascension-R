@@ -48,6 +48,7 @@
 #include "mods.h"                 /* the mods folder: the mods that are on, for the file system */
 #include "textures.h"             /* their pictures in place of the game's textures, and the dump */
 #include "ps3emu/ps3_settings.h"  /* ascension-r.ini: the player's settings and this machine's paths */
+#include "port_compat.h"          /* port_exe_dir, and what the port's files need on every host */
 
 #include <stdint.h>
 #include <stdio.h>
@@ -62,6 +63,15 @@
  * around is a Windows problem. */
 #include <timeapi.h>
 #include <tlhelp32.h>   /* GOWA_THREADS: the process's thread list */
+#else
+#include <sys/mman.h>   /* mmap: the guest arena, see alloc_guest_vm */
+#include <sys/stat.h>   /* mkdir: the settings folder */
+#include <unistd.h>
+#endif
+
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>   /* the main thread's run loop, see run_guest */
+#include <pthread.h>
 #endif
 
 /* ---------------------------------------------------------------------------
@@ -123,8 +133,10 @@ void     cellGcm_fifo_kick_wait(unsigned ms); /* idle wait, woken by a kick */
  * path anywhere else -- the same selection runtime/host/host_posix.c and the
  * toolkit's boot harness make. All three expose the same three entry points,
  * so the frame clock below is backend-agnostic. */
-#if defined(_WIN32)
 extern "C" void gowa_skel_prop_start(void);   /* skel_prop.c: a mod's proportions where the animation takes them */
+extern "C" void cellPad_record_to(const char* path);   /* PAD_RECORD: libs/input/cellPad.c */
+extern "C" void ps3_missed_code_to(const char* path);  /* logs/missed_code.txt: runtime/diag/missed_code.c */
+#if defined(_WIN32)
 extern "C" int  rsx_d3d12_backend_init(uint32_t w, uint32_t h, const char* title);
 extern "C" void rsx_d3d12_backend_present(void);
 extern "C" int  rsx_d3d12_backend_pump_messages(void);
@@ -588,12 +600,21 @@ static bool alloc_guest_vm(void)
     vm_base = (uint8_t*)VirtualAlloc(NULL, VM_SIZE, MEM_RESERVE | MEM_TOP_DOWN, PAGE_READWRITE);
     ppu_vm_size = 0;              /* the whole space is backed; no OOB guard needed */
 #else
-    /* No vectored exception handlers off Windows, so the arena is committed up
+    /* No vectored exception handlers off Windows, so the arena is mapped up
      * front and lazily backed by the OS: only pages the title touches cost
-     * anything. It stops below the 0xE0000000 mark, so ppu_vm_size arms the
-     * loader's bounds check for what is left. */
-    vm_base = (uint8_t*)calloc(1, 0xE0000000u);
-    ppu_vm_size = 0xE0000000u;
+     * anything. The whole 32-bit space and the guard, as on Windows (and as
+     * ps3recomp's templates/project/main.cpp has it): the raw SPU windows live
+     * above 0xE0000000, and a guest read anywhere in it cannot fault, which the
+     * port's guest reads rely on (port_compat.h, PORT_TRY).
+     *
+     * mmap, not calloc: vm_commit() hands vm_base + addr to mprotect, which
+     * takes page-aligned addresses only, and a calloc this big is not. On
+     * macOS every host pointer is above 4 GB (the 4 GB __PAGEZERO), so none
+     * reads as a guest address, as MEM_TOP_DOWN gives Windows. */
+    void* p = mmap(NULL, VM_SIZE, PROT_READ | PROT_WRITE,
+                   MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE, -1, 0);
+    vm_base = (p == MAP_FAILED) ? nullptr : (uint8_t*)p;
+    ppu_vm_size = 0;              /* the whole space is backed; no OOB guard needed */
 #endif
     return vm_base != nullptr;
 }
@@ -1189,7 +1210,8 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
     if (!len || len >= sizeof exe) snprintf(exe, sizeof exe, "%s", argv0);
 #else
     char exe[1024];
-    snprintf(exe, sizeof exe, "%s", argv0);
+    if (port_exe_dir(exe, sizeof exe - 1)) strcat(exe, "/");   /* the program's own folder, not the working one */
+    else snprintf(exe, sizeof exe, "%s", argv0);
 #endif
     char* slash = strrchr(exe, '/');
     char* bslash = strrchr(exe, '\\');
@@ -1212,6 +1234,20 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
         snprintf(dir, sizeof dir, "%s\\Ascension-R", local);
         CreateDirectoryA(dir, NULL);
         snprintf(out, n, "%s\\ascension-r.ini", dir);
+    }
+#elif defined(__APPLE__)
+    /* As on Windows: beside the program when a settings file or portable.txt is there (a build), else in
+     * ~/Library/Application Support/Ascension-R, where a Mac keeps an app's files (an .app's own folder is not
+     * the place to write). */
+    char marker[1100];
+    snprintf(marker, sizeof marker, "%sportable.txt", exe);
+    if (access(out, F_OK) == 0 || access(marker, F_OK) == 0) return;
+    const char* home = getenv("HOME");
+    if (home && *home) {
+        char dir[1100];
+        snprintf(dir, sizeof dir, "%s/Library/Application Support/Ascension-R", home);
+        mkdir(dir, 0755);
+        snprintf(out, n, "%s/ascension-r.ini", dir);
     }
 #endif
 }
@@ -1238,8 +1274,6 @@ static void default_settings_path(char* out, size_t n, const char* argv0)
  * lift` reads it. PS3_MISSED_CODE=<file> records to that file instead, in any
  * run, and =0 not at all.
  * -----------------------------------------------------------------------*/
-extern "C" void cellPad_record_to(const char* path);
-extern "C" void ps3_missed_code_to(const char* path);
 
 static char s_log_path[1100];
 
@@ -1562,6 +1596,7 @@ static void title_environment(int pack_mods)
          * for the precompile, whose shaders come from the game's own archives). */
         const char* hdd0 = getenv("PS3_HDD0_ROOT");
         const char* title = getenv("PS3_TITLE");
+#ifdef _WIN32   /* mods: Windows only for now (docs/MACOS.md) */
         if (pack_mods && hdd0 && *hdd0 && title && *title) {
             char u8usr[1200];
             snprintf(u8usr, sizeof u8usr, "%s\\game\\%s\\USRDIR", hdd0, title);
@@ -1581,6 +1616,9 @@ static void title_environment(int pack_mods)
                 printf("[mods] pack: %s (%.1f s)\n", mods.pack_error.empty() ? "one more update" : mods.pack_error.c_str(),
                        (double)(GetTickCount64() - t0) / 1000.0);
         }
+#else
+        (void)hdd0; (void)title;
+#endif
         /* Their textures\ and the dump for those who make mods (textures.h). */
         if (pack_mods)
             gowa_textures_start(mods, ps3_settings_bool("mods", "dump_textures", "GOWA_DUMP_TEXTURES", 0)
@@ -1706,6 +1744,54 @@ static void game_open_failed(const char* gpath, const char* hpath)
      * needs, and with frame generation on its swap chain may be up already. */
     end_by_another_process(3);
 }
+#endif
+
+/* ---------------------------------------------------------------------------
+ * Running the guest
+ * -----------------------------------------------------------------------*/
+#if defined(__APPLE__)
+/* AppKit only runs on the process's main thread. The Metal backend creates
+ * its window and pumps its events with dispatch_sync onto the main queue
+ * when it is called from any other thread, as it is from the frame clock.
+ * With the guest on the main thread nothing would ever service that queue:
+ * the frame clock would block in its first rsx_backend_init and the title
+ * wait for a flip for good. So the guest runs on a thread of its own, with
+ * the 256 MB host stack every guest thread gets (sys_ppu_thread.c), and the
+ * main thread turns the run loop until ppu_run returns. The same as
+ * ps3recomp's templates/project/main.cpp. */
+struct guest_run { uint32_t entry, stack_top; int rc; volatile int done; };
+
+static void* guest_thread(void* arg)
+{
+    guest_run* g = (guest_run*)arg;
+    g->rc = ppu_run(g->entry, g->stack_top);
+    __atomic_store_n(&g->done, 1, __ATOMIC_RELEASE);
+    CFRunLoopStop(CFRunLoopGetMain());
+    return nullptr;
+}
+
+static int run_guest(uint32_t entry, uint32_t stack_top)
+{
+    static guest_run g;
+    g.entry = entry; g.stack_top = stack_top; g.rc = 0; g.done = 0;
+    pthread_attr_t attr;
+    pthread_attr_init(&attr);
+    pthread_attr_setstacksize(&attr, 256u * 1024u * 1024u);
+    pthread_t th;
+    int err = pthread_create(&th, &attr, guest_thread, &g);
+    pthread_attr_destroy(&attr);
+    if (err != 0) {
+        fprintf(stderr, "[boot] could not start the guest thread (%d)\n", err);
+        return -1;
+    }
+    /* Short slices: CFRunLoopStop only ends a run that is already going. */
+    while (!__atomic_load_n(&g.done, __ATOMIC_ACQUIRE))
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, false);
+    pthread_join(th, nullptr);
+    return g.rc;
+}
+#else
+static int run_guest(uint32_t entry, uint32_t stack_top) { return ppu_run(entry, stack_top); }
 #endif
 
 int main(int argc, char** argv)
@@ -1955,7 +2041,7 @@ int main(int argc, char** argv)
     printf("\n[boot] dispatching entry OPD 0x%08X (stack top 0x%08X)\n\n",
            entry, STACK_TOP);
 
-    int rc = ppu_run(entry, STACK_TOP);
+    int rc = run_guest(entry, STACK_TOP);
     printf("\n[boot] ppu_run returned %d (entry function unwound)\n", rc);
 
     /* A title that called sys_process_exit never reaches this line: that path

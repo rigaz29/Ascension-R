@@ -5,6 +5,9 @@
  * is the exe's entry point: it comes ahead of the C runtime. A CPU without them gets a message
  * instead of an illegal instruction. Built without either, like the rest of the port's own files.
  */
+/* Windows only: elsewhere main() is the entry, and the build has no AVX2 to check for on arm64 (an Apple
+ * Silicon Mac); an x86-64 build for another host runs without this check. */
+#ifdef _WIN32
 #include <windows.h>
 #include <intrin.h>
 
@@ -34,3 +37,4 @@ int gowa_entry(void* peb)
     }
     return mainCRTStartup(peb);
 }
+#endif /* _WIN32 */

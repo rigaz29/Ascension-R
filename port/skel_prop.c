@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "port_compat.h"
 
 #include "spu_context.h"
 
@@ -204,6 +205,7 @@ static void load_one(const char* path)
         return;
     }
     const char* b = strrchr(path, '\\');
+    if (!b) b = strrchr(path, '/');
     f->name = _strdup(b ? b + 1 : path);
     f->n = n;
     f->table_bytes = tb;

@@ -2,6 +2,7 @@
  * The mods folder (mods.h): what is in it, in which order, and the folders the game's file system takes for the
  * mods that are on (PS3_MODS_DIRS, ps3recomp's runtime/syscalls/vfs_mods.h).
  */
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include "mods.h"
 
 #include <windows.h>
@@ -973,3 +974,5 @@ std::string mods_summary(const ModList& l)
     if (!l.pack_error.empty()) s += "; not packed: " + l.pack_error;
     return s;
 }
+
+#endif /* _WIN32 */

@@ -38,6 +38,7 @@
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
+#ifdef _WIN32   /* Windows only for now: port/posix_stubs.cpp stands in for it elsewhere (docs/MACOS.md) */
 #include <windows.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -617,3 +618,5 @@ extern "C" int gowa_prebuild(void)
     printf("prebuild: done %u %u %u %.0f\n", stats[0], stats[1], stats[2], (GetTickCount() - t0) / 1000.0);
     return 0;
 }
+
+#endif /* _WIN32 */

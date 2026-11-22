@@ -24,7 +24,7 @@
  * loops; GOWA_EDGE_NATIVE_STATS=1 counts. */
 #include "spu_context.h"
 #include "spu_helpers.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

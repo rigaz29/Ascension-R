@@ -25,7 +25,7 @@
 #include <stdlib.h>
 #include <string.h>
 #define WIN32_LEAN_AND_MEAN
-#include <windows.h>
+#include "port_compat.h"
 
 extern "C" void gowa_cheats_off(const char* why);   /* cheats.cpp */
 
@@ -41,16 +41,7 @@ static int guest_readable(uint32_t ea, uint32_t n)
     /* ppu_vm_size is 0 on Windows (the accessors do not check), so the host's view of the page decides. */
     if (!ea || !n || (uint64_t)ea + n > 0x100000000ull ||
         (ppu_vm_size && (uint64_t)ea + n > (uint64_t)ppu_vm_size)) return 0;
-    const uint8_t* p = vm_base + ea;
-    const uint8_t* end = p + n;
-    while (p < end) {
-        MEMORY_BASIC_INFORMATION mbi;
-        if (!VirtualQuery(p, &mbi, sizeof mbi) || mbi.State != MEM_COMMIT ||
-            (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)) || !mbi.Protect)
-            return 0;
-        p = (const uint8_t*)mbi.BaseAddress + mbi.RegionSize;
-    }
-    return 1;
+    return port_mem_mapped(vm_base + ea, n);
 }
 
 static uint32_t guest_u32(uint32_t ea)

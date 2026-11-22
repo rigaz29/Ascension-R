@@ -52,7 +52,7 @@
  * tests/native/test_edge_native.py checks both against their lifted loops. */
 #include "spu_context.h"
 #include "spu_helpers.h"
-#include <immintrin.h>
+#include "spu_native_simd.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
