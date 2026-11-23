@@ -1335,10 +1335,74 @@ int gowa_report_create(int with_saves, char* out, size_t n)
     return 0;
 }
 
+static void zip_walk_dir(Zip& z, const std::wstring& base, const std::wstring& rel)
+{
+    const std::wstring full = rel.empty() ? base : base + L"\\" + rel;
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileExW((full + L"\\*").c_str(), FindExInfoBasic, &fd, FindExSearchNameMatch, NULL, 0);
+    if (h == INVALID_HANDLE_VALUE) return;
+    do {
+        if (!wcscmp(fd.cFileName, L".") || !wcscmp(fd.cFileName, L"..")) continue;
+        const std::wstring sub_rel = rel.empty() ? std::wstring(fd.cFileName) : rel + L"/" + fd.cFileName;
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            zip_walk_dir(z, base, sub_rel);
+        } else {
+            const std::wstring file_full = base + L"\\" + (rel.empty() ? std::wstring() : rel + L"\\") + fd.cFileName;
+            HANDLE hf = CreateFileW(file_full.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+            if (hf == INVALID_HANDLE_VALUE) continue;
+            LARGE_INTEGER sz;
+            if (GetFileSizeEx(hf, &sz) && sz.QuadPart <= (100LL << 20)) {
+                std::string data((size_t)sz.QuadPart, '\0');
+                DWORD got = 0;
+                if (sz.QuadPart == 0 || (ReadFile(hf, &data[0], (DWORD)sz.QuadPart, &got, NULL) && got == sz.QuadPart)) {
+                    int n = WideCharToMultiByte(CP_UTF8, 0, sub_rel.c_str(), -1, NULL, 0, NULL, NULL);
+                    if (n > 1) {
+                        std::string rel_u8((size_t)n - 1, '\0');
+                        WideCharToMultiByte(CP_UTF8, 0, sub_rel.c_str(), -1, &rel_u8[0], n, NULL, NULL);
+                        zip_add(z, rel_u8, data, &fd.ftLastWriteTime);
+                    }
+                }
+            }
+            CloseHandle(hf);
+        }
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+}
+
+int gowa_zip_folder(const wchar_t* dir, const wchar_t* zip_path, char* why, size_t why_len)
+{
+    if (!dir || !*dir || !zip_path || !*zip_path) {
+        if (why && why_len) snprintf(why, why_len, "invalid parameters");
+        return -1;
+    }
+    crc_init();
+    Zip z = {};
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    FILETIME ft;
+    SystemTimeToFileTime(&st, &ft);
+    FILETIME local;
+    FileTimeToLocalFileTime(&ft, &local);
+    FileTimeToDosDateTime(&local, &z.date, &z.time);
+    z.f = _wfopen(zip_path, L"wb");
+    if (!z.f) {
+        if (why && why_len) snprintf(why, why_len, "could not create destination zip file");
+        return -1;
+    }
+    zip_walk_dir(z, dir, std::wstring());
+    if (zip_end(z) != 0 || z.bad) {
+        if (why && why_len) snprintf(why, why_len, "error writing zip archive");
+        _wremove(zip_path);
+        return -1;
+    }
+    return 0;
+}
+
 #else   /* not Windows */
 void gowa_report_session_start(const char*) {}
 void gowa_where(const void*, char* out, size_t n) { if (n) out[0] = 0; }
 void gowa_freeze_watch_start(void) {}
 SessionEnd gowa_last_session(int* fg_stuck) { if (fg_stuck) *fg_stuck = 0; return SESSION_NONE; }
 int gowa_report_create(int, char*, size_t) { return -1; }
+int gowa_zip_folder(const wchar_t*, const wchar_t*, char*, size_t) { return -1; }
 #endif
