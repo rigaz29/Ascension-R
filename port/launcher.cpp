@@ -2268,7 +2268,7 @@ static float text_h(const wchar_t* s, IDWriteTextFormat* f, float w)
  * -----------------------------------------------------------------------*/
 enum {
     H_NAV = 1000, H_SEG = 2000, H_SW = 5000, H_DD = 6000, H_PSW = 7000, H_PRESET = 7500, H_TXT = 7700,
-    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_REPORT,
+    H_PLAY = 8000, H_SAVE, H_DEFAULTS, H_QUIT, H_KEYS, H_SAVES, H_EXPORT_SAVES, H_IMPORT_SAVES, H_SHADERS, H_GAME_BROWSE, H_GAME_AUTO, H_REPORT,
     H_PICK_RPCS3, H_GET_RPCS3, H_PICK_RAP, H_PREP_RETRY, H_PREP_STOP, H_KB_OK, H_KB_CANCEL, H_KB_DEFAULTS,
     H_UPDATE_OPEN, H_UPDATE_CLOSE, H_PREBUILD, H_MODS_OPEN, H_ANR_ZIP, H_ANR_STOP, H_DLSS_GET, H_DLSS_STOP, H_SUPPORT,
 #ifdef PORT_GAME_MODULE
@@ -3168,6 +3168,18 @@ static void draw_game_row(float x, float y, float w)
     }
 }
 
+static const float SAVES_ROW_H = 76.0f;
+static void draw_saves_row(float x, float y, float w)
+{
+    const float bw = 108.0f;
+    text(L"Save files", s_tf_ui_b, R(x, y + 16, w - 3 * bw - 30, 22), C_TEXT);
+    w_button(L"Open folder", R(x + w - 3 * bw - 20, y + 10, bw, SEG_H), H_SAVES, 0);
+    w_button(L"Export zip\x2026", R(x + w - 2 * bw - 10, y + 10, bw, SEG_H), H_EXPORT_SAVES, 0);
+    w_button(L"Import zip\x2026", R(x + w - bw, y + 10, bw, SEG_H), H_IMPORT_SAVES, 0);
+    char path[1100];
+    if (saves_dir(path, sizeof path)) text(W(path), s_tf_path, R(x, y + 48, w, 20), C_TEXT2);
+}
+
 /* --- the Trophies tab -------------------------------------------------------------------------------------------------
  * The game's own list (its TROPHY.TRP: under its update or the digital game's folder, else on its disc) in the game's
  * language, and what the player has won (the file the game keeps beside the saves): read when the tab is first shown,
@@ -3675,7 +3687,7 @@ static void draw_settings(int tab)
     for (int r = 0; r < nr; r++) ch += opt_row_h(*rows[r], rw);
     if (tab == T_CONTROLS) { klh = label_h(keys_desc, rw - 212, &kdh); ch += row_h(klh); }
     if (tab == T_PATCHES) ch += 34.0f;
-    if (tab == T_SYSTEM) ch += game_row_h();
+    if (tab == T_SYSTEM) ch += game_row_h() + SAVES_ROW_H;
     if (tab == T_TROPHIES) {
         tro_refresh();
         ch += tro_h();
@@ -3705,6 +3717,9 @@ static void draw_settings(int tab)
     if (tab == T_SYSTEM) {
         draw_game_row(rx, y, rw);
         y += game_row_h();
+        w_rule(rx, y, rw);
+        draw_saves_row(rx, y, rw);
+        y += SAVES_ROW_H;
         w_rule(rx, y, rw);
     }
     for (int r = 0; r < nr; r++) {
@@ -4759,6 +4774,45 @@ static int fg_offer(void)
     return 1;
 }
 
+/* The last session lost the graphics device (the screen froze while the game and sound went on): on some GPUs and
+ * drivers (such as NVIDIA Pascal / GTX 10-series), the asynchronous Render thread can hang the device during heavy
+ * scenes. Turning it off keeps the game in synchronous rendering, preventing the GPU timeout. */
+static int gpu_lost_offer(void)
+{
+    Opt* rt = opt_find("graphics", "render_thread");
+    if (!rt || !ps3_settings_ieq(rt->cur, "on")) return 0;
+    static const wchar_t what[] =
+        L"The graphics device was lost during the last session (the screen froze while the game and sound went on). "
+        L"On some GPUs, running the Render thread asynchronously can hang the graphics device. Turning it off keeps "
+        L"the rendering synchronous and prevents the hang. You can turn it on again in the Graphics tab.";
+    int pressed = 0;
+    const task_dialog_fn td = task_dialog();
+    if (td) {
+        TASKDIALOG_BUTTON b[2] = { { 100, L"Turn Render thread off" }, { 101, L"Keep it on" } };
+        TASKDIALOGCONFIG c = {};
+        c.cbSize = sizeof c;
+        c.hwndParent = s_main;
+        c.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION | TDF_POSITION_RELATIVE_TO_WINDOW;
+        c.pszWindowTitle = L"Graphics device recovery";
+        c.pszMainIcon = TD_WARNING_ICON;
+        c.pszMainInstruction = L"The screen froze in the last session (device lost)";
+        c.pszContent = what;
+        c.cButtons = 2;
+        c.pButtons = b;
+        c.nDefaultButton = 100;
+        if (FAILED(td(&c, &pressed, NULL, NULL))) return 0;
+    } else {
+        pressed = MessageBoxW(s_main, what, L"The screen froze in the last session", MB_YESNO | MB_ICONWARNING) == IDYES
+                      ? 100 : 101;
+    }
+    if (pressed != 100) return 0;
+    opt_set(*rt, "off");
+    ps3_settings_set("graphics", "render_thread", "off");
+    if (ps3_settings_save(NULL) == 0) toast("Render thread is off");
+    else toast_bad("Could not save the settings");
+    return 1;
+}
+
 /* Once per session: the next session's own log takes its place as the last one. */
 static void report_offer(void)
 {
@@ -4766,6 +4820,7 @@ static void report_offer(void)
     int fg_stuck = 0;
     const SessionEnd end = gowa_last_session(&fg_stuck);
     if (end == SESSION_FROZE && fg_stuck && fg_offer()) return;
+    if (end == SESSION_GPU_LOST) gpu_lost_offer();
     switch (end) {
     case SESSION_CRASH:    h = L"The last session crashed. Make a report of it?"; break;
     case SESSION_GPU_LOST: h = L"The last session lost the graphics device. Make a report of it?"; break;
@@ -4834,6 +4889,126 @@ static int pick_file(const wchar_t* title, const wchar_t* kind, const wchar_t* s
     }
     d->Release();
     return ok;
+}
+
+/* A destination file to save to. 1 = picked. */
+static int pick_save_file(const wchar_t* title, const wchar_t* kind, const wchar_t* spec, const wchar_t* def_name, wchar_t* out, size_t n)
+{
+    IFileSaveDialog* d = NULL;
+    if (FAILED(CoCreateInstance(CLSID_FileSaveDialog, NULL, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&d)))) return 0;
+    COMDLG_FILTERSPEC f = { kind, spec };
+    d->SetFileTypes(1, &f);
+    d->SetTitle(title);
+    if (def_name && *def_name) d->SetFileName(def_name);
+    d->SetDefaultExtension(L"zip");
+    int ok = 0;
+    if (SUCCEEDED(d->Show(s_main))) {
+        IShellItem* it = NULL;
+        if (SUCCEEDED(d->GetResult(&it))) {
+            PWSTR p = NULL;
+            if (SUCCEEDED(it->GetDisplayName(SIGDN_FILESYSPATH, &p))) {
+                swprintf(out, n, L"%ls", p);
+                ok = 1;
+                CoTaskMemFree(p);
+            }
+            it->Release();
+        }
+    }
+    d->Release();
+    return ok;
+}
+
+struct SaveExportTask {
+    std::wstring sdir;
+    std::wstring out_path;
+};
+
+static DWORD WINAPI export_saves_worker(LPVOID param)
+{
+    SaveExportTask* task = (SaveExportTask*)param;
+    char why[256] = "";
+    int rc = gowa_zip_folder(task->sdir.c_str(), task->out_path.c_str(), why, sizeof why);
+    delete task;
+    if (rc == 0) toast("Saves exported to zip");
+    else toast_bad(why[0] ? why : "Export failed");
+    InvalidateRect(s_main, NULL, FALSE);
+    return 0;
+}
+
+static void export_saves(void)
+{
+    char sdir[1100];
+    if (!saves_dir(sdir, sizeof sdir)) {
+        toast_bad("No saves folder configured");
+        return;
+    }
+    wchar_t out_path[MAX_PATH] = {};
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t def_name[64];
+    swprintf(def_name, sizeof def_name / sizeof def_name[0],
+             L"Ascension-Saves-%04d%02d%02d-%02d%02d.zip",
+             st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute);
+    if (!pick_save_file(L"Export save backup", L"Zip archive (*.zip)", L"*.zip", def_name, out_path, MAX_PATH))
+        return;
+
+    SaveExportTask* task = new SaveExportTask{ W(sdir), out_path };
+    HANDLE th = CreateThread(NULL, 0, export_saves_worker, task, 0, NULL);
+    if (th) CloseHandle(th);
+    else { delete task; toast_bad("Could not start export thread"); }
+}
+
+struct SaveImportTask {
+    std::wstring sdir;
+    std::wstring in_path;
+    std::wstring backup_dir;
+};
+
+static DWORD WINAPI import_saves_worker(LPVOID param)
+{
+    SaveImportTask* task = (SaveImportTask*)param;
+    CreateDirectoryW(task->backup_dir.c_str(), NULL);
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t bzip[MAX_PATH];
+    swprintf(bzip, MAX_PATH, L"%ls\\pre-import-%04d%02d%02d-%02d%02d%02d.zip",
+             task->backup_dir.c_str(), st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+    gowa_zip_folder(task->sdir.c_str(), bzip, NULL, 0);
+
+    std::string err = mods_unzip(task->in_path, task->sdir);
+    delete task;
+
+    if (err.empty()) toast("Saves imported successfully");
+    else toast_bad(err.c_str());
+    InvalidateRect(s_main, NULL, FALSE);
+    return 0;
+}
+
+static void import_saves(void)
+{
+    char sdir[1100];
+    if (!saves_dir(sdir, sizeof sdir)) {
+        toast_bad("No saves folder configured");
+        return;
+    }
+    wchar_t in_path[MAX_PATH] = {};
+    if (!pick_file(L"Import save backup", L"Zip archive (*.zip)", L"*.zip", in_path, MAX_PATH))
+        return;
+
+    static const wchar_t warn[] =
+        L"Importing saves will replace the files in your save folder with the contents of this backup. "
+        L"A safety copy of your current saves will be archived first in save-backups\\.\n\n"
+        L"Do you want to continue?";
+    if (MessageBoxW(s_main, warn, L"Import save backup", MB_YESNO | MB_ICONQUESTION) != IDYES)
+        return;
+
+    const char* hdd0 = ps3_settings_str("paths", "hdd0", "PS3_HDD0_ROOT", NULL);
+    std::wstring bdir = (hdd0 && *hdd0 ? W(hdd0) : settings_dir()) + L"\\home\\00000001\\save-backups";
+
+    SaveImportTask* task = new SaveImportTask{ W(sdir), in_path, bdir };
+    HANDLE th = CreateThread(NULL, 0, import_saves_worker, task, 0, NULL);
+    if (th) CloseHandle(th);
+    else { delete task; toast_bad("Could not start import thread"); }
 }
 
 /* --anr-get (main.cpp): anr_dl_run without the window, the player having asked on the command line. 0 = set up,
@@ -5048,6 +5223,8 @@ static void act(int id)
             s_capture = -1;
             break;
         case H_SAVES: open_saves(); break;
+        case H_EXPORT_SAVES: export_saves(); break;
+        case H_IMPORT_SAVES: import_saves(); break;
         case H_UPDATE_OPEN: update_open(); break;
         case H_SUPPORT: ShellExecuteW(s_main, L"open", SUPPORT_PAGE, NULL, NULL, SW_SHOWNORMAL); break;
         case H_UPDATE_CLOSE: update_check_dismiss(&s_upd); break;

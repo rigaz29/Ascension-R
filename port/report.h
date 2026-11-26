@@ -32,6 +32,9 @@ SessionEnd gowa_last_session(int* fg_stuck = NULL);
 /* Makes the zip of the last sessions beside the logs, and puts its path in out. 0 = made. */
 int gowa_report_create(int with_saves, char* out, size_t n);
 
+/* Packs the directory `dir` into `zip_path`. 0 = made, -1 = failed with message in why. */
+int gowa_zip_folder(const wchar_t* dir, const wchar_t* zip_path, char* why = 0, size_t why_len = 0);
+
 /* The AMD FSR upscalers the last sessions' logs name, newest first: the version the FSR API gave ("4.1.2"), and what it
  * was asked for ("" the newest the GPU takes, else the start of a version, "3.1"). Their number, at most n. */
 struct GowaFsrSeen { char version[32]; char asked[16]; };
